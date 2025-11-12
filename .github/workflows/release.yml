@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,x86_64-pc-windows-gnu
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64
+      
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      
+      - name: Build for Linux
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+      
+      - name: Build for Windows
+        run: cargo build --release --target x86_64-pc-windows-gnu
+      
+      - name: Prepare artifacts
+        run: |
+          mkdir -p release
+          cp target/x86_64-unknown-linux-gnu/release/osu-collect release/osu-collect-linux-x64
+          cp target/x86_64-pc-windows-gnu/release/osu-collect.exe release/osu-collect-windows-x64.exe
+          chmod +x release/osu-collect-linux-x64
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release/osu-collect-linux-x64
+            release/osu-collect-windows-x64.exe
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
