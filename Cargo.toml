@@ -1,0 +1,20 @@
+[package]
+name = "osu-collect"
+version = "0.0.1"
+edition = "2021"
+authors = ["uwuclxdy"]
+description = "CLI program to download osu! map collections from osu!collector for free"
+license = "MIT"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+indicatif = "0.18.3"
+url = "2.5"
+toml = "0.9.8"
+dirs = "6.0.0"
+tokio = { version = "1.42", features = ["full"] }
+futures-util = "0.3.31"
