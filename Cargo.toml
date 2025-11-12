@@ -1,6 +1,6 @@
 [package]
 name = "osu-collect"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 authors = ["uwuclxdy"]
 description = "a program to download osu map collections from osu!collector for free"
@@ -19,3 +19,6 @@ dirs = "6.0.0"
 tokio = { version = "1.42", features = ["full"] }
 futures-util = "0.3.31"
 osu-db = "0.3.0"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_Console", "Win32_Foundation"] }

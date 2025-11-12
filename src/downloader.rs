@@ -192,13 +192,13 @@ fn determine_file_exists_action(
         return Ok(FileExistsAction::Overwrite);
     }
 
-    println!("\nFile already exists: {}", filename);
-    println!("Options:");
-    println!("  [s] Skip this file");
-    println!("  [o] Overwrite this file");
-    println!("  [a] Abort (stop all downloads)");
-    print!("Choose action (s/o/a): ");
-    std::io::Write::flush(&mut std::io::stdout())?;
+    eprintln!("\nFile already exists: {}", filename);
+    eprintln!("Options:");
+    eprintln!("  [s] Skip this file");
+    eprintln!("  [o] Overwrite this file");
+    eprintln!("  [a] Abort (stop all downloads)");
+    eprint!("Choose action (s/o/a): ");
+    std::io::Write::flush(&mut std::io::stderr())?;
 
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
@@ -211,7 +211,7 @@ fn determine_file_exists_action(
             Ok(FileExistsAction::Abort)
         }
         _ => {
-            println!("Invalid choice, skipping file.");
+            eprintln!("Invalid choice, skipping file.");
             Ok(FileExistsAction::Skip)
         }
     }
