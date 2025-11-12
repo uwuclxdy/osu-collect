@@ -1,9 +1,9 @@
 [package]
 name = "osu-collect"
 version = "0.0.1"
-edition = "2021"
+edition = "2024"
 authors = ["uwuclxdy"]
-description = "CLI program to download osu! map collections from osu!collector for free"
+description = "a program to download osu map collections from osu!collector for free"
 license = "MIT"
 
 [dependencies]
