@@ -1,0 +1,16 @@
+# put this in ~/.config/osu-collect/config.toml to use it
+
+[mirror]
+# Use {id} as placeholder for beatmapset ID
+#   - https://api.nerinyan.moe/d/{id} (default)
+#   - https://catboy.best/d/{id}
+#   - https://api.chimu.moe/v1/download/{id}?n=1
+url = "https://api.nerinyan.moe/d/{id}"
+
+[download]
+# autoskip existing files without prompting (default: false)
+# can be overridden with --skip-existing flag
+skip_existing = false
+
+# concurrent downloads
+concurrent = 1
