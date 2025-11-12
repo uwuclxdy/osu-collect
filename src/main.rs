@@ -139,6 +139,7 @@ async fn run(cli: Cli, config: config::Config) -> Result<()> {
                     &output_dir,
                     skip_existing,
                     cli.yes,
+                    shutdown.clone(),
                 ).await;
 
                 let result = result.unwrap_or_else(|e| {
