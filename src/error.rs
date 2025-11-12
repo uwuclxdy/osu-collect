@@ -1,16 +1,15 @@
-use std::borrow::Cow;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum AppError {
     #[error("Invalid URL format: {0}")]
-    InvalidUrl(Cow<'static, str>),
+    InvalidUrl(&'static str),
 
     #[error("Network error: {0}")]
     Network(#[from] reqwest::Error),
 
     #[error("API error: {0}")]
-    Api(Cow<'static, str>),
+    Api(&'static str),
 
     #[error("File system error: {0}")]
     FileSystem(#[from] std::io::Error),
@@ -19,32 +18,41 @@ pub enum AppError {
     JsonParsing(#[from] serde_json::Error),
 
     #[error("{0}")]
-    Other(Cow<'static, str>),
+    Other(&'static str),
+
+    #[error("{0}")]
+    Dynamic(Box<str>),
 }
 
 impl AppError {
-    pub fn invalid_url_static(msg: &'static str) -> Self {
-        AppError::InvalidUrl(Cow::Borrowed(msg))
+    #[inline]
+    pub const fn invalid_url(msg: &'static str) -> Self {
+        AppError::InvalidUrl(msg)
     }
 
-    pub fn invalid_url_owned(msg: String) -> Self {
-        AppError::InvalidUrl(Cow::Owned(msg))
+    #[inline]
+    pub fn invalid_url_dynamic(msg: impl Into<Box<str>>) -> Self {
+        AppError::Dynamic(msg.into())
     }
 
-    pub fn api_static(msg: &'static str) -> Self {
-        AppError::Api(Cow::Borrowed(msg))
+    #[inline]
+    pub const fn api(msg: &'static str) -> Self {
+        AppError::Api(msg)
     }
 
-    pub fn api_owned(msg: String) -> Self {
-        AppError::Api(Cow::Owned(msg))
+    #[inline]
+    pub fn api_dynamic(msg: impl Into<Box<str>>) -> Self {
+        AppError::Dynamic(msg.into())
     }
 
-    pub fn other_static(msg: &'static str) -> Self {
-        AppError::Other(Cow::Borrowed(msg))
+    #[inline]
+    pub const fn other(msg: &'static str) -> Self {
+        AppError::Other(msg)
     }
 
-    pub fn other_owned(msg: String) -> Self {
-        AppError::Other(Cow::Owned(msg))
+    #[inline]
+    pub fn other_dynamic(msg: impl Into<Box<str>>) -> Self {
+        AppError::Dynamic(msg.into())
     }
 }
 

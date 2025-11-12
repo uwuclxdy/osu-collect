@@ -1,4 +1,5 @@
 use crate::error::{AppError, Result};
+use crate::utils::sanitize_filename;
 use futures_util::StreamExt;
 use std::path::{Path, PathBuf};
 use tokio::fs;
@@ -9,14 +10,14 @@ const DOWNLOAD_TIMEOUT_SECS: u64 = 60;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DownloadResult {
-    Success(String),
-    Skipped(String),
+    Success(Box<str>),
+    Skipped(Box<str>),
     Failed(&'static str),
-    FailedOwned(String),
+    FailedDynamic(Box<str>),
     Aborted,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FileExistsAction {
     Skip,
     Overwrite,
@@ -24,6 +25,7 @@ pub enum FileExistsAction {
 }
 
 /// Create HTTP client optimized for downloads
+#[inline]
 pub fn create_download_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
@@ -67,16 +69,17 @@ pub async fn download_beatmap(
     }
 
     if !status.is_success() {
-        return Ok(DownloadResult::FailedOwned(format!("HTTP {}", status)));
+        return Ok(DownloadResult::FailedDynamic(
+            format!("HTTP {}", status).into_boxed_str()
+        ));
     }
 
     let content_length = response.content_length();
     if let Some(len) = content_length {
         if len > MAX_FILE_SIZE as u64 {
-            return Ok(DownloadResult::FailedOwned(format!(
-                "File too large ({} MB, max 100 MB)",
-                len / 1024 / 1024
-            )));
+            return Ok(DownloadResult::FailedDynamic(
+                format!("File too large ({} MB, max 100 MB)", len / 1024 / 1024).into_boxed_str()
+            ));
         }
     }
 
@@ -89,19 +92,17 @@ pub async fn download_beatmap(
 
         match action {
             FileExistsAction::Skip => {
-                return Ok(DownloadResult::Skipped(sanitized_filename));
+                return Ok(DownloadResult::Skipped(sanitized_filename.into_boxed_str()));
             }
             FileExistsAction::Abort => {
                 return Ok(DownloadResult::Aborted);
             }
-            FileExistsAction::Overwrite => {
-                // Continue with download
-            }
+            FileExistsAction::Overwrite => {}
         }
     }
 
     download_with_streaming(response, &output_path).await
-        .map(|_| DownloadResult::Success(sanitized_filename))
+        .map(|_| DownloadResult::Success(sanitized_filename.into_boxed_str()))
 }
 
 /// Stream download to file with chunked writing
@@ -121,10 +122,9 @@ async fn download_with_streaming(
         if downloaded > MAX_FILE_SIZE as u64 {
             file.shutdown().await?;
             let _ = fs::remove_file(output_path).await;
-            return Err(AppError::other_owned(format!(
-                "File too large ({} MB, max 100 MB)",
-                downloaded / 1024 / 1024
-            )));
+            return Err(AppError::other_dynamic(
+                format!("File too large ({} MB, max 100 MB)", downloaded / 1024 / 1024).into_boxed_str()
+            ));
         }
 
         file.write_all(&chunk).await?;
@@ -167,19 +167,6 @@ fn parse_content_disposition(value: &str) -> Option<String> {
     }
 
     None
-}
-
-/// Sanitize filename by removing dangerous characters
-fn sanitize_filename(filename: &str) -> String {
-    filename
-        .chars()
-        .map(|c| match c {
-            '/' | '\\' | '\0' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            c => c,
-        })
-        .collect::<String>()
-        .trim()
-        .to_string()
 }
 
 /// Determine action when file exists

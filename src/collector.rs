@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use url::Url;
 use crate::error::{AppError, Result};
 
 const MAX_RETRIES: u8 = 3;
@@ -8,7 +7,7 @@ const COLLECTION_FETCH_TIMEOUT_SECS: u64 = 30;
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Collection {
     pub id: u32,
-    pub name: String,
+    pub name: Box<str>,
     pub uploader: Uploader,
     pub beatmapsets: Vec<Beatmapset>,
 }
@@ -16,7 +15,7 @@ pub struct Collection {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Uploader {
     pub id: u32,
-    pub username: String,
+    pub username: Box<str>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -29,59 +28,7 @@ pub struct Beatmapset {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Beatmap {
     pub id: u32,
-    pub checksum: String,
-}
-
-/// Parse collection ID from URL or direct ID string
-pub fn parse_collection_id(input: &str) -> Result<u32> {
-    let trimmed = input.trim();
-
-    if trimmed.is_empty() {
-        return Err(AppError::invalid_url_static(
-            "Collection ID or URL cannot be empty"
-        ));
-    }
-
-    if trimmed.chars().all(|c| c.is_ascii_digit()) {
-        return trimmed.parse::<u32>()
-            .map_err(|_| AppError::invalid_url_owned(
-                format!("Invalid collection ID: {}", trimmed)
-            ));
-    }
-
-    let url = Url::parse(trimmed)
-        .map_err(|_| AppError::invalid_url_owned(
-            format!("Invalid URL or collection ID: {}", trimmed)
-        ))?;
-
-    if url.host_str() != Some("osucollector.com") {
-        return Err(AppError::invalid_url_static(
-            "URL must be from osucollector.com"
-        ));
-    }
-
-    if url.scheme() != "https" {
-        return Err(AppError::invalid_url_static(
-            "URL must use HTTPS protocol"
-        ));
-    }
-
-    let path_segments: Vec<&str> = url.path_segments()
-        .ok_or_else(|| AppError::invalid_url_static("Invalid URL path"))?
-        .collect();
-
-    if path_segments.len() < 2 || path_segments[0] != "collections" {
-        return Err(AppError::invalid_url_static(
-            "URL must be in format: https://osucollector.com/collections/{id}"
-        ));
-    }
-
-    let id = path_segments[1];
-
-    id.parse::<u32>()
-        .map_err(|_| AppError::invalid_url_owned(
-            format!("Collection ID must be numeric, got: {}", id)
-        ))
+    pub checksum: Box<str>,
 }
 
 /// Fetch collection from osucollector API with retry logic
@@ -110,12 +57,13 @@ pub async fn fetch_collection(
         }
     }
 
-    Err(last_error.unwrap_or_else(||
-        AppError::api_static("All retry attempts failed")
+    Err(last_error.unwrap_or(
+        AppError::api("All retry attempts failed")
     ))
 }
 
 /// Create HTTP client optimized for collection fetching
+#[inline]
 pub fn create_collection_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(COLLECTION_FETCH_TIMEOUT_SECS))
@@ -132,9 +80,9 @@ async fn try_fetch_collection(
     let response = client.get(url).send().await
         .map_err(|e| {
             if e.is_timeout() {
-                AppError::api_static("Request timed out after 30 seconds")
+                AppError::api("Request timed out after 30 seconds")
             } else if e.is_connect() {
-                AppError::api_static("Failed to connect to osucollector.com")
+                AppError::api("Failed to connect to osucollector.com")
             } else {
                 AppError::from(e)
             }
@@ -143,26 +91,26 @@ async fn try_fetch_collection(
     let status = response.status();
 
     if status == reqwest::StatusCode::NOT_FOUND {
-        return Err(AppError::api_owned(
-            format!("Collection {} not found (404)", collection_id)
+        return Err(AppError::api_dynamic(
+            format!("Collection {} not found (404)", collection_id).into_boxed_str()
         ));
     }
 
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(AppError::api_static(
+        return Err(AppError::api(
             "Rate limited by osucollector.com (429). Please try again later."
         ));
     }
 
     if !status.is_success() {
-        return Err(AppError::api_owned(
-            format!("Failed to fetch collection: HTTP {}", status)
+        return Err(AppError::api_dynamic(
+            format!("Failed to fetch collection: HTTP {}", status).into_boxed_str()
         ));
     }
 
     let collection: Collection = response.json().await
-        .map_err(|e| AppError::api_owned(
-            format!("Failed to parse collection JSON: {}", e)
+        .map_err(|e| AppError::api_dynamic(
+            format!("Failed to parse collection JSON: {}", e).into_boxed_str()
         ))?;
 
     Ok(collection)
