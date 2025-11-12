@@ -2,6 +2,8 @@ use crate::error::{AppError, Result};
 use crate::utils::sanitize_filename;
 use futures_util::StreamExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
@@ -42,6 +44,7 @@ pub async fn download_beatmap(
     output_dir: &Path,
     skip_existing: bool,
     auto_overwrite: bool,
+    shutdown: Arc<AtomicBool>,
 ) -> Result<DownloadResult> {
     let mirror_url = mirror_url_template.replace("{id}", &beatmapset_id.to_string());
 
@@ -88,7 +91,12 @@ pub async fn download_beatmap(
     let output_path = output_dir.join(&sanitized_filename);
 
     if output_path.exists() {
-        let action = determine_file_exists_action(skip_existing, auto_overwrite, &sanitized_filename)?;
+        // Check if shutdown was triggered by another download
+        if shutdown.load(Ordering::Acquire) {
+            return Ok(DownloadResult::Aborted);
+        }
+
+        let action = determine_file_exists_action(skip_existing, auto_overwrite, &sanitized_filename, shutdown.clone())?;
 
         match action {
             FileExistsAction::Skip => {
@@ -174,6 +182,7 @@ fn determine_file_exists_action(
     skip_existing: bool,
     auto_overwrite: bool,
     filename: &str,
+    shutdown: Arc<AtomicBool>,
 ) -> Result<FileExistsAction> {
     if skip_existing {
         return Ok(FileExistsAction::Skip);
@@ -197,7 +206,10 @@ fn determine_file_exists_action(
     match input.trim().to_lowercase().as_str() {
         "s" => Ok(FileExistsAction::Skip),
         "o" => Ok(FileExistsAction::Overwrite),
-        "a" => Ok(FileExistsAction::Abort),
+        "a" => {
+            shutdown.store(true, Ordering::Release);
+            Ok(FileExistsAction::Abort)
+        }
         _ => {
             println!("Invalid choice, skipping file.");
             Ok(FileExistsAction::Skip)
