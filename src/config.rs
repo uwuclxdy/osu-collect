@@ -9,7 +9,7 @@ pub struct Config {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MirrorConfig {
-    pub url: String,
+    pub url: Box<str>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -22,11 +22,11 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             mirror: MirrorConfig {
-                url: "https://api.nerinyan.moe/d/{id}".to_string(),
+                url: "https://api.nerinyan.moe/d/{id}".into(),
             },
             download: DownloadConfig {
                 skip_existing: false,
-                concurrent: 1,
+                concurrent: 3,
             },
         }
     }
@@ -36,19 +36,19 @@ impl Config {
     /// Validate configuration
     pub fn validate(&self) -> Result<()> {
         if !self.mirror.url.contains("{id}") {
-            return Err(AppError::other_static(
+            return Err(AppError::other(
                 "Mirror URL must contain {id} placeholder"
             ));
         }
 
         if !self.mirror.url.starts_with("http://") && !self.mirror.url.starts_with("https://") {
-            return Err(AppError::other_static(
+            return Err(AppError::other(
                 "Mirror URL must start with http:// or https://"
             ));
         }
 
         if self.download.concurrent == 0 {
-            return Err(AppError::other_static(
+            return Err(AppError::other(
                 "Concurrent downloads must be at least 1"
             ));
         }
@@ -69,7 +69,7 @@ impl Config {
         skip_existing: bool,
     ) -> Self {
         if let Some(mirror_url) = mirror {
-            self.mirror.url = mirror_url;
+            self.mirror.url = mirror_url.into();
         }
 
         if skip_existing {
