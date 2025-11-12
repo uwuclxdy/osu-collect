@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 #[derive(Parser, Debug)]
 #[command(name = "osu-collect")]
-#[command(version = "0.1.0")]
-#[command(about = "A CLI tool to download osu! beatmap collections from osu!collector", long_about = None)]
+#[command(version = env!("CARGO_PKG_VERSION"))]
+#[command(about = "a program to download osu map collections from osu!collector for free", long_about = None)]
 struct Cli {
     /// Collection URL or ID
     #[arg(short, long)]
@@ -23,7 +23,7 @@ struct Cli {
 
     /// Download directory
     #[arg(short, long)]
-    directory: String,
+    directory: Option<String>,
 
     /// Mirror base URL
     #[arg(short, long)]
@@ -39,7 +39,6 @@ struct Cli {
 }
 
 impl Cli {
-    /// Validate CLI arguments
     fn validate(&self) -> Result<()> {
         if self.yes && self.skip_existing {
             return Err(AppError::other(
@@ -56,7 +55,7 @@ async fn main() {
     let cli = Cli::parse();
 
     if let Err(e) = cli.validate() {
-        eprintln!("Error: {}", e);
+        eprintln!("error: {}", e);
         std::process::exit(1);
     }
 
@@ -64,18 +63,18 @@ async fn main() {
         .merge_with_cli(cli.mirror.clone(), cli.skip_existing);
 
     if let Err(e) = config.validate() {
-        eprintln!("Error: {}", e);
+        eprintln!("error: {}", e);
         std::process::exit(1);
     }
 
     if let Err(e) = run(cli, config).await {
-        eprintln!("\n\x1b[31m✗ Error: {}\x1b[0m", e);
+        eprintln!("\n\x1b[31m✗ error: {}\x1b[0m", e);
         std::process::exit(1);
     }
 }
 
 async fn run(cli: Cli, config: config::Config) -> Result<()> {
-    println!("osu! collect v0.1.0\n");
+    println!("osu! collect {} \n", env!("CARGO_PKG_VERSION"));
 
     println!("Fetching collection...");
     let collection_id = utils::parse_collection_id(&cli.collection)?;
@@ -85,7 +84,8 @@ async fn run(cli: Cli, config: config::Config) -> Result<()> {
 
     collector::display_collection_info(&collection);
 
-    let base_dir = downloader::validate_and_prepare_directory(&cli.directory).await?;
+    let directory = cli.directory.as_deref().unwrap_or(".");
+    let base_dir = downloader::validate_and_prepare_directory(directory).await?;
 
     let collection_folder_name = collection::generate_collection_folder_name(&collection);
     let output_dir = base_dir.join(&collection_folder_name);
