@@ -23,7 +23,18 @@ cargo install --path .
 
 ---
 
-> Replace `osu-collect` with the binary name that you've downloaded.
+### IMPORTANT: importing to osu! lazer
+
+After downloading, **follow the steps below** to correctly **import collection**:
+1. Import all downloaded maps into lazer
+2. Click `Run first time setup` and `Next` until the **Import screen**
+3. Set `previous osu! install` to the **directory of the collection** you've downloaded
+4. Click `Import content from previous version`
+5. That's it, you can close the setup screen, and the collection should be imported!
+
+---
+
+> Replace `osu-collect` with the binary name that you've downloaded in the commands below. 
 
 **Only `-c` (collection) is required.** If `-d` is not specified, a **subfolder will be automatically created** in current directory.
 
@@ -110,7 +121,6 @@ Outputs will be in the `build/` directory.
 
 ## TODO
 - [ ] A GUI interface or at least TUI
-- [ ] Figure out importing collections into lazer
 - [ ] Many other things I can't think of..
 
 ## Star History

@@ -41,6 +41,13 @@ pub fn create_collection_db(
         )
     })?;
 
+    let cfg_path = output_dir.join("osu!.name.cfg");
+    std::fs::write(&cfg_path, "").map_err(|e| {
+        AppError::other_dynamic(
+            format!("Failed to write osu!.name.cfg: {}", e).into_boxed_str()
+        )
+    })?;
+
     Ok(())
 }
 
