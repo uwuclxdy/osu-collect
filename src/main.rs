@@ -5,6 +5,9 @@ mod downloader;
 mod error;
 mod utils;
 
+#[cfg(windows)]
+mod windows_init;
+
 use clap::Parser;
 use error::{AppError, Result};
 use futures_util::stream::{self, StreamExt};
@@ -52,6 +55,9 @@ impl Cli {
 
 #[tokio::main]
 async fn main() {
+    #[cfg(windows)]
+    windows_init::enable_ansi_support();
+
     let cli = Cli::parse();
 
     if let Err(e) = cli.validate() {

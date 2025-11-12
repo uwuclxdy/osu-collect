@@ -911,7 +911,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "osu-collect"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "clap",
  "dirs",
@@ -925,6 +925,7 @@ dependencies = [
  "tokio",
  "toml",
  "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
