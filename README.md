@@ -1,14 +1,10 @@
 # osu!collect
 
----
-
 A CLI program to download osu! beatmap collections from [osu!collector](https://osucollector.com) for free :3 
 
 Supports alternative download mirrors.
 
 ## Installation
-
----
 
 Download the binary for your platform from the latest CI run on [releases page](https://github.com/uwuclxdy/osu-collect/releases).
 
@@ -20,8 +16,6 @@ cargo install --path .
 ```
 
 ## Usage
-
----
 
 ### IMPORTANT: importing to osu! lazer
 
@@ -70,8 +64,6 @@ osu-collect -c "https://osucollector.com/collections/17503" \
 
 ## Configuration
 
----
-
 You can create a configuration file to set default options:
 
 ### Linux/macOS
@@ -97,8 +89,6 @@ concurrent = 3
 
 ## Building from Source & Contributing
 
----
-
 Check TODO section to see what I have planned for the future of this project.
 
 ### Prerequisites
@@ -122,7 +112,3 @@ Outputs will be in the `build/` directory.
 ## TODO
 - [ ] A GUI interface or at least TUI
 - [ ] Many other things I can't think of..
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=uwuclxdy/osu-collect&type=date&legend=top-left)](https://www.star-history.com/#uwuclxdy/osu-collect&type=date&legend=top-left)
