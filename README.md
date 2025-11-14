@@ -4,6 +4,8 @@ A CLI program to download osu! beatmap collections from [osu!collector](https://
 
 Supports alternative download mirrors.
 
+![usage example](image.png)
+
 ## Installation
 
 Download the binary for your platform from the latest CI run on [releases page](https://github.com/uwuclxdy/osu-collect/releases).
