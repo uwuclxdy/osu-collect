@@ -124,7 +124,13 @@ async fn run(cli: Cli, config: config::Config) -> Result<()> {
     let concurrent = config.download.concurrent as usize;
     let skip_existing = config.download.skip_existing || cli.skip_existing;
 
-    let results = stream::iter(collection.beatmapsets.iter())
+    let mut downloaded_count: u16 = 0;
+    let mut skipped_count: u16 = 0;
+    let mut failed_count: u16 = 0;
+    let mut failed_downloads: Vec<(u32, Box<str>)> = Vec::new();
+    let mut aborted = false;
+
+    let mut stream = stream::iter(collection.beatmapsets.iter())
         .map(|beatmapset| {
             let client = download_client.clone();
             let mirror_url = config.mirror.url.to_string();
@@ -158,45 +164,37 @@ async fn run(cli: Cli, config: config::Config) -> Result<()> {
                 (beatmapset_id, result)
             }
         })
-        .buffer_unordered(concurrent)
-        .collect::<Vec<_>>()
-        .await;
+        .buffer_unordered(concurrent);
 
-    pb.finish_and_clear();
-
-    let mut downloaded_count: u16 = 0;
-    let mut skipped_count: u16 = 0;
-    let mut failed_count: u16 = 0;
-    let mut failed_downloads: Vec<(u32, Box<str>)> = Vec::new();
-    let mut aborted = false;
-
-    for (beatmapset_id, result) in results {
+    while let Some((beatmapset_id, result)) = stream.next().await {
         match result {
             downloader::DownloadResult::Success(filename) => {
                 downloaded_count += 1;
-                println!("\x1b[32m✓\x1b[0m Downloaded: {}", filename);
+                pb.println(format!("\x1b[32m✓\x1b[0m Downloaded: {}", filename));
             }
             downloader::DownloadResult::Skipped(filename) => {
                 skipped_count += 1;
-                println!("\x1b[33m⚠\x1b[0m Skipped (existing): {}", filename);
+                pb.println(format!("\x1b[33m⚠\x1b[0m Skipped (existing): {}", filename));
             }
             downloader::DownloadResult::Failed(reason) => {
                 failed_count += 1;
                 failed_downloads.push((beatmapset_id, reason.into()));
-                println!("\x1b[31m✗\x1b[0m Error downloading {}: {}", beatmapset_id, reason);
+                pb.println(format!("\x1b[31m✗\x1b[0m Error downloading {}: {}", beatmapset_id, reason));
             }
             downloader::DownloadResult::FailedDynamic(reason) => {
                 failed_count += 1;
                 failed_downloads.push((beatmapset_id, reason.clone()));
-                println!("\x1b[31m✗\x1b[0m Error downloading {}: {}", beatmapset_id, reason);
+                pb.println(format!("\x1b[31m✗\x1b[0m Error downloading {}: {}", beatmapset_id, reason));
             }
             downloader::DownloadResult::Aborted => {
                 aborted = true;
-                println!("\x1b[33m⚠  Download process aborted by user\x1b[0m");
+                pb.println("\x1b[33m⚠  Download process aborted by user\x1b[0m".to_string());
                 break;
             }
         }
     }
+
+    pb.finish_and_clear();
 
     if !aborted {
         println!("\nCreating collection.db...");
