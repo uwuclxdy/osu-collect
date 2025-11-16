@@ -1182,7 +1182,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "osu-collect"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "crossterm 0.29.0",
  "dirs",
@@ -1191,6 +1191,7 @@ dependencies = [
  "osu-db",
  "ratatui",
  "reqwest",
+ "semver",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
@@ -1530,6 +1531,12 @@ dependencies = [
  "core-foundation-sys",
  "libc",
 ]
+
+[[package]]
+name = "semver"
+version = "1.0.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
 
 [[package]]
 name = "serde"

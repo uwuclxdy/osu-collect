@@ -10,14 +10,26 @@ use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tracing::{debug, info, trace, warn};
 
-pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run(
+    config: Config,
+    startup_notice: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting application runtime loop");
     let validation_issue = config.validate().err().map(|e| e.to_string());
     let mut terminal = setup_terminal()?;
     let mut app = App::new(config);
+    let mut notice = startup_notice;
     if let Some(msg) = validation_issue {
         warn!(error = %msg, "Configuration validation failed; surfacing to UI");
-        app.home.set_error(&msg);
+        if let Some(ref notice_text) = notice {
+            app.home.set_error(&format!("{msg}\n{notice_text}"));
+            notice = None;
+        } else {
+            app.home.set_error(&msg);
+        }
+    }
+    if let Some(message) = notice.take() {
+        app.home.set_info(&message);
     }
 
     let (download_tx, mut download_rx) = mpsc::unbounded_channel::<DownloadEvent>();
