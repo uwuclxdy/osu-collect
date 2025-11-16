@@ -8,8 +8,7 @@ use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, BorderType, Borders},
+    widgets::{Block, BorderType, Borders, Paragraph},
 };
 
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -18,9 +17,30 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let layout = Layout::vertical([Constraint::Min(0), Constraint::Length(3)]);
     let [main_area, footer_area] = layout.areas(area);
 
-    let shell = app_shell();
+    let version = env!("CARGO_PKG_VERSION");
+    let title_left = " osu-collect • osu!collector downloader ";
+    let title_right = format!(" v{} ", version);
+    let title_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let version_style = Style::default().fg(Color::DarkGray);
+
+    let shell = app_shell(title_left, title_style);
     let content_area = shell.inner(main_area);
     frame.render_widget(shell, main_area);
+
+    let right_len = title_right.len() as u16;
+    let version_x = main_area.x + main_area.width.saturating_sub(right_len + 1);
+    let version_area = ratatui::layout::Rect {
+        x: version_x,
+        y: main_area.y,
+        width: right_len,
+        height: 1,
+    };
+    let version_paragraph = Paragraph::new(title_right)
+        .style(version_style)
+        .alignment(Alignment::Right);
+    frame.render_widget(version_paragraph, version_area);
 
     match view.active_tab {
         0 => home::render(frame, content_area, view.home),
@@ -36,22 +56,13 @@ pub fn draw(frame: &mut Frame, app: &App) {
     footer::render(frame, footer_area, footer::FooterView::new(&view.tabs));
 }
 
-fn app_shell() -> Block<'static> {
-    let header_line = Line::from(vec![
-        Span::styled(
-            " osu-collect ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  •  osu!collector downloader "),
-    ]);
-
+fn app_shell(title_left: &str, style: Style) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .title(header_line)
+        .title(title_left.to_string())
         .title_alignment(Alignment::Left)
+        .title_style(style)
 }
 
 #[derive(Clone, Copy)]
