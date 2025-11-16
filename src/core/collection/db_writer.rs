@@ -1,12 +1,11 @@
-use crate::collector::Collection;
-use crate::error::{AppError, Result};
-use crate::utils::sanitize_filename;
+use super::model::Collection;
+use crate::utils::{AppError, Result, sanitize_filename};
 use osu_db::collection::{Collection as DbCollection, CollectionList};
 use std::path::Path;
 
 const OSU_DB_VERSION: u32 = 20150203;
 
-/// Create collection.db file from collection data
+/// Persist collection metadata to osu!'s collection.db format.
 pub fn create_collection_db(
     collection: &Collection,
     collection_name: &str,
@@ -36,23 +35,18 @@ pub fn create_collection_db(
     };
 
     collection_list.to_file(&db_path).map_err(|e| {
-        AppError::other_dynamic(
-            format!("Failed to write collection.db: {}", e).into_boxed_str()
-        )
+        AppError::other_dynamic(format!("Failed to write collection.db: {e}").into_boxed_str())
     })?;
 
     let cfg_path = output_dir.join("osu!.name.cfg");
     std::fs::write(&cfg_path, "").map_err(|e| {
-        AppError::other_dynamic(
-            format!("Failed to write osu!.name.cfg: {}", e).into_boxed_str()
-        )
+        AppError::other_dynamic(format!("Failed to write osu!.name.cfg: {e}").into_boxed_str())
     })?;
 
     Ok(())
 }
 
-/// Generate collection folder name
-#[inline]
+/// Generate the folder name that will host the downloaded beatmaps.
 pub fn generate_collection_folder_name(collection: &Collection) -> String {
     let sanitized_name = sanitize_filename(&collection.name);
     format!("{}-{}", sanitized_name, collection.id)

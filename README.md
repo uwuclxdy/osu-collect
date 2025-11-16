@@ -1,10 +1,13 @@
 # osu!collect
 
-A CLI program to download osu! beatmap collections from [osu!collector](https://osucollector.com) for free :3 
+A TUI program to download osu! beatmap collections from [osu!collector](https://osucollector.com) for free :3 
 
-Supports alternative download mirrors.
+> ‼️ This is a TUI (Terminal User Interface) program, so make sure to run it in terminal / command prompt.
+
+> Catboy mirrors (Central / US / Asia) tend to rate limit quickly, so keep at least one other mirror enabled.
 
 ![usage example](image.png)
+![usage example](image1.png)
 
 ## Installation
 
@@ -19,6 +22,29 @@ cargo install --path .
 
 ## Usage
 
+### Running the TUI
+
+Run `osu-collect` in your terminal to launch the program. Configure, then press `Enter` to queue a download.
+
+- `Collection URL or ID`: accepts `https://osucollector.com/collections/{id}` links or just the collection ID. *Required*
+- `Download directory`: defaults to the current working directory.
+- `Threads`: number of threads to spawn per collection (default 3, max 50). Automatically set to `download.concurrent` from the config when set.
+- `Custom mirror URL`: must include `{id}` placeholder; combines with the built-in mirror toggles below it.
+- `Skip existing` verifies and skips previously downloaded maps.
+- `Auto-overwrite` forces redownloads of all maps.
+- `No Video` downloads maps without video when available.
+
+#### Controls
+- `Tab` / `Shift+Tab` or `Up` / `Down` move between fields.
+- `Space` toggles checkboxes when focused.
+- `Enter` starts download.
+- `Left` / `Right` switches between the tabs.
+- `q` / `Esc` on the home tab prompts to quit; press it again to confirm. On a download tab it cancels that download.
+- `Ctrl+C` aborts every running download immediately and exits.
+
+#### Download tabs
+Each queued collection opens in its own tab, meaning you can have multiple collections downloading simultaneously. There are only some basic statistics available for now.
+
 ### IMPORTANT: importing to osu! lazer
 
 After downloading, **follow the steps below** to correctly **import collection**:
@@ -27,40 +53,6 @@ After downloading, **follow the steps below** to correctly **import collection**
 3. Set `previous osu! install` to the **directory of the collection** you've downloaded
 4. Click `Import content from previous version`
 5. That's it, you can close the setup screen, and the collection should be imported!
-
----
-
-> Replace `osu-collect` with the binary name that you've downloaded in the commands below. 
-
-**Only `-c` (collection) is required.** If `-d` is not specified, a **subfolder will be automatically created** in current directory.
-
-_Command line arguments:_
-```bash
-  -c, --collection <COLLECTION>  Collection URL or ID
-  -d, --directory <DIRECTORY>    Download directory
-  -m, --mirror <MIRROR>          Mirror base URL
-  -y, --yes                      Auto-overwrite existing files
-      --skip-existing            Skip existing files
-```
-
-#### _Download all maps in a collection:_
-```bash
-osu-collect -c "https://osucollector.com/collections/17503" -d ~/Downloads
-```
-
-#### _Using an alternative mirror:_
-```bash
-osu-collect -c "https://osucollector.com/collections/17503" \
-  -d ~/Downloads \
-  -m "https://catboy.best/d/{id}"
-```
-
-#### _Auto-skip existing files:_
-```bash
-osu-collect -c "https://osucollector.com/collections/17503" \
-  -d ~/Downloads \
-  --skip-existing
-```
 
 > **Note for Windows Users:** Windows Terminal or PowerShell 7+ are recommended
 
@@ -74,20 +66,7 @@ You can create a configuration file to set default options:
 ### Windows
 `%APPDATA%\osu-collect\config.toml`
 
-### Example Configuration
-```toml
-[mirror]
-url = "https://api.nerinyan.moe/d/{id}"
-
-[download]
-skip_existing = false
-concurrent = 3
-```
-
-#### Configuration Options
-- `mirror.url`: Default mirror URL template (must contain `{id}`)
-- `download.skip_existing`: Skip existing files by default (true/false)
-- `download.concurrent`: Number of concurrent downloads (1-50, recommended: 3-10)
+> Look at config.toml.example for a configuration example and available options
 
 ## Building from Source & Contributing
 
@@ -112,5 +91,5 @@ The included `build.sh` script can build for both Linux and Windows:
 Outputs will be in the `build/` directory.
 
 ## TODO
-- [ ] A GUI interface or at least TUI
+- [ ] Make this a complete cross-platform replacement for BatchBeatmapDownloader
 - [ ] Many other things I can't think of..

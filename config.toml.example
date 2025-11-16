@@ -1,16 +1,36 @@
 # put this in ~/.config/osu-collect/config.toml to use it
 
 [mirror]
-# Use {id} as placeholder for beatmapset ID
-#   - https://api.nerinyan.moe/d/{id} (default)
-#   - https://catboy.best/d/{id}
-#   - https://api.chimu.moe/v1/download/{id}?n=1
-url = "https://api.nerinyan.moe/d/{id}"
+# Select any combination of supported mirrors
+nerinyan = true
+catboy_central = false
+catboy_us = false
+catboy_asia = false
+osu_direct = false
+sayobot = false
+
+# Optional custom mirror template (must contain {id})
+# url = "https://example.com/d/{id}"
 
 [download]
 # autoskip existing files without prompting (default: false)
-# can be overridden with --skip-existing flag
 skip_existing = false
 
 # concurrent downloads
-concurrent = 1
+concurrent = 6
+
+# download beatmapsets without video if the mirror supports it
+no_video = false
+
+[logging]
+# structured logging is disabled by default, set to true to enable tracing output
+enabled = false
+
+# supported levels: error, warn, info, debug, trace
+level = "info"
+
+# console format: "compact" (default) or "pretty"
+format = "compact"
+
+# optional directory for rolled JSON log files
+# file_dir = "/home/user/.local/share/osu-collect/logs"
