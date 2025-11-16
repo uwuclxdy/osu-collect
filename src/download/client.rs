@@ -160,22 +160,24 @@ async fn process_mirror_response(
         .map(|value| value.to_ascii_lowercase());
 
     if let Some(ref ct) = content_type
-        && !is_archive_content_type(ct) {
-            return Ok(DownloadResult::FailedDynamic(
-                format!(
-                    "Unexpected content type '{}' from {}",
-                    ct,
-                    mirror.display_name()
-                )
-                .into_boxed_str(),
-            ));
-        }
+        && !is_archive_content_type(ct)
+    {
+        return Ok(DownloadResult::FailedDynamic(
+            format!(
+                "Unexpected content type '{}' from {}",
+                ct,
+                mirror.display_name()
+            )
+            .into_boxed_str(),
+        ));
+    }
     if let Some(len) = content_length
-        && len > MAX_FILE_SIZE as u64 {
-            return Ok(DownloadResult::FailedDynamic(
-                format!("File too large ({} MB, max 100 MB)", len / 1024 / 1024).into_boxed_str(),
-            ));
-        }
+        && len > MAX_FILE_SIZE as u64
+    {
+        return Ok(DownloadResult::FailedDynamic(
+            format!("File too large ({} MB, max 100 MB)", len / 1024 / 1024).into_boxed_str(),
+        ));
+    }
 
     let filename = extract_filename_from_response(&response, beatmapset_id)?;
     let sanitized_filename = sanitize_filename(&filename);
@@ -194,11 +196,12 @@ async fn process_mirror_response(
 
         if context.skip_existing {
             if let Some(registry) = &context.verified_registry
-                && registry.contains(beatmapset_id) {
-                    return Ok(DownloadResult::Skipped(
-                        sanitized_filename.clone().into_boxed_str(),
-                    ));
-                }
+                && registry.contains(beatmapset_id)
+            {
+                return Ok(DownloadResult::Skipped(
+                    sanitized_filename.clone().into_boxed_str(),
+                ));
+            }
 
             if verify_existing_file(&output_path).await? {
                 return Ok(DownloadResult::Skipped(
@@ -241,19 +244,20 @@ async fn process_mirror_response(
     }
 
     if let Some(expected) = content_length
-        && stream.bytes_written < expected {
-            let _ = fs::remove_file(&output_path).await;
-            context.cleanup_tracker.mark_removed(&output_path);
-            return Ok(DownloadResult::FailedDynamic(
-                format!(
-                    "Download incomplete from {} (received {} of {} bytes)",
-                    mirror.display_name(),
-                    stream.bytes_written,
-                    expected
-                )
-                .into_boxed_str(),
-            ));
-        }
+        && stream.bytes_written < expected
+    {
+        let _ = fs::remove_file(&output_path).await;
+        context.cleanup_tracker.mark_removed(&output_path);
+        return Ok(DownloadResult::FailedDynamic(
+            format!(
+                "Download incomplete from {} (received {} of {} bytes)",
+                mirror.display_name(),
+                stream.bytes_written,
+                expected
+            )
+            .into_boxed_str(),
+        ));
+    }
 
     if let Err(err) = ensure_valid_archive(&output_path).await {
         let _ = fs::remove_file(&output_path).await;
@@ -298,9 +302,10 @@ fn extract_filename_from_response(
 ) -> Result<String> {
     if let Some(content_disposition) = response.headers().get(reqwest::header::CONTENT_DISPOSITION)
         && let Ok(value) = content_disposition.to_str()
-            && let Some(filename) = parse_content_disposition(value) {
-                return Ok(filename);
-            }
+        && let Some(filename) = parse_content_disposition(value)
+    {
+        return Ok(filename);
+    }
 
     Ok(format!("{}.osz", beatmapset_id))
 }

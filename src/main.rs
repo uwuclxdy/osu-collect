@@ -1,5 +1,5 @@
-mod auto_update;
 mod app;
+mod auto_update;
 mod config;
 mod core;
 mod download;

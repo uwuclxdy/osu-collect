@@ -2,7 +2,7 @@ use super::{
     CleanupTracker, DownloadEvent, DownloadHandle, DownloadId, DownloadRequest, DownloadStage,
     DownloadSummary, OutstandingTracker, VerifiedRegistry, create_download_client,
     integrity::ExpectationIndex,
-    passes::{download_pass, DownloadPassArgs},
+    passes::{DownloadPassArgs, download_pass},
     precheck::{PrecheckReport, verify_existing_beatmapsets},
 };
 use crate::{

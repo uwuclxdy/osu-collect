@@ -265,18 +265,19 @@ pub(crate) fn inspect_archive(path: &Path, expectations: &ExpectationData) -> Ar
         }
 
         if let Some(expectation) = expectations.by_set.get(&expected_set_id)
-            && let Some(expected_checksum) = expectation.beatmap_hashes.get(&beatmap_id) {
-                let mut hasher = Md5::new();
-                hasher.update(&data);
-                let actual_checksum = format!("{:032x}", hasher.finalize());
-                if !actual_checksum.eq_ignore_ascii_case(expected_checksum) {
-                    return ArchiveOutcome::Invalid {
-                        beatmapset_id: Some(expected_set_id),
-                        reason: format!("Checksum mismatch for beatmap {}", beatmap_id),
-                    };
-                }
-                validated.insert(beatmap_id);
+            && let Some(expected_checksum) = expectation.beatmap_hashes.get(&beatmap_id)
+        {
+            let mut hasher = Md5::new();
+            hasher.update(&data);
+            let actual_checksum = format!("{:032x}", hasher.finalize());
+            if !actual_checksum.eq_ignore_ascii_case(expected_checksum) {
+                return ArchiveOutcome::Invalid {
+                    beatmapset_id: Some(expected_set_id),
+                    reason: format!("Checksum mismatch for beatmap {}", beatmap_id),
+                };
             }
+            validated.insert(beatmap_id);
+        }
     }
 
     let set_id = match detected_set {
@@ -307,9 +308,10 @@ fn extract_beatmap_id(contents: &str) -> Option<u32> {
     for line in contents.lines() {
         if let Some(rest) = line.strip_prefix("BeatmapID:")
             && let Ok(value) = rest.trim().parse::<i64>()
-                && value > 0 {
-                    return Some(value as u32);
-                }
+            && value > 0
+        {
+            return Some(value as u32);
+        }
     }
     None
 }

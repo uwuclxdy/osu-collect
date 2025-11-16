@@ -114,9 +114,10 @@ pub async fn download_with_streaming(
     }
 
     if let Some(ref callback) = progress_callback
-        && downloaded != last_progress_bytes {
-            callback(downloaded, total);
-        }
+        && downloaded != last_progress_bytes
+    {
+        callback(downloaded, total);
+    }
 
     let digest = format!("{:032x}", hasher.finalize());
     Ok(DownloadStreamResult {

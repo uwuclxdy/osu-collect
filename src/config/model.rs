@@ -8,8 +8,7 @@ const fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[derive(Default)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 pub struct Config {
     pub mirror: MirrorConfig,
     pub download: DownloadConfig,
@@ -65,7 +64,6 @@ pub enum LogLevel {
     Trace,
 }
 
-
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
@@ -74,8 +72,6 @@ pub enum LogFormat {
     Compact,
     Pretty,
 }
-
-
 
 impl Default for MirrorConfig {
     fn default() -> Self {
@@ -112,7 +108,6 @@ impl MirrorConfig {
             || self.custom_template().is_some()
     }
 }
-
 
 impl DownloadConfig {
     pub const DEFAULT_THREADS: u8 = 3;
@@ -159,11 +154,12 @@ impl Config {
 
         if self.logging.enabled
             && let Some(dir) = self.logging.file_dir.as_deref()
-                && dir.trim().is_empty() {
-                    return Err(AppError::config(
-                        "logging.file_dir cannot be empty when logging is enabled",
-                    ));
-                }
+            && dir.trim().is_empty()
+        {
+            return Err(AppError::config(
+                "logging.file_dir cannot be empty when logging is enabled",
+            ));
+        }
 
         Ok(())
     }

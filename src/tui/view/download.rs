@@ -156,10 +156,11 @@ fn render_gauge(frame: &mut Frame, area: Rect, page: &CollectionPage) {
 
 fn render_threads(frame: &mut Frame, area: Rect, page: &CollectionPage) {
     if matches!(page.stage, DownloadStage::Completed)
-        && let Some(summary) = &page.summary {
-            render_results_block(frame, area, summary);
-            return;
-        }
+        && let Some(summary) = &page.summary
+    {
+        render_results_block(frame, area, summary);
+        return;
+    }
 
     let mut items: Vec<ListItem> = page
         .thread_statuses
@@ -230,10 +231,7 @@ fn render_results_block(frame: &mut Frame, area: Rect, summary: &DownloadSummary
         let line = if label == "Unverified" && value == 0 {
             Line::from(format!("{label}: {value}"))
         } else if label == "Unverified" {
-            Line::from(vec![Span::styled(
-                format!("{label}: {value}"),
-                style,
-            )])
+            Line::from(vec![Span::styled(format!("{label}: {value}"), style)])
         } else {
             Line::from(format!("{label}: {value}"))
         };

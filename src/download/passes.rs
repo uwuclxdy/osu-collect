@@ -114,7 +114,10 @@ pub(crate) async fn download_pass(
     totals: &mut DownloadSummary,
 ) -> DownloadPassResult {
     if args.beatmapset_ids.is_empty() {
-        debug!(download_id = args.id, "download pass invoked with no targets");
+        debug!(
+            download_id = args.id,
+            "download pass invoked with no targets"
+        );
         return DownloadPassResult {
             failed_maps: Vec::new(),
             aborted: false,
@@ -222,22 +225,23 @@ pub(crate) async fn download_pass(
 
                     if let Some((mirror_info, wait_for)) =
                         mirror_pool_for_task.single_mirror_cooldown()
-                        && !wait_for.is_zero() {
-                            let wait_secs = wait_for.as_secs().max(1);
-                            let wait_message = format!(
-                                "Rate limited on {}, waiting {}s before retry",
-                                mirror_info.display_name(),
-                                wait_secs
-                            );
-                            let _ = tx_progress.send(DownloadEvent::ThreadStatus {
-                                id: args.id,
-                                thread_index: slot,
-                                message: wait_message.clone(),
-                                rate_limited: true,
-                            });
-                            sleep(wait_for).await;
-                            continue;
-                        }
+                        && !wait_for.is_zero()
+                    {
+                        let wait_secs = wait_for.as_secs().max(1);
+                        let wait_message = format!(
+                            "Rate limited on {}, waiting {}s before retry",
+                            mirror_info.display_name(),
+                            wait_secs
+                        );
+                        let _ = tx_progress.send(DownloadEvent::ThreadStatus {
+                            id: args.id,
+                            thread_index: slot,
+                            message: wait_message.clone(),
+                            rate_limited: true,
+                        });
+                        sleep(wait_for).await;
+                        continue;
+                    }
 
                     let mirror_plan = mirror_pool_for_task.plan();
                     let first_mirror = mirror_plan
@@ -338,7 +342,10 @@ pub(crate) async fn download_pass(
                         totals.downloaded = totals.downloaded.saturating_add(1);
                         args.verified.insert(beatmapset_id);
                         if let Some(remaining) = args.outstanding.remove(beatmapset_id).await {
-                            let _ = args.tx.send(DownloadEvent::DownloadTarget { id: args.id, remaining });
+                            let _ = args.tx.send(DownloadEvent::DownloadTarget {
+                                id: args.id,
+                                remaining,
+                            });
                         }
                         let mirror_label = file.mirror.label();
                         let success_message = format!(
@@ -371,7 +378,10 @@ pub(crate) async fn download_pass(
                             }
                             args.verified.insert(beatmapset_id);
                             if let Some(remaining) = args.outstanding.remove(beatmapset_id).await {
-                                let _ = args.tx.send(DownloadEvent::DownloadTarget { id: args.id, remaining });
+                                let _ = args.tx.send(DownloadEvent::DownloadTarget {
+                                    id: args.id,
+                                    remaining,
+                                });
                             }
                             let acceptance_message =
                                 format!("Accepted with checksum mismatch (md5: {})", file.hash);
@@ -421,44 +431,45 @@ pub(crate) async fn download_pass(
                                 beatmapset_id: Some(set_id),
                                 ..
                             } = &outcome
-                                && refreshed_sets.insert(*set_id) {
-                                    let archive_for_refresh = file_path.clone();
-                                    match refresh_expectations_from_download(
-                                        args.id,
+                            && refreshed_sets.insert(*set_id)
+                        {
+                            let archive_for_refresh = file_path.clone();
+                            match refresh_expectations_from_download(
+                                args.id,
+                                beatmapset_id,
+                                file.mirror,
+                                archive_for_refresh,
+                                args.expectations.clone(),
+                                &args.tx,
+                            )
+                            .await
+                            {
+                                Ok(()) => {
+                                    info!(
+                                        download_id = args.id,
                                         beatmapset_id,
-                                        file.mirror,
-                                        archive_for_refresh,
-                                        args.expectations.clone(),
-                                        &args.tx,
-                                    )
-                                    .await
-                                    {
-                                        Ok(()) => {
-                                            info!(
-                                                download_id = args.id,
-                                                beatmapset_id,
-                                                mirror = %file.mirror.label(),
-                                                "Refreshed checksum expectations"
-                                            );
-                                            refreshed = true;
-                                        }
-                                        Err(err) => {
-                                            warn!(
-                                                download_id = args.id,
-                                                beatmapset_id,
-                                                error = %err,
-                                                "Failed to refresh checksum expectations"
-                                            );
-                                            let _ = args.tx.send(DownloadEvent::Log {
-                                                id: args.id,
-                                                message: format!(
-                                                    "Failed to refresh checksums for set {}: {}",
-                                                    beatmapset_id, err
-                                                ),
-                                            });
-                                        }
-                                    }
+                                        mirror = %file.mirror.label(),
+                                        "Refreshed checksum expectations"
+                                    );
+                                    refreshed = true;
                                 }
+                                Err(err) => {
+                                    warn!(
+                                        download_id = args.id,
+                                        beatmapset_id,
+                                        error = %err,
+                                        "Failed to refresh checksum expectations"
+                                    );
+                                    let _ = args.tx.send(DownloadEvent::Log {
+                                        id: args.id,
+                                        message: format!(
+                                            "Failed to refresh checksums for set {}: {}",
+                                            beatmapset_id, err
+                                        ),
+                                    });
+                                }
+                            }
+                        }
 
                         let _ = fs::remove_file(&file_path).await;
 
@@ -523,14 +534,20 @@ pub(crate) async fn download_pass(
                             message: failure_message,
                         });
                         if let Some(remaining) = args.outstanding.remove(beatmapset_id).await {
-                            let _ = args.tx.send(DownloadEvent::DownloadTarget { id: args.id, remaining });
+                            let _ = args.tx.send(DownloadEvent::DownloadTarget {
+                                id: args.id,
+                                remaining,
+                            });
                         }
                     }
                 }
             }
             Ok(DownloadResult::Skipped(filename)) => {
                 totals.skipped = totals.skipped.saturating_add(1);
-                debug!(download_id = args.id, beatmapset_id, "Skipped beatmap download");
+                debug!(
+                    download_id = args.id,
+                    beatmapset_id, "Skipped beatmap download"
+                );
                 let _ = args.tx.send(DownloadEvent::BeatmapStatus {
                     id: args.id,
                     beatmapset_id,
@@ -538,7 +555,10 @@ pub(crate) async fn download_pass(
                     message: format!("Skipped: {}", filename),
                 });
                 if let Some(remaining) = args.outstanding.remove(beatmapset_id).await {
-                    let _ = args.tx.send(DownloadEvent::DownloadTarget { id: args.id, remaining });
+                    let _ = args.tx.send(DownloadEvent::DownloadTarget {
+                        id: args.id,
+                        remaining,
+                    });
                 }
             }
             Ok(DownloadResult::Failed(reason)) => {
@@ -557,7 +577,10 @@ pub(crate) async fn download_pass(
                     message: reason.to_string(),
                 });
                 if let Some(remaining) = args.outstanding.remove(beatmapset_id).await {
-                    let _ = args.tx.send(DownloadEvent::DownloadTarget { id: args.id, remaining });
+                    let _ = args.tx.send(DownloadEvent::DownloadTarget {
+                        id: args.id,
+                        remaining,
+                    });
                 }
             }
             Ok(DownloadResult::FailedDynamic(reason)) => {
@@ -577,12 +600,18 @@ pub(crate) async fn download_pass(
                     message: message.clone(),
                 });
                 if let Some(remaining) = args.outstanding.remove(beatmapset_id).await {
-                    let _ = args.tx.send(DownloadEvent::DownloadTarget { id: args.id, remaining });
+                    let _ = args.tx.send(DownloadEvent::DownloadTarget {
+                        id: args.id,
+                        remaining,
+                    });
                 }
             }
             Ok(DownloadResult::Aborted) => {
                 args.shutdown.store(true, Ordering::SeqCst);
-                warn!(download_id = args.id, beatmapset_id, "Download aborted mid-pass");
+                warn!(
+                    download_id = args.id,
+                    beatmapset_id, "Download aborted mid-pass"
+                );
                 let _ = args.tx.send(DownloadEvent::BeatmapStatus {
                     id: args.id,
                     beatmapset_id,
@@ -603,7 +632,10 @@ pub(crate) async fn download_pass(
                     message: message.clone(),
                 });
                 if let Some(remaining) = args.outstanding.remove(beatmapset_id).await {
-                    let _ = args.tx.send(DownloadEvent::DownloadTarget { id: args.id, remaining });
+                    let _ = args.tx.send(DownloadEvent::DownloadTarget {
+                        id: args.id,
+                        remaining,
+                    });
                 }
             }
         }
