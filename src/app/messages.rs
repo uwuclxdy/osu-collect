@@ -4,7 +4,7 @@ pub enum MessageKind {
     Error,
 }
 
-pub struct HomeMessage {
+pub struct AppMessage {
     pub kind: MessageKind,
     pub text: String,
 }

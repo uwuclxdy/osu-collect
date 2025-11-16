@@ -1,7 +1,7 @@
 use super::model::Config;
 use crate::utils::{AppError, Result};
 use std::{
-    env,
+    env, fs,
     path::{Path, PathBuf},
 };
 use tracing::warn;
@@ -43,6 +43,24 @@ impl ConfigService {
         let contents = std::fs::read_to_string(path.as_ref())?;
         toml::from_str::<Config>(&contents)
             .map_err(|err| AppError::config_dynamic(format!("Invalid config file: {}", err)))
+    }
+
+    pub fn save(&self, config: &Config) -> Result<PathBuf> {
+        let path = self
+            .config_path()
+            .ok_or_else(|| AppError::config("Unable to find config directory"))?;
+
+        if let Some(parent) = path.parent()
+            && !parent.exists()
+        {
+            fs::create_dir_all(parent)?;
+        }
+
+        let contents = toml::to_string_pretty(config).map_err(|err| {
+            AppError::config_dynamic(format!("Failed to serialize config: {}", err))
+        })?;
+        fs::write(&path, contents)?;
+        Ok(path)
     }
 
     pub fn config_path(&self) -> Option<PathBuf> {

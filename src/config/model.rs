@@ -52,7 +52,7 @@ pub struct LoggingConfig {
     pub file_dir: Option<Box<str>>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum LogLevel {
@@ -64,7 +64,7 @@ pub enum LogLevel {
     Trace,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum LogFormat {

@@ -1,9 +1,10 @@
 mod components;
+mod config;
 mod download;
 mod footer;
 mod home;
 
-use crate::app::{App, CollectionPage, HomeTab};
+use crate::app::{App, CollectionPage, ConfigTab, HomeTab};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout},
@@ -44,6 +45,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     match view.active_tab {
         0 => home::render(frame, content_area, view.home),
+        1 => config::render(frame, content_area, view.config),
         _ => {
             if let Some(download_view) = view.download {
                 download::render(frame, content_area, download_view);
@@ -87,6 +89,18 @@ impl<'a> From<&'a CollectionPage> for DownloadView<'a> {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct ConfigView<'a> {
+    pub form: &'a ConfigTab,
+    pub quit_prompt: bool,
+}
+
+impl<'a> ConfigView<'a> {
+    fn new(form: &'a ConfigTab, quit_prompt: bool) -> Self {
+        Self { form, quit_prompt }
+    }
+}
+
 pub struct TabsView {
     titles: Vec<String>,
     active_tab: usize,
@@ -108,6 +122,7 @@ impl TabsView {
 
 struct AppView<'a> {
     home: HomeView<'a>,
+    config: ConfigView<'a>,
     download: Option<DownloadView<'a>>,
     tabs: TabsView,
     active_tab: usize,
@@ -120,6 +135,7 @@ impl<'a> From<&'a App> for AppView<'a> {
 
         Self {
             home: HomeView::from(&app.home),
+            config: ConfigView::new(&app.config, app.home.quit_prompt),
             download,
             tabs: TabsView::new(app.tab_titles(), active_tab),
             active_tab,

@@ -1,20 +1,27 @@
 use super::{
     collection::CollectionPage,
+    config::ConfigTab,
     home::{HomeField, HomeTab},
 };
 use crate::{
-    config::Config,
+    config::{Config, ConfigService},
     download::{DownloadEvent, DownloadId, DownloadRequest, DownloadStage},
     utils,
 };
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tracing::debug;
+
+const HOME_TAB_INDEX: usize = 0;
+const CONFIG_TAB_INDEX: usize = 1;
+const STATIC_TABS: usize = 2;
 
 pub struct App {
     pub home: HomeTab,
+    pub config: ConfigTab,
     pub downloads: Vec<CollectionPage>,
     pub active_tab: usize,
     next_download_id: DownloadId,
+    config_service: ConfigService,
 }
 
 #[derive(Debug)]
@@ -33,9 +40,11 @@ impl App {
     pub fn new(config: Config) -> Self {
         Self {
             home: HomeTab::new(&config),
+            config: ConfigTab::new(&config),
             downloads: Vec::new(),
-            active_tab: 0,
+            active_tab: HOME_TAB_INDEX,
             next_download_id: 1,
+            config_service: ConfigService::new(),
         }
     }
 
@@ -44,25 +53,60 @@ impl App {
     }
 
     pub fn next_tab(&mut self) {
-        if self.downloads.is_empty() {
-            self.active_tab = 0;
-            return;
-        }
-        let total = self.downloads.len() + 1;
+        let total = self.total_tabs();
         self.active_tab = (self.active_tab + 1) % total;
     }
 
     pub fn prev_tab(&mut self) {
-        if self.downloads.is_empty() {
-            self.active_tab = 0;
-            return;
-        }
-        let total = self.downloads.len() + 1;
+        let total = self.total_tabs();
         if self.active_tab == 0 {
             self.active_tab = total - 1;
         } else {
             self.active_tab -= 1;
         }
+    }
+
+    fn focus_next_field(&mut self) {
+        match self.active_tab() {
+            HOME_TAB_INDEX => self.home.next_field(),
+            CONFIG_TAB_INDEX => self.config.next_field(),
+            _ => {}
+        }
+    }
+
+    fn focus_prev_field(&mut self) {
+        match self.active_tab() {
+            HOME_TAB_INDEX => self.home.prev_field(),
+            CONFIG_TAB_INDEX => self.config.prev_field(),
+            _ => {}
+        }
+    }
+
+    fn try_save_config(&mut self) {
+        match self.config.build_config() {
+            Ok(new_config) => {
+                if let Err(err) = new_config.validate() {
+                    self.config.set_error(err.to_string());
+                    return;
+                }
+
+                match self.config_service.save(&new_config) {
+                    Ok(path) => {
+                        let message = format!(
+                            "Config saved to {} (applies on next launch)",
+                            path.display()
+                        );
+                        self.config.set_info(message);
+                    }
+                    Err(err) => self.config.set_error(err.to_string()),
+                }
+            }
+            Err(err) => self.config.set_error(err),
+        }
+    }
+
+    fn total_tabs(&self) -> usize {
+        STATIC_TABS + self.downloads.len()
     }
 
     pub fn request_download(&mut self) -> Option<(DownloadId, DownloadRequest)> {
@@ -82,7 +126,7 @@ impl App {
                 let mut page = CollectionPage::new(id, placeholder_title, concurrent);
                 page.stage = DownloadStage::Resolving;
                 self.downloads.push(page);
-                self.active_tab = self.downloads.len();
+                self.active_tab = STATIC_TABS + self.downloads.len() - 1;
 
                 self.home.set_info(&format!("Queued download #{id}"));
 
@@ -107,33 +151,19 @@ impl App {
             }
             KeyCode::Left => self.prev_tab(),
             KeyCode::Right => self.next_tab(),
-            KeyCode::Tab => {
-                if self.active_tab() == 0 {
-                    self.home.next_field();
-                }
-            }
-            KeyCode::BackTab => {
-                if self.active_tab() == 0 {
-                    self.home.prev_field();
-                }
-            }
-            KeyCode::Up => {
-                if self.active_tab() == 0 {
-                    self.home.prev_field();
-                }
-            }
-            KeyCode::Down => {
-                if self.active_tab() == 0 {
-                    self.home.next_field();
-                }
-            }
+            KeyCode::Tab => self.focus_next_field(),
+            KeyCode::BackTab => self.focus_prev_field(),
+            KeyCode::Up => self.focus_prev_field(),
+            KeyCode::Down => self.focus_next_field(),
             KeyCode::Enter => {
-                if let Some((id, request)) = self.request_download() {
+                if self.active_tab() == HOME_TAB_INDEX
+                    && let Some((id, request)) = self.request_download()
+                {
                     return Some(AppCommand::StartDownload { id, request });
                 }
             }
-            KeyCode::Char(' ') => {
-                if self.active_tab() == 0 {
+            KeyCode::Char(' ') => match self.active_tab() {
+                HOME_TAB_INDEX => {
                     if matches!(
                         self.home.focus,
                         HomeField::SkipExisting
@@ -151,17 +181,33 @@ impl App {
                         self.home.handle_char(' ');
                     }
                 }
-            }
-            KeyCode::Char(ch) => {
-                if self.active_tab() == 0 {
-                    self.home.handle_char(ch);
+                CONFIG_TAB_INDEX => {
+                    if self.config.focus.is_text_input() {
+                        self.config.handle_char(' ');
+                    } else {
+                        self.config.toggle_current();
+                    }
                 }
-            }
-            KeyCode::Backspace => {
-                if self.active_tab() == 0 {
-                    self.home.backspace();
+                _ => {}
+            },
+            KeyCode::Char(ch) => match self.active_tab() {
+                HOME_TAB_INDEX => self.home.handle_char(ch),
+                CONFIG_TAB_INDEX => {
+                    let focus = self.config.focus;
+                    let is_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                    if ch == 's' && !is_ctrl && !focus.is_text_input() {
+                        self.try_save_config();
+                    } else {
+                        self.config.handle_char(ch);
+                    }
                 }
-            }
+                _ => {}
+            },
+            KeyCode::Backspace => match self.active_tab() {
+                HOME_TAB_INDEX => self.home.backspace(),
+                CONFIG_TAB_INDEX => self.config.backspace(),
+                _ => {}
+            },
             _ => {}
         }
 
@@ -285,8 +331,9 @@ impl App {
     }
 
     pub fn tab_titles(&self) -> Vec<String> {
-        let mut titles = Vec::with_capacity(self.downloads.len() + 1);
+        let mut titles = Vec::with_capacity(self.downloads.len() + STATIC_TABS);
         titles.push("Home".to_string());
+        titles.push("Config".to_string());
         for page in &self.downloads {
             titles.push(page.title.clone());
         }
@@ -294,10 +341,10 @@ impl App {
     }
 
     pub fn download_for_tab(&self, tab_index: usize) -> Option<&CollectionPage> {
-        if tab_index == 0 {
+        if tab_index < STATIC_TABS {
             None
         } else {
-            self.downloads.get(tab_index - 1)
+            self.downloads.get(tab_index - STATIC_TABS)
         }
     }
 
@@ -335,7 +382,7 @@ impl App {
     }
 
     fn handle_quit_key(&mut self) -> Option<AppCommand> {
-        if self.active_tab() == 0 {
+        if self.active_tab() < STATIC_TABS {
             if self.downloads.is_empty() {
                 self.home.quit_prompt = false;
                 return Some(AppCommand::Quit);
@@ -356,11 +403,11 @@ impl App {
     }
 
     fn cancel_command_for_active_tab(&mut self) -> Option<AppCommand> {
-        if self.active_tab == 0 {
+        if self.active_tab < STATIC_TABS {
             return None;
         }
 
-        let idx = self.active_tab - 1;
+        let idx = self.active_tab - STATIC_TABS;
         if let Some(page) = self.downloads.get(idx) {
             return Some(AppCommand::CancelDownload { id: page.id });
         }

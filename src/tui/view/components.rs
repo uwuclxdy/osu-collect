@@ -76,6 +76,25 @@ pub fn toggle_item(label: &str, state: bool, focused: bool) -> ListItem<'static>
     ListItem::new(Line::from(spans)).style(style)
 }
 
+pub fn select_item(label: &str, value: &str, focused: bool) -> ListItem<'static> {
+    let style = if focused {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default()
+    };
+
+    let spans = vec![
+        Span::styled(
+            if focused { "> " } else { "  " },
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::styled(format!("{}: ", label), Style::default().fg(Color::Gray)),
+        Span::raw(value.to_string()),
+    ];
+
+    ListItem::new(Line::from(spans)).style(style)
+}
+
 pub fn status_style(stage: DownloadStage) -> Style {
     match stage {
         DownloadStage::Pending | DownloadStage::Resolving | DownloadStage::Rechecking => {

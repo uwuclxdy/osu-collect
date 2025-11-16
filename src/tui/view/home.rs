@@ -107,7 +107,7 @@ fn render_message(frame: &mut Frame, area: Rect, form: &HomeTab) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .title(" Status "),
+                .title(" Console "),
         )
         .wrap(Wrap { trim: true });
     frame.render_widget(paragraph, area);

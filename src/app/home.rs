@@ -1,4 +1,4 @@
-use super::messages::{HomeMessage, MessageKind};
+use super::messages::{AppMessage, MessageKind};
 use crate::{
     config::Config,
     download::DownloadRequest,
@@ -54,7 +54,7 @@ pub struct HomeTab {
     pub sayobot: bool,
     pub no_video: bool,
     pub focus: HomeField,
-    pub message: Option<HomeMessage>,
+    pub message: Option<AppMessage>,
     pub quit_prompt: bool,
     default_threads: u8,
     default_directory: String,
@@ -248,14 +248,14 @@ impl HomeTab {
     }
 
     pub fn set_error(&mut self, message: &str) {
-        self.message = Some(HomeMessage {
+        self.message = Some(AppMessage {
             kind: MessageKind::Error,
             text: message.to_string(),
         });
     }
 
     pub fn set_info(&mut self, message: &str) {
-        self.message = Some(HomeMessage {
+        self.message = Some(AppMessage {
             kind: MessageKind::Info,
             text: message.to_string(),
         });
