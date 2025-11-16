@@ -14,6 +14,8 @@ use tokio::fs;
 
 const DOWNLOAD_TIMEOUT_SECS: u64 = 60;
 
+type StatusCallback = Arc<dyn Fn(&str) + Send + Sync>;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum DownloadResult {
     Success(CompletedDownload),
@@ -44,7 +46,7 @@ pub async fn download_beatmap(
     mirrors: &[MirrorEndpoint],
     context: &DownloadContext,
     progress_callback: Option<Arc<dyn Fn(u64, u64) + Send + Sync>>,
-    status_callback: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    status_callback: Option<StatusCallback>,
     rate_limiter: Option<MirrorPool>,
 ) -> Result<DownloadResult> {
     if context.shutdown.load(Ordering::Acquire) {
@@ -157,8 +159,8 @@ async fn process_mirror_response(
         .and_then(|value| value.to_str().ok())
         .map(|value| value.to_ascii_lowercase());
 
-    if let Some(ref ct) = content_type {
-        if !is_archive_content_type(ct) {
+    if let Some(ref ct) = content_type
+        && !is_archive_content_type(ct) {
             return Ok(DownloadResult::FailedDynamic(
                 format!(
                     "Unexpected content type '{}' from {}",
@@ -168,14 +170,12 @@ async fn process_mirror_response(
                 .into_boxed_str(),
             ));
         }
-    }
-    if let Some(len) = content_length {
-        if len > MAX_FILE_SIZE as u64 {
+    if let Some(len) = content_length
+        && len > MAX_FILE_SIZE as u64 {
             return Ok(DownloadResult::FailedDynamic(
                 format!("File too large ({} MB, max 100 MB)", len / 1024 / 1024).into_boxed_str(),
             ));
         }
-    }
 
     let filename = extract_filename_from_response(&response, beatmapset_id)?;
     let sanitized_filename = sanitize_filename(&filename);
@@ -193,13 +193,12 @@ async fn process_mirror_response(
         }
 
         if context.skip_existing {
-            if let Some(registry) = &context.verified_registry {
-                if registry.contains(beatmapset_id) {
+            if let Some(registry) = &context.verified_registry
+                && registry.contains(beatmapset_id) {
                     return Ok(DownloadResult::Skipped(
                         sanitized_filename.clone().into_boxed_str(),
                     ));
                 }
-            }
 
             if verify_existing_file(&output_path).await? {
                 return Ok(DownloadResult::Skipped(
@@ -241,8 +240,8 @@ async fn process_mirror_response(
         return Ok(DownloadResult::Aborted);
     }
 
-    if let Some(expected) = content_length {
-        if stream.bytes_written < expected {
+    if let Some(expected) = content_length
+        && stream.bytes_written < expected {
             let _ = fs::remove_file(&output_path).await;
             context.cleanup_tracker.mark_removed(&output_path);
             return Ok(DownloadResult::FailedDynamic(
@@ -255,7 +254,6 @@ async fn process_mirror_response(
                 .into_boxed_str(),
             ));
         }
-    }
 
     if let Err(err) = ensure_valid_archive(&output_path).await {
         let _ = fs::remove_file(&output_path).await;
@@ -299,13 +297,10 @@ fn extract_filename_from_response(
     beatmapset_id: u32,
 ) -> Result<String> {
     if let Some(content_disposition) = response.headers().get(reqwest::header::CONTENT_DISPOSITION)
-    {
-        if let Ok(value) = content_disposition.to_str() {
-            if let Some(filename) = parse_content_disposition(value) {
+        && let Ok(value) = content_disposition.to_str()
+            && let Some(filename) = parse_content_disposition(value) {
                 return Ok(filename);
             }
-        }
-    }
 
     Ok(format!("{}.osz", beatmapset_id))
 }

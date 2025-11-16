@@ -155,12 +155,11 @@ fn render_gauge(frame: &mut Frame, area: Rect, page: &CollectionPage) {
 }
 
 fn render_threads(frame: &mut Frame, area: Rect, page: &CollectionPage) {
-    if matches!(page.stage, DownloadStage::Completed) {
-        if let Some(summary) = &page.summary {
+    if matches!(page.stage, DownloadStage::Completed)
+        && let Some(summary) = &page.summary {
             render_results_block(frame, area, summary);
             return;
         }
-    }
 
     let mut items: Vec<ListItem> = page
         .thread_statuses

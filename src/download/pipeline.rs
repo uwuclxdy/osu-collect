@@ -2,7 +2,7 @@ use super::{
     CleanupTracker, DownloadEvent, DownloadHandle, DownloadId, DownloadRequest, DownloadStage,
     DownloadSummary, OutstandingTracker, VerifiedRegistry, create_download_client,
     integrity::ExpectationIndex,
-    passes::download_pass,
+    passes::{download_pass, DownloadPassArgs},
     precheck::{PrecheckReport, verify_existing_beatmapsets},
 };
 use crate::{
@@ -243,25 +243,26 @@ async fn run_download(
             break;
         }
 
-        let pass_result = download_pass(
-            id,
-            targets,
-            thread_count,
-            skip_existing,
-            auto_overwrite,
-            shutdown.clone(),
-            &download_client,
-            mirror_pool.clone(),
-            output_dir_arc.clone(),
-            resolution.expectation_index.clone(),
-            verified_registry.clone(),
-            tracker.clone(),
-            cleanup_tracker.clone(),
-            is_retry,
-            tx,
-            &mut totals,
-        )
-        .await;
+        let pass_result = {
+            let args = DownloadPassArgs {
+                id,
+                beatmapset_ids: targets,
+                thread_count,
+                skip_existing,
+                auto_overwrite,
+                shutdown: shutdown.clone(),
+                client: download_client.clone(),
+                mirror_pool: mirror_pool.clone(),
+                output_dir: output_dir_arc.clone(),
+                expectations: resolution.expectation_index.clone(),
+                verified: verified_registry.clone(),
+                outstanding: tracker.clone(),
+                cleanup_tracker: cleanup_tracker.clone(),
+                retry_phase: is_retry,
+                tx: tx.clone(),
+            };
+            download_pass(args, &mut totals).await
+        };
 
         failure_tracker.record(pass_result.failed_maps);
         aborted = pass_result.aborted;
@@ -387,7 +388,7 @@ fn announce_collection_ready(
 
 async fn perform_initial_precheck(
     id: DownloadId,
-    output_dir: &PathBuf,
+    output_dir: &Path,
     expectations: Arc<ExpectationIndex>,
     thread_count: usize,
     tx: &UnboundedSender<DownloadEvent>,

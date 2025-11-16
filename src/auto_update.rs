@@ -116,22 +116,15 @@ fn parse_version(input: &str) -> Option<Version> {
 }
 
 fn target_asset_name() -> Option<&'static str> {
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    {
-        return Some("osu-collect-linux-x64");
+    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        Some("osu-collect-linux-x64")
+    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        Some("osu-collect-windows-x64.exe")
+    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        Some("osu-collect-macos-arm64")
+    } else {
+        None
     }
-
-    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-    {
-        return Some("osu-collect-windows-x64.exe");
-    }
-
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    {
-        return Some("osu-collect-macos-arm64");
-    }
-
-    None
 }
 
 #[derive(Debug, Deserialize)]

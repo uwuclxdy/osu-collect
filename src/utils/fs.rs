@@ -24,9 +24,9 @@ pub fn determine_file_exists_action(
 }
 
 pub async fn validate_and_prepare_directory(directory: &str) -> Result<PathBuf> {
-    let expanded_path = if directory.starts_with("~/") {
+    let expanded_path = if let Some(stripped) = directory.strip_prefix("~/") {
         if let Some(home_dir) = dirs::home_dir() {
-            home_dir.join(&directory[2..])
+            home_dir.join(stripped)
         } else {
             PathBuf::from(directory)
         }

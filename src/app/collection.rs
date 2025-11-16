@@ -96,16 +96,15 @@ impl CollectionPage {
     }
 
     pub fn update_progress(&mut self, beatmapset_id: u32, downloaded: u64, total: u64) {
-        if let Some(idx) = self.index.get(&beatmapset_id).copied() {
-            if let Some(row) = self.beatmaps.get_mut(idx) {
+        if let Some(idx) = self.index.get(&beatmapset_id).copied()
+            && let Some(row) = self.beatmaps.get_mut(idx) {
                 row.progress = Some((downloaded, total));
             }
-        }
     }
 
     pub fn update_status(&mut self, beatmapset_id: u32, stage: BeatmapStage, message: &str) {
-        if let Some(idx) = self.index.get(&beatmapset_id).copied() {
-            if let Some(row) = self.beatmaps.get_mut(idx) {
+        if let Some(idx) = self.index.get(&beatmapset_id).copied()
+            && let Some(row) = self.beatmaps.get_mut(idx) {
                 row.stage = stage;
                 row.message = message.to_string();
                 if matches!(
@@ -118,7 +117,6 @@ impl CollectionPage {
                     row.progress = None;
                 }
             }
-        }
     }
 
     pub fn push_log(&mut self, message: &str) {

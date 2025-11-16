@@ -9,6 +9,7 @@ const fn default_true() -> bool {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[derive(Default)]
 pub struct Config {
     pub mirror: MirrorConfig,
     pub download: DownloadConfig,
@@ -36,6 +37,7 @@ pub struct MirrorConfig {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct DownloadConfig {
     pub skip_existing: bool,
     pub concurrent: Option<u8>,
@@ -53,42 +55,27 @@ pub struct LoggingConfig {
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum LogLevel {
     Error,
     Warn,
+    #[default]
     Info,
     Debug,
     Trace,
 }
 
-impl Default for LogLevel {
-    fn default() -> Self {
-        LogLevel::Info
-    }
-}
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum LogFormat {
+    #[default]
     Compact,
     Pretty,
 }
 
-impl Default for LogFormat {
-    fn default() -> Self {
-        LogFormat::Compact
-    }
-}
 
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            mirror: MirrorConfig::default(),
-            download: DownloadConfig::default(),
-            logging: LoggingConfig::default(),
-        }
-    }
-}
 
 impl Default for MirrorConfig {
     fn default() -> Self {
@@ -126,15 +113,6 @@ impl MirrorConfig {
     }
 }
 
-impl Default for DownloadConfig {
-    fn default() -> Self {
-        Self {
-            skip_existing: false,
-            concurrent: None,
-            no_video: false,
-        }
-    }
-}
 
 impl DownloadConfig {
     pub const DEFAULT_THREADS: u8 = 3;
@@ -179,15 +157,13 @@ impl Config {
             }
         }
 
-        if self.logging.enabled {
-            if let Some(dir) = self.logging.file_dir.as_deref() {
-                if dir.trim().is_empty() {
+        if self.logging.enabled
+            && let Some(dir) = self.logging.file_dir.as_deref()
+                && dir.trim().is_empty() {
                     return Err(AppError::config(
                         "logging.file_dir cannot be empty when logging is enabled",
                     ));
                 }
-            }
-        }
 
         Ok(())
     }

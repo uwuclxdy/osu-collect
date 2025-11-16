@@ -127,7 +127,7 @@ impl HomeTab {
             focus: HomeField::Collection,
             message: None,
             quit_prompt: false,
-            default_threads: default_threads,
+            default_threads,
             default_directory,
         }
     }
@@ -285,47 +285,41 @@ impl HomeTab {
 
         let mut mirrors = Vec::new();
 
-        if self.nerinyan {
-            if let Some(endpoint) = MirrorEndpoint::builtin(MirrorKind::Nerinyan, self.no_video) {
+        if self.nerinyan
+            && let Some(endpoint) = MirrorEndpoint::builtin(MirrorKind::Nerinyan, self.no_video) {
                 mirrors.push(endpoint);
             }
-        }
 
-        if self.catboy_central {
-            if let Some(endpoint) =
+        if self.catboy_central
+            && let Some(endpoint) =
                 MirrorEndpoint::builtin(MirrorKind::Catboy(CatboyRegion::Central), self.no_video)
             {
                 mirrors.push(endpoint);
             }
-        }
 
-        if self.catboy_us {
-            if let Some(endpoint) =
+        if self.catboy_us
+            && let Some(endpoint) =
                 MirrorEndpoint::builtin(MirrorKind::Catboy(CatboyRegion::Us), self.no_video)
             {
                 mirrors.push(endpoint);
             }
-        }
 
-        if self.catboy_asia {
-            if let Some(endpoint) =
+        if self.catboy_asia
+            && let Some(endpoint) =
                 MirrorEndpoint::builtin(MirrorKind::Catboy(CatboyRegion::Asia), self.no_video)
             {
                 mirrors.push(endpoint);
             }
-        }
 
-        if self.osu_direct {
-            if let Some(endpoint) = MirrorEndpoint::builtin(MirrorKind::OsuDirect, self.no_video) {
+        if self.osu_direct
+            && let Some(endpoint) = MirrorEndpoint::builtin(MirrorKind::OsuDirect, self.no_video) {
                 mirrors.push(endpoint);
             }
-        }
 
-        if self.sayobot {
-            if let Some(endpoint) = MirrorEndpoint::builtin(MirrorKind::Sayobot, self.no_video) {
+        if self.sayobot
+            && let Some(endpoint) = MirrorEndpoint::builtin(MirrorKind::Sayobot, self.no_video) {
                 mirrors.push(endpoint);
             }
-        }
 
         let trimmed_custom = self.custom_mirror.value.trim();
         if !trimmed_custom.is_empty() {

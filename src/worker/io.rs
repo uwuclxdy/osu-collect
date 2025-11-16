@@ -113,11 +113,10 @@ pub async fn download_with_streaming(
         return Err(AppError::from(err));
     }
 
-    if let Some(ref callback) = progress_callback {
-        if downloaded != last_progress_bytes {
+    if let Some(ref callback) = progress_callback
+        && downloaded != last_progress_bytes {
             callback(downloaded, total);
         }
-    }
 
     let digest = format!("{:032x}", hasher.finalize());
     Ok(DownloadStreamResult {
@@ -133,7 +132,7 @@ pub async fn ensure_valid_archive(path: &Path) -> Result<()> {
         let file = File::open(&path_buf)?;
         let archive = ZipArchive::new(file)
             .map_err(|err| AppError::other_dynamic(format!("Invalid archive: {err}")))?;
-        if archive.len() == 0 {
+        if archive.is_empty() {
             return Err(AppError::other("Archive did not contain any beatmap files"));
         }
         Ok(())
