@@ -1,4 +1,5 @@
 # osu!collect
+[![Release](https://github.com/uwuclxdy/osu-collect/actions/workflows/release.yml/badge.svg)](https://github.com/uwuclxdy/osu-collect/actions/workflows/release.yml)
 
 A TUI program to download osu! beatmap collections from [osu!collector](https://osucollector.com) for free :3 
 
@@ -21,6 +22,8 @@ cargo install --path .
 ```
 
 ## Usage
+
+> **Note for Windows Users:** Windows Terminal or PowerShell 7+ are recommended
 
 ### Running the TUI
 
@@ -45,7 +48,7 @@ Run `osu-collect` in your terminal to launch the program. Configure, then press 
 #### Download tabs
 Each queued collection opens in its own tab, meaning you can have multiple collections downloading simultaneously. There are only some basic statistics available for now.
 
-### IMPORTANT: importing to osu! lazer
+### ‼️ IMPORTANT: importing to osu! lazer
 
 After downloading, **follow the steps below** to correctly **import collection**:
 1. Import all downloaded maps into lazer
@@ -53,8 +56,6 @@ After downloading, **follow the steps below** to correctly **import collection**
 3. Set `previous osu! install` to the **directory of the collection** you've downloaded
 4. Click `Import content from previous version`
 5. That's it, you can close the setup screen, and the collection should be imported!
-
-> **Note for Windows Users:** Windows Terminal or PowerShell 7+ are recommended
 
 ## Configuration
 
