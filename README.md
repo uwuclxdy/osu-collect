@@ -95,4 +95,5 @@ Outputs will be in the `build/` directory.
 - [ ] Make this a complete cross-platform replacement for BatchBeatmapDownloader
 - [ ] Collection updater tab
 - [ ] Make it look more visually appealing
+- [ ] official mirror (+ login)
 - [ ] Many other things I can't think of..
