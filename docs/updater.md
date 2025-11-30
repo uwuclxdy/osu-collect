@@ -2,7 +2,7 @@
 
 ### Overview
 
-The Updates tab will allow users to check their local osu! installation for missing or outdated beatmaps from osu!collector collections and selectively download only what's needed. It will support both **osu! stable** (r/w via `osu_db` crate) and **osu! lazer** (read-only via RealmDB).
+The Updates tab will allow users to check their local osu! installation for new, missing or outdated beatmaps from osu!collector collections and selectively download only what's needed. It will support both **osu! stable** (r/w via `osu_db` crate) and **osu! lazer** (read-only via RealmDB).
 
 ---
 
