@@ -63,6 +63,7 @@ pub enum DownloadEvent {
     BeatmapProgress {
         id: DownloadId,
         beatmapset_id: u32,
+        thread_index: usize,
         downloaded: u64,
         total: u64,
     },

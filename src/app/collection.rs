@@ -1,5 +1,9 @@
 use crate::download::{BeatmapStage, DownloadId, DownloadStage, DownloadSummary};
-use std::{collections::HashMap, collections::VecDeque};
+use std::{
+    collections::HashMap,
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
 
 #[derive(Debug, Default, Clone)]
 pub struct DownloadStats {
@@ -19,6 +23,9 @@ pub struct BeatmapRow {
 pub struct ThreadStatusLine {
     pub message: String,
     pub rate_limited: bool,
+    bytes_downloaded: u64,
+    last_update: Option<Instant>,
+    speed_bytes_per_sec: f64,
 }
 
 impl ThreadStatusLine {
@@ -26,7 +33,14 @@ impl ThreadStatusLine {
         Self {
             message: message.into(),
             rate_limited: false,
+            bytes_downloaded: 0,
+            last_update: None,
+            speed_bytes_per_sec: 0.0,
         }
+    }
+
+    pub fn speed_bytes_per_sec(&self) -> f64 {
+        self.speed_bytes_per_sec
     }
 }
 
@@ -134,6 +148,40 @@ impl CollectionPage {
             status.message = message.to_string();
             status.rate_limited = rate_limited;
         }
+    }
+
+    pub fn update_thread_progress(&mut self, thread_index: usize, downloaded: u64) {
+        if let Some(status) = self.thread_statuses.get_mut(thread_index) {
+            let now = Instant::now();
+            if let Some(last_update) = status.last_update {
+                let elapsed = now.duration_since(last_update);
+                if elapsed > Duration::from_millis(50) {
+                    let bytes_delta = downloaded.saturating_sub(status.bytes_downloaded);
+                    let speed = bytes_delta as f64 / elapsed.as_secs_f64();
+                    status.speed_bytes_per_sec = status.speed_bytes_per_sec * 0.7 + speed * 0.3;
+                    status.bytes_downloaded = downloaded;
+                    status.last_update = Some(now);
+                }
+            } else {
+                status.bytes_downloaded = downloaded;
+                status.last_update = Some(now);
+            }
+        }
+    }
+
+    pub fn reset_thread_speed(&mut self, thread_index: usize) {
+        if let Some(status) = self.thread_statuses.get_mut(thread_index) {
+            status.bytes_downloaded = 0;
+            status.last_update = None;
+            status.speed_bytes_per_sec = 0.0;
+        }
+    }
+
+    pub fn cumulative_speed(&self) -> f64 {
+        self.thread_statuses
+            .iter()
+            .map(|s| s.speed_bytes_per_sec())
+            .sum()
     }
 
     pub fn set_failed_maps(&mut self, mut ids: Vec<u32>) {

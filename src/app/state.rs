@@ -242,11 +242,13 @@ impl App {
             DownloadEvent::BeatmapProgress {
                 id,
                 beatmapset_id,
+                thread_index,
                 downloaded,
                 total,
             } => {
                 if let Some(page) = self.page_mut(id) {
                     page.update_progress(beatmapset_id, downloaded, total);
+                    page.update_thread_progress(thread_index, downloaded);
                 }
             }
             DownloadEvent::BeatmapStatus {
@@ -301,6 +303,13 @@ impl App {
                 rate_limited,
             } => {
                 if let Some(page) = self.page_mut(id) {
+                    let completed = message.starts_with("Done")
+                        || message.starts_with("Skipped")
+                        || message.starts_with("Failed")
+                        || message.starts_with("Accepted");
+                    if completed {
+                        page.reset_thread_speed(thread_index);
+                    }
                     page.update_thread_status(thread_index, &message, rate_limited);
                 }
             }

@@ -193,6 +193,7 @@ pub(crate) async fn download_pass(
                         let _ = tx_inner.send(DownloadEvent::BeatmapProgress {
                             id: args.id,
                             beatmapset_id,
+                            thread_index: slot,
                             downloaded,
                             total,
                         });

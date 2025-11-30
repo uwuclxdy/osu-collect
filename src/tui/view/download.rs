@@ -42,6 +42,17 @@ fn render_info(frame: &mut Frame, area: Rect, page: &CollectionPage) {
             stage_label
         };
 
+    let speed_display = if matches!(page.stage, DownloadStage::Downloading) {
+        let speed = page.cumulative_speed();
+        if speed >= 1.0 {
+            Some(format_speed(speed))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let counts_line = |label: &str, downloaded: u16, skipped: u16, failed: u16, unverified: u16| {
         let displayed_skipped = skipped.saturating_add(unverified);
         let mut parts = vec![
@@ -73,6 +84,18 @@ fn render_info(frame: &mut Frame, area: Rect, page: &CollectionPage) {
         )
     };
 
+    let mut status_spans = vec![
+        Span::styled("Status: ", Style::default().fg(Color::Gray)),
+        Span::styled(status, components::status_style(page.stage)),
+    ];
+    if let Some(ref speed) = speed_display {
+        status_spans.push(Span::styled(" @ ", Style::default().fg(Color::Gray)));
+        status_spans.push(Span::styled(
+            speed.clone(),
+            Style::default().fg(Color::Green),
+        ));
+    }
+
     let lines = vec![
         Line::from(vec![
             Span::styled("Collection: ", Style::default().fg(Color::Gray)),
@@ -94,10 +117,7 @@ fn render_info(frame: &mut Frame, area: Rect, page: &CollectionPage) {
                     .unwrap_or_else(|| "Preparing...".to_string()),
             ),
         ]),
-        Line::from(vec![
-            Span::styled("Status: ", Style::default().fg(Color::Gray)),
-            Span::styled(status, components::status_style(page.stage)),
-        ]),
+        Line::from(status_spans),
         Line::from(summary_line),
     ];
 
@@ -111,6 +131,19 @@ fn render_info(frame: &mut Frame, area: Rect, page: &CollectionPage) {
         .wrap(Wrap { trim: true });
 
     frame.render_widget(paragraph, area);
+}
+
+fn format_speed(bytes_per_sec: f64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+
+    if bytes_per_sec >= MB {
+        format!("{:.2} MB/s", bytes_per_sec / MB)
+    } else if bytes_per_sec >= KB {
+        format!("{:.1} KB/s", bytes_per_sec / KB)
+    } else {
+        format!("{:.0} B/s", bytes_per_sec)
+    }
 }
 
 fn render_gauge(frame: &mut Frame, area: Rect, page: &CollectionPage) {
