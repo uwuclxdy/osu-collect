@@ -3,7 +3,8 @@ use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Style},
-    widgets::{Block, BorderType, Borders, List, Paragraph, Wrap},
+    text::{Line, Span},
+    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap},
 };
 
 use super::{HomeView, components};
@@ -19,35 +20,47 @@ fn render_form(frame: &mut Frame, area: Rect, form: &HomeTab) {
         components::input_item(&form.collection, form.focus == HomeField::Collection),
         components::input_item(&form.directory, form.focus == HomeField::Directory),
         components::input_item(&form.custom_mirror, form.focus == HomeField::CustomMirror),
-        toggle(
-            "Use Nerinyan (api.nerinyan.moe)",
+        mirror_toggle(
+            "Use Nerinyan",
+            "api.nerinyan.moe",
             form.nerinyan,
             form.focus == HomeField::MirrorNerinyan,
         ),
-        toggle(
-            "Use Catboy Central (catboy.best)",
+        mirror_toggle(
+            "Use Catboy Central",
+            "catboy.best",
             form.catboy_central,
             form.focus == HomeField::MirrorCatboyCentral,
         ),
-        toggle(
-            "Use Catboy US (us.catboy.best)",
+        mirror_toggle(
+            "Use Catboy US",
+            "us.catboy.best",
             form.catboy_us,
             form.focus == HomeField::MirrorCatboyUs,
         ),
-        toggle(
-            "Use Catboy Asia (sg.catboy.best)",
+        mirror_toggle(
+            "Use Catboy Asia",
+            "sg.catboy.best",
             form.catboy_asia,
             form.focus == HomeField::MirrorCatboyAsia,
         ),
-        toggle(
-            "Use osu.direct (osu.direct)",
+        mirror_toggle(
+            "Use osu.direct",
+            "osu.direct",
             form.osu_direct,
             form.focus == HomeField::MirrorOsuDirect,
         ),
-        toggle(
-            "Use Sayobot (dl.sayobot.cn)",
+        mirror_toggle(
+            "Use Sayobot",
+            "dl.sayobot.cn",
             form.sayobot,
             form.focus == HomeField::MirrorSayobot,
+        ),
+        mirror_toggle(
+            "Use Nekoha",
+            "mirror.nekoha.moe",
+            form.nekoha,
+            form.focus == HomeField::MirrorNekoha,
         ),
         components::input_item(&form.threads, form.focus == HomeField::Threads),
         toggle(
@@ -80,6 +93,27 @@ fn render_form(frame: &mut Frame, area: Rect, form: &HomeTab) {
 
 fn toggle(label: &str, value: bool, focused: bool) -> ratatui::widgets::ListItem<'static> {
     components::toggle_item(label, value, focused)
+}
+
+fn mirror_toggle(label: &str, url: &str, value: bool, focused: bool) -> ListItem<'static> {
+    let marker = if value { "[x]" } else { "[ ]" };
+    let style = if focused {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default()
+    };
+
+    let spans = vec![
+        Span::styled(
+            if focused { "> " } else { "  " },
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::styled(marker, style),
+        Span::raw(format!(" {} ", label)),
+        Span::styled(url.to_string(), Style::default().fg(Color::DarkGray)),
+    ];
+
+    ListItem::new(Line::from(spans)).style(style)
 }
 
 fn render_message(frame: &mut Frame, area: Rect, form: &HomeTab) {

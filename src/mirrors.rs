@@ -32,6 +32,7 @@ pub enum MirrorKind {
     Catboy(CatboyRegion),
     OsuDirect,
     Sayobot,
+    Nekoha,
     Custom,
 }
 
@@ -42,6 +43,7 @@ impl MirrorKind {
             MirrorKind::Catboy(region) => region.label(),
             MirrorKind::OsuDirect => "osu.direct",
             MirrorKind::Sayobot => "Sayobot",
+            MirrorKind::Nekoha => "Nekoha",
             MirrorKind::Custom => "Custom",
         }
     }
@@ -52,6 +54,7 @@ impl MirrorKind {
             MirrorKind::Catboy(_) => Duration::from_secs(30),
             MirrorKind::OsuDirect => Duration::from_secs(75),
             MirrorKind::Sayobot => Duration::from_secs(60),
+            MirrorKind::Nekoha => Duration::from_secs(45),
             MirrorKind::Custom => Duration::from_secs(60),
         }
     }
@@ -81,6 +84,10 @@ impl MirrorKind {
                     "https://dl.sayobot.cn/beatmaps/download/full/{id}"
                 };
                 Some(template.to_string())
+            }
+            MirrorKind::Nekoha => {
+                // Nekoha doesn't support no-video downloads
+                Some("https://mirror.nekoha.moe/api4/download/{id}".to_string())
             }
             MirrorKind::Custom => None,
         }

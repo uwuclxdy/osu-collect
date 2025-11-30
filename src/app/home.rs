@@ -33,6 +33,7 @@ pub enum HomeField {
     MirrorCatboyAsia,
     MirrorOsuDirect,
     MirrorSayobot,
+    MirrorNekoha,
     Threads,
     SkipExisting,
     AutoOverwrite,
@@ -52,6 +53,7 @@ pub struct HomeTab {
     pub catboy_asia: bool,
     pub osu_direct: bool,
     pub sayobot: bool,
+    pub nekoha: bool,
     pub no_video: bool,
     pub focus: HomeField,
     pub message: Option<AppMessage>,
@@ -68,6 +70,7 @@ impl HomeTab {
         let catboy_asia = config.mirror.catboy_asia;
         let osu_direct = config.mirror.osu_direct;
         let sayobot = config.mirror.sayobot;
+        let nekoha = config.mirror.nekoha;
         let custom_template = config.mirror.custom_template().unwrap_or("");
 
         if !nerinyan
@@ -76,6 +79,7 @@ impl HomeTab {
             && !catboy_asia
             && !osu_direct
             && !sayobot
+            && !nekoha
             && custom_template.is_empty()
         {
             nerinyan = true;
@@ -123,6 +127,7 @@ impl HomeTab {
             catboy_asia,
             osu_direct,
             sayobot,
+            nekoha,
             no_video: config.download.no_video,
             focus: HomeField::Collection,
             message: None,
@@ -142,7 +147,8 @@ impl HomeTab {
             HomeField::MirrorCatboyUs => HomeField::MirrorCatboyAsia,
             HomeField::MirrorCatboyAsia => HomeField::MirrorOsuDirect,
             HomeField::MirrorOsuDirect => HomeField::MirrorSayobot,
-            HomeField::MirrorSayobot => HomeField::Threads,
+            HomeField::MirrorSayobot => HomeField::MirrorNekoha,
+            HomeField::MirrorNekoha => HomeField::Threads,
             HomeField::Threads => HomeField::SkipExisting,
             HomeField::SkipExisting => HomeField::AutoOverwrite,
             HomeField::AutoOverwrite => HomeField::NoVideo,
@@ -161,7 +167,8 @@ impl HomeTab {
             HomeField::MirrorCatboyAsia => HomeField::MirrorCatboyUs,
             HomeField::MirrorOsuDirect => HomeField::MirrorCatboyAsia,
             HomeField::MirrorSayobot => HomeField::MirrorOsuDirect,
-            HomeField::Threads => HomeField::MirrorSayobot,
+            HomeField::MirrorNekoha => HomeField::MirrorSayobot,
+            HomeField::Threads => HomeField::MirrorNekoha,
             HomeField::SkipExisting => HomeField::Threads,
             HomeField::AutoOverwrite => HomeField::SkipExisting,
             HomeField::NoVideo => HomeField::AutoOverwrite,
@@ -184,6 +191,7 @@ impl HomeTab {
             | HomeField::MirrorCatboyAsia
             | HomeField::MirrorOsuDirect
             | HomeField::MirrorSayobot
+            | HomeField::MirrorNekoha
             | HomeField::SkipExisting
             | HomeField::AutoOverwrite
             | HomeField::NoVideo => {}
@@ -202,6 +210,7 @@ impl HomeTab {
             | HomeField::MirrorCatboyAsia
             | HomeField::MirrorOsuDirect
             | HomeField::MirrorSayobot
+            | HomeField::MirrorNekoha
             | HomeField::SkipExisting
             | HomeField::AutoOverwrite
             | HomeField::NoVideo => {}
@@ -227,6 +236,9 @@ impl HomeTab {
             }
             HomeField::MirrorSayobot => {
                 self.sayobot = !self.sayobot;
+            }
+            HomeField::MirrorNekoha => {
+                self.nekoha = !self.nekoha;
             }
             HomeField::SkipExisting => {
                 self.skip_existing = !self.skip_existing;
@@ -320,6 +332,12 @@ impl HomeTab {
 
         if self.sayobot
             && let Some(endpoint) = MirrorEndpoint::builtin(MirrorKind::Sayobot, self.no_video)
+        {
+            mirrors.push(endpoint);
+        }
+
+        if self.nekoha
+            && let Some(endpoint) = MirrorEndpoint::builtin(MirrorKind::Nekoha, self.no_video)
         {
             mirrors.push(endpoint);
         }

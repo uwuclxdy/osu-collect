@@ -174,6 +174,7 @@ impl App {
                             | HomeField::MirrorCatboyAsia
                             | HomeField::MirrorOsuDirect
                             | HomeField::MirrorSayobot
+                            | HomeField::MirrorNekoha
                             | HomeField::NoVideo
                     ) {
                         self.home.toggle_current();

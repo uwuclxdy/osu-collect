@@ -49,6 +49,11 @@ fn render_form(frame: &mut Frame, area: Rect, form: &ConfigTab) {
             form.sayobot,
             form.focus == ConfigField::MirrorSayobot,
         ),
+        components::toggle_item(
+            "Default: use Nekoha",
+            form.nekoha,
+            form.focus == ConfigField::MirrorNekoha,
+        ),
         components::input_item(
             &form.custom_mirror,
             form.focus == ConfigField::MirrorCustomUrl,
