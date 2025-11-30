@@ -11,6 +11,8 @@ pub struct DownloadStats {
     pub skipped: u16,
     pub failed: u16,
     pub unverified: u16,
+    pub bytes_downloaded: u64,
+    pub bytes_total: u64,
 }
 
 pub struct BeatmapRow {
@@ -113,6 +115,17 @@ impl CollectionPage {
         if let Some(idx) = self.index.get(&beatmapset_id).copied()
             && let Some(row) = self.beatmaps.get_mut(idx)
         {
+            if let Some((prev_downloaded, prev_total)) = row.progress {
+                self.stats.bytes_downloaded =
+                    self.stats.bytes_downloaded.saturating_sub(prev_downloaded) + downloaded;
+                if prev_total != total {
+                    self.stats.bytes_total =
+                        self.stats.bytes_total.saturating_sub(prev_total) + total;
+                }
+            } else {
+                self.stats.bytes_downloaded += downloaded;
+                self.stats.bytes_total += total;
+            }
             row.progress = Some((downloaded, total));
         }
     }

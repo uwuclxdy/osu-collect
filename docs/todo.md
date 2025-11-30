@@ -8,13 +8,7 @@ read current README then analyze the codebase and update the README to reflect t
 
 ---
 
-
-
-add accumulative download speed (sum from all threads) in the overview block
-
-show how much gb is downloaded out of total (x/yGB)
-
-make BeatmapStatus reflect a state different than "Downloading" when all threads are on the same status different than "Downloading". for that, we need to implement a new thread status for rechecking maps as well. it should look like this: "Thread {number}: Rechecking #{mapset id}"
+make BeatmapStatus reflect a state different from "Downloading" when all threads are on the same status different from "Downloading". for that, we need to implement a new thread status for rechecking maps as well. it should look like this: "Thread {number}: Rechecking #{mapset id}"
 
 
 

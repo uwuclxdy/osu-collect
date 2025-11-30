@@ -84,6 +84,19 @@ fn render_info(frame: &mut Frame, area: Rect, page: &CollectionPage) {
         )
     };
 
+    let bytes_display = if matches!(
+        page.stage,
+        DownloadStage::Downloading | DownloadStage::Completed
+    ) && page.stats.bytes_total > 0
+    {
+        Some(format_bytes_progress(
+            page.stats.bytes_downloaded,
+            page.stats.bytes_total,
+        ))
+    } else {
+        None
+    };
+
     let mut status_spans = vec![
         Span::styled("Status: ", Style::default().fg(Color::Gray)),
         Span::styled(status, components::status_style(page.stage)),
@@ -94,6 +107,14 @@ fn render_info(frame: &mut Frame, area: Rect, page: &CollectionPage) {
             speed.clone(),
             Style::default().fg(Color::Green),
         ));
+    }
+    if let Some(ref bytes) = bytes_display {
+        status_spans.push(Span::styled(" (", Style::default().fg(Color::Gray)));
+        status_spans.push(Span::styled(
+            bytes.clone(),
+            Style::default().fg(Color::Yellow),
+        ));
+        status_spans.push(Span::styled(")", Style::default().fg(Color::Gray)));
     }
 
     let lines = vec![
@@ -143,6 +164,25 @@ fn format_speed(bytes_per_sec: f64) -> String {
         format!("{:.1} KB/s", bytes_per_sec / KB)
     } else {
         format!("{:.0} B/s", bytes_per_sec)
+    }
+}
+
+fn format_bytes_progress(downloaded: u64, total: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+
+    let downloaded_f = downloaded as f64;
+    let total_f = total as f64;
+
+    if total_f >= GB {
+        format!("{:.2}/{:.2} GB", downloaded_f / GB, total_f / GB)
+    } else if total_f >= MB {
+        format!("{:.1}/{:.1} MB", downloaded_f / MB, total_f / MB)
+    } else if total_f >= KB {
+        format!("{:.0}/{:.0} KB", downloaded_f / KB, total_f / KB)
+    } else {
+        format!("{downloaded}/{total} B")
     }
 }
 
