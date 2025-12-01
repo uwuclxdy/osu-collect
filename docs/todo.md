@@ -18,6 +18,4 @@ make sure that the app deletes the newly created directory if the download was c
 
 clear distinction between old maps that cant get verified, prompt user to redownload?
 
-collection checker and updater (dl only new maps)
-
-show warning if not enough space before starting download
+show warning if not enough space in target directory before starting download

@@ -398,27 +398,31 @@ async fn run_download_loop(
     DownloadLoopResult { failure_tracker }
 }
 
-async fn abort_if_shutdown(
+struct AbortContext<'a> {
     id: DownloadId,
-    shutdown: &Arc<AtomicBool>,
-    ctx: &DownloadPassContext,
-    failures: &FailureTracker,
-    tx: &UnboundedSender<DownloadEvent>,
-    log_message: Option<&str>,
-    warn_message: Option<&str>,
-) -> bool {
-    if !shutdown.load(Ordering::SeqCst) {
+    shutdown: &'a Arc<AtomicBool>,
+    ctx: &'a DownloadPassContext,
+    failures: &'a FailureTracker,
+    tx: &'a UnboundedSender<DownloadEvent>,
+}
+
+async fn abort_if_shutdown(abort: AbortContext<'_>, log_message: Option<&str>) -> bool {
+    if !abort.shutdown.load(Ordering::SeqCst) {
         return false;
     }
 
-    handle_shutdown_cleanup(id, failures, &ctx.cleanup_tracker, tx).await;
+    handle_shutdown_cleanup(
+        abort.id,
+        abort.failures,
+        &abort.ctx.cleanup_tracker,
+        &abort.ctx.output_dir,
+        abort.tx,
+    )
+    .await;
     if let Some(message) = log_message {
-        tx.send_log(id, message.to_string());
+        abort.tx.send_log(abort.id, message.to_string());
     }
-    tx.send_failed(id, "Download aborted by user");
-    if let Some(warn_text) = warn_message {
-        warn!("{}", warn_text);
-    }
+    abort.tx.send_failed(abort.id, "Download aborted by user");
     true
 }
 
@@ -440,6 +444,7 @@ async fn handle_shutdown_cleanup(
     id: DownloadId,
     failure_tracker: &FailureTracker,
     cleanup_tracker: &CleanupTracker,
+    output_dir: &Path,
     tx: &UnboundedSender<DownloadEvent>,
 ) {
     emit_failed_maps(tx, id, failure_tracker);
@@ -457,13 +462,42 @@ async fn handle_shutdown_cleanup(
             ),
         );
     }
-    for (path, message) in cleanup_outcome.failures {
+    for (path, message) in &cleanup_outcome.failures {
         warn!(target = %path.display(), error = %message, "Failed to cleanup file");
         tx.send_log(
             id,
             format!("Cleanup warning for {}: {}", path.display(), message),
         );
     }
+
+    match try_remove_empty_output_dir(output_dir).await {
+        Ok(()) => {
+            info!(dir = %output_dir.display(), "Removed empty output directory");
+            tx.send_log(
+                id,
+                format!("Removed empty directory {}", output_dir.display()),
+            );
+        }
+        Err(err) if err == "Directory is not empty" => {}
+        Err(err) => {
+            warn!(dir = %output_dir.display(), error = %err, "Failed to remove output directory");
+        }
+    }
+}
+
+async fn try_remove_empty_output_dir(output_dir: &Path) -> Result<(), String> {
+    let mut entries = fs::read_dir(output_dir).await.map_err(|e| e.to_string())?;
+
+    if entries
+        .next_entry()
+        .await
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
+        return Err("Directory is not empty".to_string());
+    }
+
+    fs::remove_dir(output_dir).await.map_err(|e| e.to_string())
 }
 
 fn validate_mirrors(mirrors: &[MirrorEndpoint]) -> Result<(), String> {
@@ -566,16 +600,18 @@ async fn run_download(
     let loop_result = run_download_loop(&ctx, &mut totals, "Starting").await;
 
     if abort_if_shutdown(
-        id,
-        &shutdown,
-        &ctx,
-        &loop_result.failure_tracker,
-        tx,
+        AbortContext {
+            id,
+            shutdown: &shutdown,
+            ctx: &ctx,
+            failures: &loop_result.failure_tracker,
+            tx,
+        },
         Some("Download aborted before completion"),
-        Some("Download aborted due to shutdown request"),
     )
     .await
     {
+        warn!("Download aborted due to shutdown request");
         return Ok(());
     }
 
@@ -667,12 +703,13 @@ async fn run_selective_download(
     let loop_result = run_download_loop(&ctx, &mut totals, "Starting selective").await;
 
     if abort_if_shutdown(
-        id,
-        &shutdown,
-        &ctx,
-        &loop_result.failure_tracker,
-        tx,
-        None,
+        AbortContext {
+            id,
+            shutdown: &shutdown,
+            ctx: &ctx,
+            failures: &loop_result.failure_tracker,
+            tx,
+        },
         None,
     )
     .await
