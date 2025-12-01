@@ -1,6 +1,6 @@
 use crate::app::runtime::InputEvent;
 use crossterm::{
-    event::{self, Event as CrosstermEvent},
+    event::{self, Event as CrosstermEvent, KeyEventKind},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -37,7 +37,7 @@ pub fn spawn_input_thread(tx: mpsc::UnboundedSender<InputEvent>) -> Option<threa
             loop {
                 if event::poll(tick_rate).unwrap_or(false) {
                     match event::read() {
-                        Ok(CrosstermEvent::Key(key)) => {
+                        Ok(CrosstermEvent::Key(key)) if key.kind == KeyEventKind::Press => {
                             if tx.send(InputEvent::Key(key)).is_err() {
                                 break;
                             }
