@@ -2,21 +2,26 @@ use super::{
     collection::CollectionPage,
     config::ConfigTab,
     home::{HomeField, HomeTab},
+    updates::{UpdatesAction, UpdatesTab},
 };
 use crate::{
     config::{Config, ConfigService},
-    download::{DownloadEvent, DownloadId, DownloadRequest, DownloadStage},
+    download::{
+        DownloadEvent, DownloadId, DownloadRequest, DownloadStage, SelectiveDownloadRequest,
+    },
     utils,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tracing::debug;
 
 const HOME_TAB_INDEX: usize = 0;
-const CONFIG_TAB_INDEX: usize = 1;
-const STATIC_TABS: usize = 2;
+const UPDATES_TAB_INDEX: usize = 1;
+const CONFIG_TAB_INDEX: usize = 2;
+const STATIC_TABS: usize = 3;
 
 pub struct App {
     pub home: HomeTab,
+    pub updates: UpdatesTab,
     pub config: ConfigTab,
     pub downloads: Vec<CollectionPage>,
     pub active_tab: usize,
@@ -30,9 +35,14 @@ pub enum AppCommand {
         id: DownloadId,
         request: DownloadRequest,
     },
+    StartSelectiveDownload {
+        id: DownloadId,
+        request: SelectiveDownloadRequest,
+    },
     CancelDownload {
         id: DownloadId,
     },
+    ScanLocalDatabase,
     Quit,
 }
 
@@ -40,6 +50,7 @@ impl App {
     pub fn new(config: Config) -> Self {
         Self {
             home: HomeTab::new(&config),
+            updates: UpdatesTab::new(),
             config: ConfigTab::new(&config),
             downloads: Vec::new(),
             active_tab: HOME_TAB_INDEX,
@@ -52,23 +63,35 @@ impl App {
         self.active_tab
     }
 
-    pub fn next_tab(&mut self) {
+    pub fn next_tab(&mut self) -> Option<AppCommand> {
         let total = self.total_tabs();
         self.active_tab = (self.active_tab + 1) % total;
+        self.check_auto_scan()
     }
 
-    pub fn prev_tab(&mut self) {
+    pub fn prev_tab(&mut self) -> Option<AppCommand> {
         let total = self.total_tabs();
         if self.active_tab == 0 {
             self.active_tab = total - 1;
         } else {
             self.active_tab -= 1;
         }
+        self.check_auto_scan()
+    }
+
+    fn check_auto_scan(&mut self) -> Option<AppCommand> {
+        if self.active_tab == UPDATES_TAB_INDEX && self.updates.needs_scan {
+            self.updates.needs_scan = false;
+            Some(AppCommand::ScanLocalDatabase)
+        } else {
+            None
+        }
     }
 
     fn focus_next_field(&mut self) {
         match self.active_tab() {
             HOME_TAB_INDEX => self.home.next_field(),
+            UPDATES_TAB_INDEX => self.updates.next_field(),
             CONFIG_TAB_INDEX => self.config.next_field(),
             _ => {}
         }
@@ -77,6 +100,7 @@ impl App {
     fn focus_prev_field(&mut self) {
         match self.active_tab() {
             HOME_TAB_INDEX => self.home.prev_field(),
+            UPDATES_TAB_INDEX => self.updates.prev_field(),
             CONFIG_TAB_INDEX => self.config.prev_field(),
             _ => {}
         }
@@ -139,6 +163,78 @@ impl App {
         }
     }
 
+    pub fn request_selective_download(&mut self) -> Option<(DownloadId, SelectiveDownloadRequest)> {
+        let beatmapset_ids = self.updates.selected_beatmapset_ids();
+        if beatmapset_ids.is_empty() {
+            self.updates.set_error("No beatmaps selected for download");
+            return None;
+        }
+
+        let collection_ids: Vec<u32> = self
+            .updates
+            .selected_collection_ids()
+            .into_iter()
+            .filter_map(|id| u32::try_from(id).ok())
+            .collect();
+
+        if collection_ids.is_empty() {
+            self.updates.set_error("No collections available");
+            return None;
+        }
+
+        let mirrors = self.home.build_mirrors();
+        if mirrors.is_empty() {
+            self.updates
+                .set_error("No mirrors selected (configure in Home tab)");
+            return None;
+        }
+
+        let concurrent = self.home.resolved_threads();
+
+        let directory = if self.home.directory.value.trim().is_empty() {
+            std::env::current_dir()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| ".".to_string())
+        } else {
+            self.home.directory.value.trim().to_string()
+        };
+
+        if self.downloads.len() >= usize::MAX - 1 {
+            self.updates.set_error("Too many downloads queued");
+            return None;
+        }
+
+        let id = self.next_download_id;
+        self.next_download_id += 1;
+
+        let placeholder_title = if collection_ids.len() == 1 {
+            format!("Update #{}", collection_ids[0])
+        } else {
+            format!("Update ({} collections)", collection_ids.len())
+        };
+
+        let concurrent_usize = usize::from(concurrent.max(1));
+        let mut page = CollectionPage::new(id, placeholder_title, concurrent_usize);
+        page.stage = DownloadStage::Resolving;
+        self.downloads.push(page);
+        self.active_tab = STATIC_TABS + self.downloads.len() - 1;
+
+        self.updates.set_info(format!(
+            "Queued update download #{id} ({} beatmaps)",
+            beatmapset_ids.len()
+        ));
+
+        let request = SelectiveDownloadRequest {
+            collection_ids,
+            beatmapset_ids,
+            directory,
+            mirrors,
+            concurrent,
+        };
+
+        Some((id, request))
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<AppCommand> {
         let is_quit_key = matches!(key.code, KeyCode::Char('q') | KeyCode::Esc);
         if self.home.quit_prompt && !is_quit_key {
@@ -147,19 +243,63 @@ impl App {
 
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => {
+                if self.active_tab() == UPDATES_TAB_INDEX && self.updates.handle_escape().is_some()
+                {
+                    return None;
+                }
                 return self.handle_quit_key();
             }
-            KeyCode::Left => self.prev_tab(),
-            KeyCode::Right => self.next_tab(),
+            KeyCode::Left => {
+                if !self.updates.in_collection_list
+                    && !self.updates.in_beatmap_list
+                    && let Some(cmd) = self.prev_tab()
+                {
+                    return Some(cmd);
+                }
+            }
+            KeyCode::Right => {
+                if !self.updates.in_collection_list
+                    && !self.updates.in_beatmap_list
+                    && let Some(cmd) = self.next_tab()
+                {
+                    return Some(cmd);
+                }
+            }
             KeyCode::Tab => self.focus_next_field(),
             KeyCode::BackTab => self.focus_prev_field(),
-            KeyCode::Up => self.focus_prev_field(),
-            KeyCode::Down => self.focus_next_field(),
+            KeyCode::Up => {
+                if self.active_tab() == UPDATES_TAB_INDEX
+                    && (self.updates.in_collection_list || self.updates.in_beatmap_list)
+                {
+                    self.updates.scroll_up();
+                } else {
+                    self.focus_prev_field();
+                }
+            }
+            KeyCode::Down => {
+                if self.active_tab() == UPDATES_TAB_INDEX
+                    && (self.updates.in_collection_list || self.updates.in_beatmap_list)
+                {
+                    self.updates.scroll_down();
+                } else {
+                    self.focus_next_field();
+                }
+            }
             KeyCode::Enter => {
                 if self.active_tab() == HOME_TAB_INDEX
                     && let Some((id, request)) = self.request_download()
                 {
                     return Some(AppCommand::StartDownload { id, request });
+                }
+                if self.active_tab() == UPDATES_TAB_INDEX {
+                    match self.updates.handle_enter() {
+                        UpdatesAction::Download => {
+                            if let Some((id, request)) = self.request_selective_download() {
+                                return Some(AppCommand::StartSelectiveDownload { id, request });
+                            }
+                        }
+                        UpdatesAction::RefreshAll | UpdatesAction::None => {}
+                    }
                 }
             }
             KeyCode::Char(' ') => match self.active_tab() {
@@ -182,6 +322,11 @@ impl App {
                         self.home.handle_char(' ');
                     }
                 }
+                UPDATES_TAB_INDEX => {
+                    if self.updates.toggle_current() == UpdatesAction::RefreshAll {
+                        return Some(AppCommand::ScanLocalDatabase);
+                    }
+                }
                 CONFIG_TAB_INDEX => {
                     if self.config.focus.is_text_input() {
                         self.config.handle_char(' ');
@@ -193,6 +338,7 @@ impl App {
             },
             KeyCode::Char(ch) => match self.active_tab() {
                 HOME_TAB_INDEX => self.home.handle_char(ch),
+                UPDATES_TAB_INDEX => self.updates.handle_char(ch),
                 CONFIG_TAB_INDEX => {
                     let focus = self.config.focus;
                     let is_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -206,6 +352,7 @@ impl App {
             },
             KeyCode::Backspace => match self.active_tab() {
                 HOME_TAB_INDEX => self.home.backspace(),
+                UPDATES_TAB_INDEX => self.updates.backspace(),
                 CONFIG_TAB_INDEX => self.config.backspace(),
                 _ => {}
             },
@@ -343,6 +490,7 @@ impl App {
     pub fn tab_titles(&self) -> Vec<String> {
         let mut titles = Vec::with_capacity(self.downloads.len() + STATIC_TABS);
         titles.push("Home".to_string());
+        titles.push("Updates".to_string());
         titles.push("Config".to_string());
         for page in &self.downloads {
             titles.push(page.title.clone());

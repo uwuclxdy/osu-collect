@@ -28,12 +28,12 @@ pub enum HomeField {
     Directory,
     CustomMirror,
     MirrorNerinyan,
-    MirrorCatboyCentral,
-    MirrorCatboyUs,
-    MirrorCatboyAsia,
     MirrorOsuDirect,
     MirrorSayobot,
     MirrorNekoha,
+    MirrorCatboyCentral,
+    MirrorCatboyUs,
+    MirrorCatboyAsia,
     Threads,
     SkipExisting,
     AutoOverwrite,
@@ -142,13 +142,13 @@ impl HomeTab {
             HomeField::Collection => HomeField::Directory,
             HomeField::Directory => HomeField::CustomMirror,
             HomeField::CustomMirror => HomeField::MirrorNerinyan,
-            HomeField::MirrorNerinyan => HomeField::MirrorCatboyCentral,
-            HomeField::MirrorCatboyCentral => HomeField::MirrorCatboyUs,
-            HomeField::MirrorCatboyUs => HomeField::MirrorCatboyAsia,
-            HomeField::MirrorCatboyAsia => HomeField::MirrorOsuDirect,
+            HomeField::MirrorNerinyan => HomeField::MirrorOsuDirect,
             HomeField::MirrorOsuDirect => HomeField::MirrorSayobot,
             HomeField::MirrorSayobot => HomeField::MirrorNekoha,
-            HomeField::MirrorNekoha => HomeField::Threads,
+            HomeField::MirrorNekoha => HomeField::MirrorCatboyCentral,
+            HomeField::MirrorCatboyCentral => HomeField::MirrorCatboyUs,
+            HomeField::MirrorCatboyUs => HomeField::MirrorCatboyAsia,
+            HomeField::MirrorCatboyAsia => HomeField::Threads,
             HomeField::Threads => HomeField::SkipExisting,
             HomeField::SkipExisting => HomeField::AutoOverwrite,
             HomeField::AutoOverwrite => HomeField::NoVideo,
@@ -162,13 +162,13 @@ impl HomeTab {
             HomeField::Directory => HomeField::Collection,
             HomeField::CustomMirror => HomeField::Directory,
             HomeField::MirrorNerinyan => HomeField::CustomMirror,
-            HomeField::MirrorCatboyCentral => HomeField::MirrorNerinyan,
-            HomeField::MirrorCatboyUs => HomeField::MirrorCatboyCentral,
-            HomeField::MirrorCatboyAsia => HomeField::MirrorCatboyUs,
-            HomeField::MirrorOsuDirect => HomeField::MirrorCatboyAsia,
+            HomeField::MirrorOsuDirect => HomeField::MirrorNerinyan,
             HomeField::MirrorSayobot => HomeField::MirrorOsuDirect,
             HomeField::MirrorNekoha => HomeField::MirrorSayobot,
-            HomeField::Threads => HomeField::MirrorNekoha,
+            HomeField::MirrorCatboyCentral => HomeField::MirrorNekoha,
+            HomeField::MirrorCatboyUs => HomeField::MirrorCatboyCentral,
+            HomeField::MirrorCatboyAsia => HomeField::MirrorCatboyUs,
+            HomeField::Threads => HomeField::MirrorCatboyAsia,
             HomeField::SkipExisting => HomeField::Threads,
             HomeField::AutoOverwrite => HomeField::SkipExisting,
             HomeField::NoVideo => HomeField::AutoOverwrite,
@@ -303,6 +303,24 @@ impl HomeTab {
             mirrors.push(endpoint);
         }
 
+        if self.osu_direct
+            && let Some(endpoint) = MirrorEndpoint::builtin(MirrorKind::OsuDirect, self.no_video)
+        {
+            mirrors.push(endpoint);
+        }
+
+        if self.sayobot
+            && let Some(endpoint) = MirrorEndpoint::builtin(MirrorKind::Sayobot, self.no_video)
+        {
+            mirrors.push(endpoint);
+        }
+
+        if self.nekoha
+            && let Some(endpoint) = MirrorEndpoint::builtin(MirrorKind::Nekoha, self.no_video)
+        {
+            mirrors.push(endpoint);
+        }
+
         if self.catboy_central
             && let Some(endpoint) =
                 MirrorEndpoint::builtin(MirrorKind::Catboy(CatboyRegion::Central), self.no_video)
@@ -320,24 +338,6 @@ impl HomeTab {
         if self.catboy_asia
             && let Some(endpoint) =
                 MirrorEndpoint::builtin(MirrorKind::Catboy(CatboyRegion::Asia), self.no_video)
-        {
-            mirrors.push(endpoint);
-        }
-
-        if self.osu_direct
-            && let Some(endpoint) = MirrorEndpoint::builtin(MirrorKind::OsuDirect, self.no_video)
-        {
-            mirrors.push(endpoint);
-        }
-
-        if self.sayobot
-            && let Some(endpoint) = MirrorEndpoint::builtin(MirrorKind::Sayobot, self.no_video)
-        {
-            mirrors.push(endpoint);
-        }
-
-        if self.nekoha
-            && let Some(endpoint) = MirrorEndpoint::builtin(MirrorKind::Nekoha, self.no_video)
         {
             mirrors.push(endpoint);
         }
@@ -361,6 +361,72 @@ impl HomeTab {
             skip_existing: self.skip_existing,
             auto_overwrite: self.auto_overwrite,
         })
+    }
+
+    pub fn build_mirrors(&self) -> Vec<MirrorEndpoint> {
+        let mut mirrors = Vec::new();
+
+        if self.nerinyan
+            && let Some(endpoint) = MirrorEndpoint::builtin(MirrorKind::Nerinyan, self.no_video)
+        {
+            mirrors.push(endpoint);
+        }
+
+        if self.osu_direct
+            && let Some(endpoint) = MirrorEndpoint::builtin(MirrorKind::OsuDirect, self.no_video)
+        {
+            mirrors.push(endpoint);
+        }
+
+        if self.sayobot
+            && let Some(endpoint) = MirrorEndpoint::builtin(MirrorKind::Sayobot, self.no_video)
+        {
+            mirrors.push(endpoint);
+        }
+
+        if self.nekoha
+            && let Some(endpoint) = MirrorEndpoint::builtin(MirrorKind::Nekoha, self.no_video)
+        {
+            mirrors.push(endpoint);
+        }
+
+        if self.catboy_central
+            && let Some(endpoint) =
+                MirrorEndpoint::builtin(MirrorKind::Catboy(CatboyRegion::Central), self.no_video)
+        {
+            mirrors.push(endpoint);
+        }
+
+        if self.catboy_us
+            && let Some(endpoint) =
+                MirrorEndpoint::builtin(MirrorKind::Catboy(CatboyRegion::Us), self.no_video)
+        {
+            mirrors.push(endpoint);
+        }
+
+        if self.catboy_asia
+            && let Some(endpoint) =
+                MirrorEndpoint::builtin(MirrorKind::Catboy(CatboyRegion::Asia), self.no_video)
+        {
+            mirrors.push(endpoint);
+        }
+
+        let trimmed_custom = self.custom_mirror.value.trim();
+        if !trimmed_custom.is_empty()
+            && let Ok(custom_endpoint) = MirrorEndpoint::custom(trimmed_custom)
+        {
+            mirrors.push(custom_endpoint);
+        }
+
+        mirrors
+    }
+
+    pub fn resolved_threads(&self) -> u8 {
+        if self.threads.value.trim().is_empty() {
+            self.default_threads
+        } else {
+            parse_thread_count(&self.threads.value).unwrap_or(self.default_threads)
+        }
     }
 }
 

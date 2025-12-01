@@ -2,6 +2,7 @@
 pub enum MessageKind {
     Info,
     Error,
+    Loading,
 }
 
 pub struct AppMessage {

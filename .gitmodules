@@ -1,0 +1,4 @@
+[submodule "vendor/realm-cpp"]
+	path = vendor/realm-cpp
+	url = https://github.com/realm/realm-cpp.git
+	branch = community

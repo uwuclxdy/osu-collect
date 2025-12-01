@@ -1,11 +1,13 @@
 use crate::{
-    app::{InputField, ThreadStatusLine},
+    app::{InputField, MessageKind, ThreadStatusLine, messages::AppMessage},
     download::DownloadStage,
 };
 use ratatui::{
+    Frame,
+    layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{ListItem, Tabs},
+    widgets::{Block, BorderType, Borders, ListItem, Paragraph, Tabs, Wrap},
 };
 
 use super::TabsView;
@@ -136,4 +138,45 @@ fn thread_style(status: &ThreadStatusLine) -> Style {
     }
 
     Style::default()
+}
+
+pub struct ConsoleMessage<'a> {
+    pub message: Option<&'a AppMessage>,
+    pub quit_prompt: bool,
+    pub default_text: &'a str,
+}
+
+pub fn render_console(frame: &mut Frame, area: Rect, console: ConsoleMessage) {
+    let (text, style) = if console.quit_prompt {
+        (
+            " Press q again to quit; all downloads will be cancelled.".to_string(),
+            Style::default().fg(Color::Yellow),
+        )
+    } else {
+        match console.message {
+            Some(msg) => {
+                let style = match msg.kind {
+                    MessageKind::Info => Style::default().fg(Color::Green),
+                    MessageKind::Error => Style::default().fg(Color::Red),
+                    MessageKind::Loading => Style::default().fg(Color::Yellow),
+                };
+                (msg.text.clone(), style)
+            }
+            None => (
+                console.default_text.to_string(),
+                Style::default().fg(Color::Gray),
+            ),
+        }
+    };
+
+    let paragraph = Paragraph::new(text)
+        .style(style)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title(" Console "),
+        )
+        .wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, area);
 }

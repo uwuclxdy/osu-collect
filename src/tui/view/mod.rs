@@ -3,8 +3,9 @@ mod config;
 mod download;
 mod footer;
 mod home;
+mod updates;
 
-use crate::app::{App, CollectionPage, ConfigTab, HomeTab};
+use crate::app::{App, CollectionPage, ConfigTab, HomeTab, UpdatesTab};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout},
@@ -45,7 +46,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     match view.active_tab {
         0 => home::render(frame, content_area, view.home),
-        1 => config::render(frame, content_area, view.config),
+        1 => updates::render(frame, content_area, view.updates),
+        2 => config::render(frame, content_area, view.config),
         _ => {
             if let Some(download_view) = view.download {
                 download::render(frame, content_area, download_view);
@@ -74,6 +76,17 @@ pub struct HomeView<'a> {
 
 impl<'a> From<&'a HomeTab> for HomeView<'a> {
     fn from(form: &'a HomeTab) -> Self {
+        Self { form }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct UpdatesView<'a> {
+    pub form: &'a UpdatesTab,
+}
+
+impl<'a> From<&'a UpdatesTab> for UpdatesView<'a> {
+    fn from(form: &'a UpdatesTab) -> Self {
         Self { form }
     }
 }
@@ -122,6 +135,7 @@ impl TabsView {
 
 struct AppView<'a> {
     home: HomeView<'a>,
+    updates: UpdatesView<'a>,
     config: ConfigView<'a>,
     download: Option<DownloadView<'a>>,
     tabs: TabsView,
@@ -135,6 +149,7 @@ impl<'a> From<&'a App> for AppView<'a> {
 
         Self {
             home: HomeView::from(&app.home),
+            updates: UpdatesView::from(&app.updates),
             config: ConfigView::new(&app.config, app.home.quit_prompt),
             download,
             tabs: TabsView::new(app.tab_titles(), active_tab),

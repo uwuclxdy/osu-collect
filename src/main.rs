@@ -4,6 +4,8 @@ mod config;
 mod core;
 mod download;
 mod mirrors;
+mod osu_db;
+mod realm_bridge;
 mod tui;
 mod utils;
 mod worker;
@@ -22,12 +24,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_service = ConfigService::new();
     let config = config_service.load_or_default();
     let _logging_guard = utils::init_logging(&config.logging)?;
-    let startup_notice = match auto_update::check_and_apply().await {
-        Ok(message) => message,
-        Err(err) => {
-            warn!(error = %err, "Auto-update failed; new version available!");
-            None
-        }
-    };
+    let startup_notice = auto_update::check_and_apply().await.unwrap_or_else(|err| {
+        warn!(error = %err, "Auto-update failed; new version available!");
+        None
+    });
     run_app(config, startup_notice).await
 }

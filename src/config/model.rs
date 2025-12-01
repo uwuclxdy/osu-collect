@@ -20,6 +20,12 @@ pub struct Config {
 pub struct MirrorConfig {
     #[serde(default = "default_true")]
     pub nerinyan: bool,
+    #[serde(default)]
+    pub osu_direct: bool,
+    #[serde(default)]
+    pub sayobot: bool,
+    #[serde(default)]
+    pub nekoha: bool,
     #[serde(default, alias = "catboy")]
     pub catboy_central: bool,
     #[serde(default)]
@@ -27,22 +33,25 @@ pub struct MirrorConfig {
     #[serde(default)]
     pub catboy_asia: bool,
     #[serde(default)]
-    pub osu_direct: bool,
-    #[serde(default)]
-    pub sayobot: bool,
-    #[serde(default)]
-    pub nekoha: bool,
-    #[serde(default)]
     pub url: Option<Box<str>>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
-#[derive(Default)]
 pub struct DownloadConfig {
     pub skip_existing: bool,
     pub concurrent: Option<u8>,
     pub no_video: bool,
+}
+
+impl Default for DownloadConfig {
+    fn default() -> Self {
+        Self {
+            skip_existing: true,
+            concurrent: None,
+            no_video: false,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -79,12 +88,12 @@ impl Default for MirrorConfig {
     fn default() -> Self {
         Self {
             nerinyan: true,
-            catboy_central: false,
-            catboy_us: false,
-            catboy_asia: false,
             osu_direct: false,
             sayobot: false,
             nekoha: false,
+            catboy_central: false,
+            catboy_us: false,
+            catboy_asia: false,
             url: None,
         }
     }
@@ -103,12 +112,12 @@ impl MirrorConfig {
 
     fn any_enabled(&self) -> bool {
         self.nerinyan
-            || self.catboy_central
-            || self.catboy_us
-            || self.catboy_asia
             || self.osu_direct
             || self.sayobot
             || self.nekoha
+            || self.catboy_central
+            || self.catboy_us
+            || self.catboy_asia
             || self.custom_template().is_some()
     }
 }

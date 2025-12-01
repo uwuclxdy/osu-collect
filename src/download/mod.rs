@@ -8,7 +8,7 @@ mod precheck;
 mod verified;
 
 use client::{DownloadResult, create_download_client, download_beatmap};
-pub use pipeline::spawn_download;
+pub use pipeline::{spawn_download, spawn_selective_download};
 pub(crate) use {
     cleanup::CleanupTracker, outstanding::OutstandingTracker, verified::VerifiedRegistry,
 };
@@ -45,6 +45,15 @@ pub struct DownloadRequest {
     pub concurrent: u8,
     pub skip_existing: bool,
     pub auto_overwrite: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct SelectiveDownloadRequest {
+    pub collection_ids: Vec<u32>,
+    pub beatmapset_ids: Vec<u32>,
+    pub directory: String,
+    pub mirrors: Vec<MirrorEndpoint>,
+    pub concurrent: u8,
 }
 
 #[derive(Debug, Clone)]

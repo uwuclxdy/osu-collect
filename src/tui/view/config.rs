@@ -1,12 +1,11 @@
 use crate::{
-    app::{ConfigField, ConfigTab, MessageKind},
+    app::{ConfigField, ConfigTab},
     config::{LogFormat, LogLevel},
 };
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Style},
-    widgets::{Block, BorderType, Borders, List, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, List},
 };
 
 use super::{ConfigView, components};
@@ -14,7 +13,15 @@ use super::{ConfigView, components};
 pub fn render(frame: &mut Frame, area: Rect, view: ConfigView) {
     let chunks = Layout::vertical([Constraint::Min(0), Constraint::Length(3)]).split(area);
     render_form(frame, chunks[0], view.form);
-    render_message(frame, chunks[1], view);
+    components::render_console(
+        frame,
+        chunks[1],
+        components::ConsoleMessage {
+            message: view.form.message.as_ref(),
+            quit_prompt: view.quit_prompt,
+            default_text: " Press S to save the configuration file.",
+        },
+    );
 }
 
 fn render_form(frame: &mut Frame, area: Rect, form: &ConfigTab) {
@@ -99,37 +106,6 @@ fn render_form(frame: &mut Frame, area: Rect, form: &ConfigTab) {
         )
         .highlight_symbol("");
     frame.render_widget(list, area);
-}
-
-fn render_message(frame: &mut Frame, area: Rect, view: ConfigView) {
-    let (text, style) = if view.quit_prompt {
-        (
-            " Press q again to quit; all downloads will be cancelled.".to_string(),
-            Style::default().fg(Color::Yellow),
-        )
-    } else {
-        match &view.form.message {
-            Some(msg) => match msg.kind {
-                MessageKind::Info => (msg.text.clone(), Style::default().fg(Color::Green)),
-                MessageKind::Error => (msg.text.clone(), Style::default().fg(Color::Red)),
-            },
-            None => (
-                " Press S to save the configuration file.".to_string(),
-                Style::default().fg(Color::Gray),
-            ),
-        }
-    };
-
-    let paragraph = Paragraph::new(text)
-        .style(style)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .title(" Console "),
-        )
-        .wrap(Wrap { trim: true });
-    frame.render_widget(paragraph, area);
 }
 
 fn log_level_label(level: LogLevel) -> &'static str {

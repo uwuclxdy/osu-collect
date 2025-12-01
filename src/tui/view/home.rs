@@ -1,10 +1,10 @@
-use crate::app::{HomeField, HomeTab, MessageKind};
+use crate::app::{HomeField, HomeTab};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, List, ListItem},
 };
 
 use super::{HomeView, components};
@@ -12,7 +12,15 @@ use super::{HomeView, components};
 pub fn render(frame: &mut Frame, area: Rect, view: HomeView) {
     let chunks = Layout::vertical([Constraint::Min(0), Constraint::Length(3)]).split(area);
     render_form(frame, chunks[0], view.form);
-    render_message(frame, chunks[1], view.form);
+    components::render_console(
+        frame,
+        chunks[1],
+        components::ConsoleMessage {
+            message: view.form.message.as_ref(),
+            quit_prompt: view.form.quit_prompt,
+            default_text: " Press Enter to start downloading the collection shown above.",
+        },
+    );
 }
 
 fn render_form(frame: &mut Frame, area: Rect, form: &HomeTab) {
@@ -25,24 +33,6 @@ fn render_form(frame: &mut Frame, area: Rect, form: &HomeTab) {
             "api.nerinyan.moe",
             form.nerinyan,
             form.focus == HomeField::MirrorNerinyan,
-        ),
-        mirror_toggle(
-            "Use Catboy Central",
-            "catboy.best",
-            form.catboy_central,
-            form.focus == HomeField::MirrorCatboyCentral,
-        ),
-        mirror_toggle(
-            "Use Catboy US",
-            "us.catboy.best",
-            form.catboy_us,
-            form.focus == HomeField::MirrorCatboyUs,
-        ),
-        mirror_toggle(
-            "Use Catboy Asia",
-            "sg.catboy.best",
-            form.catboy_asia,
-            form.focus == HomeField::MirrorCatboyAsia,
         ),
         mirror_toggle(
             "Use osu.direct",
@@ -61,6 +51,24 @@ fn render_form(frame: &mut Frame, area: Rect, form: &HomeTab) {
             "mirror.nekoha.moe",
             form.nekoha,
             form.focus == HomeField::MirrorNekoha,
+        ),
+        mirror_toggle(
+            "Use Catboy Central",
+            "catboy.best",
+            form.catboy_central,
+            form.focus == HomeField::MirrorCatboyCentral,
+        ),
+        mirror_toggle(
+            "Use Catboy US",
+            "us.catboy.best",
+            form.catboy_us,
+            form.focus == HomeField::MirrorCatboyUs,
+        ),
+        mirror_toggle(
+            "Use Catboy Asia",
+            "sg.catboy.best",
+            form.catboy_asia,
+            form.focus == HomeField::MirrorCatboyAsia,
         ),
         components::input_item(&form.threads, form.focus == HomeField::Threads),
         toggle(
@@ -114,35 +122,4 @@ fn mirror_toggle(label: &str, url: &str, value: bool, focused: bool) -> ListItem
     ];
 
     ListItem::new(Line::from(spans)).style(style)
-}
-
-fn render_message(frame: &mut Frame, area: Rect, form: &HomeTab) {
-    let (text, style) = if form.quit_prompt {
-        (
-            " Press q again to quit; all downloads will be cancelled.".to_string(),
-            Style::default().fg(Color::Yellow),
-        )
-    } else {
-        match &form.message {
-            Some(msg) => match msg.kind {
-                MessageKind::Info => (msg.text.clone(), Style::default().fg(Color::Green)),
-                MessageKind::Error => (msg.text.clone(), Style::default().fg(Color::Red)),
-            },
-            None => (
-                " Press Enter to start downloading the collection shown above.".to_string(),
-                Style::default().fg(Color::Gray),
-            ),
-        }
-    };
-
-    let paragraph = Paragraph::new(text)
-        .style(style)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .title(" Console "),
-        )
-        .wrap(Wrap { trim: true });
-    frame.render_widget(paragraph, area);
 }
