@@ -12,8 +12,6 @@ make BeatmapStatus reflect a state different from "Downloading" when all threads
 
 move constants from all files into one central file named `constants.rs` in the root directory—next to main.rs.
 
-make sure that the app deletes the newly created directory if the download was canceled before any map was fully downloaded.
-
 ---
 
 clear distinction between old maps that cant get verified, prompt user to redownload?

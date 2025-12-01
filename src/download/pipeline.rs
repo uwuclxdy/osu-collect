@@ -12,7 +12,9 @@ use crate::{
         generate_collection_folder_name, model::Collection,
     },
     mirrors::MirrorEndpoint,
-    utils::{self, AppError, validate_and_prepare_directory},
+    utils::{
+        self, AppError, check_available_space, is_low_disk_space, validate_and_prepare_directory,
+    },
     worker::MirrorPool,
 };
 use std::{
@@ -508,6 +510,26 @@ fn validate_mirrors(mirrors: &[MirrorEndpoint]) -> Result<(), String> {
     Ok(())
 }
 
+fn check_and_warn_low_disk_space(
+    id: DownloadId,
+    output_dir: &Path,
+    tx: &UnboundedSender<DownloadEvent>,
+) {
+    if is_low_disk_space(output_dir)
+        && let Some(available) = check_available_space(output_dir)
+    {
+        warn!(
+            available_bytes = available,
+            output_dir = %output_dir.display(),
+            "Low disk space detected"
+        );
+        let _ = tx.send(DownloadEvent::LowDiskSpace {
+            id,
+            available_bytes: available,
+        });
+    }
+}
+
 async fn run_download(
     id: DownloadId,
     request: DownloadRequest,
@@ -536,6 +558,7 @@ async fn run_download(
     let output = prepare_output_directory(&directory, &resolution.collection).await?;
 
     announce_collection_ready(id, &resolution, &output, tx);
+    check_and_warn_low_disk_space(id, &output.output_dir, tx);
 
     let thread_count = concurrent.max(1) as usize;
     let precheck = perform_initial_precheck(
@@ -551,7 +574,17 @@ async fn run_download(
         satisfied: pre_verified,
         skipped: initial_skipped,
         unverified: pre_unverified,
+        verified_bytes,
+        verified_count,
     } = precheck;
+
+    if verified_count > 0 {
+        let _ = tx.send(DownloadEvent::VerifiedMapSizes {
+            id,
+            total_bytes: verified_bytes,
+            count: verified_count,
+        });
+    }
 
     let tracker = OutstandingTracker::new(resolution.beatmap_ids.iter().copied().collect());
     let remaining_after_precheck = tracker.remove_all(pre_verified.iter().copied()).await;
@@ -671,6 +704,7 @@ async fn run_selective_download(
     let output = prepare_selective_output_directory(&directory, &collection_ids).await?;
 
     announce_selective_ready(id, &resolution, &output, tx);
+    check_and_warn_low_disk_space(id, &output.output_dir, tx);
 
     let thread_count = concurrent.max(1) as usize;
     let tracker = OutstandingTracker::new(beatmapset_ids.iter().copied().collect());

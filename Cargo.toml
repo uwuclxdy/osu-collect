@@ -27,7 +27,8 @@ tracing-subscriber = { version = "0.3.22", features = ["fmt", "env-filter", "jso
 tracing-appender = "0.2.4"
 regex-lite = "0.1.8"
 whoami = "1.6.1"
-cxx = "1.0"
+cxx = "1.0.190"
+fs2 = "0.4.3"
 
 [build-dependencies]
 cxx-build = "1.0"

@@ -381,6 +381,24 @@ impl App {
                     page.push_log("Collection fetched");
                 }
             }
+            DownloadEvent::LowDiskSpace {
+                id,
+                available_bytes,
+            } => {
+                if let Some(page) = self.page_mut(id) {
+                    page.low_disk_space = Some(available_bytes);
+                }
+            }
+            DownloadEvent::VerifiedMapSizes {
+                id,
+                total_bytes,
+                count,
+            } => {
+                if let Some(page) = self.page_mut(id) {
+                    page.stats.completed_bytes_sum += total_bytes;
+                    page.stats.completed_map_count += count;
+                }
+            }
             DownloadEvent::BeatmapsRegistered { id, beatmap_ids } => {
                 if let Some(page) = self.page_mut(id) {
                     page.register_beatmaps(&beatmap_ids);

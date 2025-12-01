@@ -11,6 +11,8 @@ pub(crate) struct PrecheckReport {
     pub(crate) satisfied: HashSet<u32>,
     pub(crate) skipped: u16,
     pub(crate) unverified: Vec<u32>,
+    pub(crate) verified_bytes: u64,
+    pub(crate) verified_count: u32,
 }
 
 pub(crate) async fn verify_existing_beatmapsets(
@@ -31,6 +33,8 @@ pub(crate) async fn verify_existing_beatmapsets(
     let mut satisfied = HashSet::new();
     let mut skipped: u16 = 0;
     let mut unverified: HashSet<u32> = HashSet::new();
+    let mut verified_bytes: u64 = 0;
+    let mut verified_count: u32 = 0;
 
     let mut dir = fs::read_dir(output_dir)
         .await
@@ -55,9 +59,10 @@ pub(crate) async fn verify_existing_beatmapsets(
 
                     let expectation_snapshot = expectations.snapshot();
                     tasks.push(task::spawn_blocking(move || {
+                        let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                         let outcome =
                             super::integrity::inspect_archive(&path, expectation_snapshot.as_ref());
-                        (path, outcome)
+                        (path, outcome, file_size)
                     }));
                 }
                 None => {
@@ -75,7 +80,7 @@ pub(crate) async fn verify_existing_beatmapsets(
         }
 
         match tasks.next().await {
-            Some(Ok((path, outcome))) => {
+            Some(Ok((path, outcome, file_size))) => {
                 let checksum_set = match &outcome {
                     ArchiveOutcome::Invalid {
                         beatmapset_id: Some(set_id),
@@ -92,6 +97,8 @@ pub(crate) async fn verify_existing_beatmapsets(
                         .to_string();
                     if satisfied.insert(set_id) {
                         skipped = skipped.saturating_add(1);
+                        verified_bytes += file_size;
+                        verified_count += 1;
                     }
                     if unverified.insert(set_id) && notify_verified {
                         let _ = tx.send(DownloadEvent::BeatmapStatus {
@@ -116,6 +123,8 @@ pub(crate) async fn verify_existing_beatmapsets(
                     ArchiveOutcome::Valid { beatmapset_id } => {
                         if satisfied.insert(beatmapset_id) {
                             skipped = skipped.saturating_add(1);
+                            verified_bytes += file_size;
+                            verified_count += 1;
                             if notify_verified {
                                 let _ = tx.send(DownloadEvent::BeatmapStatus {
                                     id,
@@ -177,6 +186,8 @@ pub(crate) async fn verify_existing_beatmapsets(
         satisfied,
         skipped,
         unverified: unverified_sorted,
+        verified_bytes,
+        verified_count,
     })
 }
 

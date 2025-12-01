@@ -1,6 +1,7 @@
 use crate::{
     app::CollectionPage,
     download::{DownloadStage, DownloadSummary},
+    utils::format_bytes,
 };
 use ratatui::{
     Frame,
@@ -14,8 +15,9 @@ use super::{DownloadView, components};
 
 pub fn render(frame: &mut Frame, area: Rect, view: DownloadView) {
     let page = view.page;
+    let info_height = if page.low_disk_space.is_some() { 7 } else { 6 };
     let layout = Layout::vertical([
-        Constraint::Length(6),
+        Constraint::Length(info_height),
         Constraint::Length(3),
         Constraint::Min(0),
     ]);
@@ -87,12 +89,9 @@ fn render_info(frame: &mut Frame, area: Rect, page: &CollectionPage) {
     let bytes_display = if matches!(
         page.stage,
         DownloadStage::Downloading | DownloadStage::Completed
-    ) && page.stats.bytes_total > 0
-    {
-        Some(format_bytes_progress(
-            page.stats.bytes_downloaded,
-            page.stats.bytes_total,
-        ))
+    ) {
+        page.estimated_total_bytes()
+            .map(|estimated| format_bytes_progress(page.stats.bytes_downloaded, estimated))
     } else {
         None
     };
@@ -117,7 +116,7 @@ fn render_info(frame: &mut Frame, area: Rect, page: &CollectionPage) {
         status_spans.push(Span::styled(")", Style::default().fg(Color::Gray)));
     }
 
-    let lines = vec![
+    let mut lines = vec![
         Line::from(vec![
             Span::styled("Collection: ", Style::default().fg(Color::Gray)),
             Span::styled(page.title.clone(), Style::default().fg(Color::Cyan)),
@@ -139,8 +138,19 @@ fn render_info(frame: &mut Frame, area: Rect, page: &CollectionPage) {
             ),
         ]),
         Line::from(status_spans),
-        Line::from(summary_line),
     ];
+
+    if let Some(available) = page.low_disk_space {
+        lines.push(Line::from(vec![
+            Span::styled("⚠ Warning: ", Style::default().fg(Color::Yellow)),
+            Span::styled(
+                format!("Low disk space ({} available)", format_bytes(available)),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]));
+    }
+
+    lines.push(Line::from(summary_line));
 
     let paragraph = Paragraph::new(lines)
         .block(
@@ -167,22 +177,22 @@ fn format_speed(bytes_per_sec: f64) -> String {
     }
 }
 
-fn format_bytes_progress(downloaded: u64, total: u64) -> String {
+fn format_bytes_progress(downloaded: u64, estimated_total: u64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = KB * 1024.0;
     const GB: f64 = MB * 1024.0;
 
     let downloaded_f = downloaded as f64;
-    let total_f = total as f64;
+    let total_f = estimated_total as f64;
 
     if total_f >= GB {
-        format!("{:.2}/{:.2} GB", downloaded_f / GB, total_f / GB)
+        format!("{:.2}/~{:.2} GB", downloaded_f / GB, total_f / GB)
     } else if total_f >= MB {
-        format!("{:.1}/{:.1} MB", downloaded_f / MB, total_f / MB)
+        format!("{:.1}/~{:.1} MB", downloaded_f / MB, total_f / MB)
     } else if total_f >= KB {
-        format!("{:.0}/{:.0} KB", downloaded_f / KB, total_f / KB)
+        format!("{:.0}/~{:.0} KB", downloaded_f / KB, total_f / KB)
     } else {
-        format!("{downloaded}/{total} B")
+        format!("{downloaded}/~{estimated_total} B")
     }
 }
 

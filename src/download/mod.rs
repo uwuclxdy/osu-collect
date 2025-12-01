@@ -65,6 +65,15 @@ pub enum DownloadEvent {
         total_maps: usize,
         output_dir: String,
     },
+    LowDiskSpace {
+        id: DownloadId,
+        available_bytes: u64,
+    },
+    VerifiedMapSizes {
+        id: DownloadId,
+        total_bytes: u64,
+        count: u32,
+    },
     BeatmapsRegistered {
         id: DownloadId,
         beatmap_ids: Vec<u32>,

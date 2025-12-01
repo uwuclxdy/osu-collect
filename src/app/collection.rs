@@ -12,7 +12,8 @@ pub struct DownloadStats {
     pub failed: u16,
     pub unverified: u16,
     pub bytes_downloaded: u64,
-    pub bytes_total: u64,
+    pub completed_bytes_sum: u64,
+    pub completed_map_count: u32,
 }
 
 pub struct BeatmapRow {
@@ -63,6 +64,7 @@ pub struct CollectionPage {
     pub failed_maps: Vec<u32>,
     pub progress_label_style_locked: bool,
     pub progress_label_bold_when_locked: bool,
+    pub low_disk_space: Option<u64>,
 }
 
 impl CollectionPage {
@@ -86,6 +88,7 @@ impl CollectionPage {
             failed_maps: Vec::new(),
             progress_label_style_locked: false,
             progress_label_bold_when_locked: true,
+            low_disk_space: None,
         }
     }
 
@@ -111,29 +114,30 @@ impl CollectionPage {
         }
     }
 
-    pub fn update_progress(&mut self, beatmapset_id: u32, downloaded: u64, total: u64) {
+    pub fn update_progress(&mut self, beatmapset_id: u32, downloaded: u64, _total: u64) {
         if let Some(idx) = self.index.get(&beatmapset_id).copied()
             && let Some(row) = self.beatmaps.get_mut(idx)
         {
-            if let Some((prev_downloaded, prev_total)) = row.progress {
+            if let Some((prev_downloaded, _)) = row.progress {
                 self.stats.bytes_downloaded =
                     self.stats.bytes_downloaded.saturating_sub(prev_downloaded) + downloaded;
-                if prev_total != total {
-                    self.stats.bytes_total =
-                        self.stats.bytes_total.saturating_sub(prev_total) + total;
-                }
             } else {
                 self.stats.bytes_downloaded += downloaded;
-                self.stats.bytes_total += total;
             }
-            row.progress = Some((downloaded, total));
+            row.progress = Some((downloaded, _total));
         }
     }
 
     pub fn update_status(&mut self, beatmapset_id: u32, stage: BeatmapStage, message: &str) {
-        if let Some(idx) = self.index.get(&beatmapset_id).copied()
+        let completed_size = if let Some(idx) = self.index.get(&beatmapset_id).copied()
             && let Some(row) = self.beatmaps.get_mut(idx)
         {
+            let size = if stage == BeatmapStage::Success {
+                row.progress
+                    .map(|(downloaded, total)| if total > 0 { total } else { downloaded })
+            } else {
+                None
+            };
             row.stage = stage;
             row.message = message.to_string();
             if matches!(
@@ -145,6 +149,13 @@ impl CollectionPage {
             ) {
                 row.progress = None;
             }
+            size
+        } else {
+            None
+        };
+
+        if let Some(size) = completed_size {
+            self.record_completed_size(size);
         }
     }
 
@@ -200,5 +211,18 @@ impl CollectionPage {
     pub fn set_failed_maps(&mut self, mut ids: Vec<u32>) {
         ids.sort_unstable();
         self.failed_maps = ids;
+    }
+
+    pub fn record_completed_size(&mut self, size: u64) {
+        self.stats.completed_bytes_sum += size;
+        self.stats.completed_map_count += 1;
+    }
+
+    pub fn estimated_total_bytes(&self) -> Option<u64> {
+        if self.stats.completed_map_count < 7 {
+            return None;
+        }
+        let avg = self.stats.completed_bytes_sum / self.stats.completed_map_count as u64;
+        Some(avg.saturating_mul(self.total_maps as u64))
     }
 }
