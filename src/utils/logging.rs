@@ -6,7 +6,7 @@ use tracing_appender::{non_blocking, rolling};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 pub struct LoggingGuard {
-    _file_guard: tracing_appender::non_blocking::WorkerGuard,
+    _file_guard: non_blocking::WorkerGuard,
 }
 
 /// Initialize the global tracing subscriber based on configuration.
@@ -27,11 +27,6 @@ fn init_compact_logging(config: &LoggingConfig) -> Result<LoggingGuard> {
     let env_filter = logging_env_filter(config);
     let (file_writer, file_guard) = build_file_writer(config)?;
 
-    let console_layer = fmt::layer()
-        .compact()
-        .with_writer(std::io::stderr)
-        .with_target(false);
-
     let file_layer = fmt::layer()
         .json()
         .with_writer(file_writer)
@@ -42,7 +37,6 @@ fn init_compact_logging(config: &LoggingConfig) -> Result<LoggingGuard> {
 
     tracing_subscriber::registry()
         .with(env_filter)
-        .with(console_layer)
         .with(file_layer)
         .try_init()
         .map_err(|err| {
@@ -58,11 +52,6 @@ fn init_pretty_logging(config: &LoggingConfig) -> Result<LoggingGuard> {
     let env_filter = logging_env_filter(config);
     let (file_writer, file_guard) = build_file_writer(config)?;
 
-    let console_layer = fmt::layer()
-        .pretty()
-        .with_writer(std::io::stderr)
-        .with_target(false);
-
     let file_layer = fmt::layer()
         .json()
         .with_writer(file_writer)
@@ -73,7 +62,6 @@ fn init_pretty_logging(config: &LoggingConfig) -> Result<LoggingGuard> {
 
     tracing_subscriber::registry()
         .with(env_filter)
-        .with(console_layer)
         .with(file_layer)
         .try_init()
         .map_err(|err| {
@@ -93,10 +81,7 @@ fn logging_env_filter(config: &LoggingConfig) -> EnvFilter {
 
 fn build_file_writer(
     config: &LoggingConfig,
-) -> Result<(
-    tracing_appender::non_blocking::NonBlocking,
-    tracing_appender::non_blocking::WorkerGuard,
-)> {
+) -> Result<(non_blocking::NonBlocking, non_blocking::WorkerGuard)> {
     let dir = resolve_log_dir(config)?;
     let file_appender = rolling::daily(dir, "osu-collect.log");
     Ok(non_blocking(file_appender))
