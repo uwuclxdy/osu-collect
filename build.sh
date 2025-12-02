@@ -5,25 +5,23 @@ set -e
 echo "Building osu-collect..."
 echo ""
 
-# Colors
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Get the project directory
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${PROJECT_DIR}/build"
 
-# Clean and create build directory
 echo -e "${BLUE}Setup build directory...${NC}"
 rm -rf "${BUILD_DIR}"
 mkdir -p "${BUILD_DIR}"
 
-# Get version from Cargo.toml
 VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
 echo -e "${BLUE}Version: ${VERSION}${NC}"
 echo ""
+
+START_TIME=$(date +%s)
 
 # Build for Linux
 echo -e "${GREEN}Building for Linux (x86_64-unknown-linux-gnu)...${NC}"
@@ -64,7 +62,7 @@ echo ""
 #fi
 
 echo ""
-echo -e "${GREEN}Build complete!${NC}"
+echo -e "${GREEN}Build complete in $(( $(date +%s) - START_TIME ))s!${NC}"
 echo ""
 echo "Build artifacts:"
 ls -lh "${BUILD_DIR}"
