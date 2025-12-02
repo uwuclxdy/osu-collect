@@ -39,29 +39,29 @@ fi
 
 echo ""
 
-# Build for Windows
-echo -e "${GREEN}Building for Windows (x86_64-pc-windows-gnu)...${NC}"
-
-# Check if Windows target is installed
-if ! rustup target list | grep -q "x86_64-pc-windows-gnu (installed)"; then
-    echo -e "${YELLOW}Installing Windows target...${NC}"
-    rustup target add x86_64-pc-windows-gnu
-fi
-
-# Check if mingw-w64 is available
-if ! command -v x86_64-w64-mingw32-gcc &> /dev/null; then
-    echo -e "${YELLOW}  mingw-w64 not found.${NC}"
-    echo ""
-fi
-
-cargo build --release --target x86_64-pc-windows-gnu
-
-if [ -f "target/x86_64-pc-windows-gnu/release/osu-collect.exe" ]; then
-    cp "target/x86_64-pc-windows-gnu/release/osu-collect.exe" "${BUILD_DIR}/osu-collect-windows-x64.exe"
-    echo -e "${GREEN}Windows build complete: build/osu-collect-windows-x64.exe${NC}"
-else
-    echo -e "${YELLOW}Windows binary not found at expected location${NC}"
-fi
+## Build for Windows
+#echo -e "${GREEN}Building for Windows (x86_64-pc-windows-gnu)...${NC}"
+#
+## Check if Windows target is installed
+#if ! rustup target list | grep -q "x86_64-pc-windows-gnu (installed)"; then
+#    echo -e "${YELLOW}Installing Windows target...${NC}"
+#    rustup target add x86_64-pc-windows-gnu
+#fi
+#
+## Check if mingw-w64 is available
+#if ! command -v x86_64-w64-mingw32-gcc &> /dev/null; then
+#    echo -e "${YELLOW}  mingw-w64 not found.${NC}"
+#    echo ""
+#fi
+#
+#cargo build --release --target x86_64-pc-windows-gnu
+#
+#if [ -f "target/x86_64-pc-windows-gnu/release/osu-collect.exe" ]; then
+#    cp "target/x86_64-pc-windows-gnu/release/osu-collect.exe" "${BUILD_DIR}/osu-collect-windows-x64.exe"
+#    echo -e "${GREEN}Windows build complete: build/osu-collect-windows-x64.exe${NC}"
+#else
+#    echo -e "${YELLOW}Windows binary not found at expected location${NC}"
+#fi
 
 echo ""
 echo -e "${GREEN}Build complete!${NC}"
