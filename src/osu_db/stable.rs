@@ -78,7 +78,7 @@ impl BeatmapReader for StableReader {
     fn list_collections(&self) -> Result<Vec<LocalCollection>, String> {
         let db_path = self.collection_db_path();
         if !db_path.exists() {
-            return Err(format!("collection.db not found at {}", db_path.display()));
+            return Err("collection.db not found at".to_string());
         }
 
         // Check file size - minimum valid collection.db is 8 bytes (version u32 + count u32)
