@@ -43,6 +43,7 @@ pub enum AppCommand {
         id: DownloadId,
     },
     ScanLocalDatabase,
+    RefetchUpdates,
     Quit,
 }
 
@@ -80,9 +81,18 @@ impl App {
     }
 
     fn check_auto_scan(&mut self) -> Option<AppCommand> {
-        if self.active_tab == UPDATES_TAB_INDEX && self.updates.needs_scan {
-            self.updates.needs_scan = false;
-            Some(AppCommand::ScanLocalDatabase)
+        if self.active_tab == UPDATES_TAB_INDEX {
+            // Check if we have local database loaded already
+            if self.updates.has_local_data() {
+                // Database is loaded, just refetch from API
+                Some(AppCommand::RefetchUpdates)
+            } else if self.updates.needs_scan {
+                // First visit, need full scan
+                self.updates.needs_scan = false;
+                Some(AppCommand::ScanLocalDatabase)
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -292,6 +302,10 @@ impl App {
                     return Some(AppCommand::StartDownload { id, request });
                 }
                 if self.active_tab() == UPDATES_TAB_INDEX {
+                    // Don't allow download while scan is in progress
+                    if !self.updates.is_scan_ready() {
+                        return None;
+                    }
                     match self.updates.handle_enter() {
                         UpdatesAction::Download => {
                             if let Some((id, request)) = self.request_selective_download() {
@@ -381,6 +395,11 @@ impl App {
                     page.push_log("Collection fetched");
                 }
             }
+            DownloadEvent::CollectionSizeResolved { id, total_bytes } => {
+                if let Some(page) = self.page_mut(id) {
+                    page.stats.total_collection_bytes = Some(total_bytes);
+                }
+            }
             DownloadEvent::LowDiskSpace {
                 id,
                 available_bytes,
@@ -389,14 +408,9 @@ impl App {
                     page.low_disk_space = Some(available_bytes);
                 }
             }
-            DownloadEvent::VerifiedMapSizes {
-                id,
-                total_bytes,
-                count,
-            } => {
+            DownloadEvent::VerifiedMapSizes { id, total_bytes } => {
                 if let Some(page) = self.page_mut(id) {
-                    page.stats.completed_bytes_sum += total_bytes;
-                    page.stats.completed_map_count += count;
+                    page.stats.verified_bytes += total_bytes;
                 }
             }
             DownloadEvent::BeatmapsRegistered { id, beatmap_ids } => {

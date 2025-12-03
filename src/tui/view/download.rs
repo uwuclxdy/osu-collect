@@ -90,8 +90,9 @@ fn render_info(frame: &mut Frame, area: Rect, page: &CollectionPage) {
         page.stage,
         DownloadStage::Downloading | DownloadStage::Completed
     ) {
-        page.estimated_total_bytes()
-            .map(|estimated| format_bytes_progress(page.stats.bytes_downloaded, estimated))
+        page.stats
+            .total_collection_bytes
+            .map(|total| format_bytes_progress(page.total_downloaded_bytes(), total))
     } else {
         None
     };
@@ -177,23 +178,13 @@ fn format_speed(bytes_per_sec: f64) -> String {
     }
 }
 
-fn format_bytes_progress(downloaded: u64, estimated_total: u64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = KB * 1024.0;
-    const GB: f64 = MB * 1024.0;
+fn format_bytes_progress(downloaded: u64, total: u64) -> String {
+    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
 
-    let downloaded_f = downloaded as f64;
-    let total_f = estimated_total as f64;
+    let downloaded_gb = downloaded as f64 / GB;
+    let total_gb = total as f64 / GB;
 
-    if total_f >= GB {
-        format!("{:.2}/~{:.2} GB", downloaded_f / GB, total_f / GB)
-    } else if total_f >= MB {
-        format!("{:.1}/~{:.1} MB", downloaded_f / MB, total_f / MB)
-    } else if total_f >= KB {
-        format!("{:.0}/~{:.0} KB", downloaded_f / KB, total_f / KB)
-    } else {
-        format!("{downloaded}/~{estimated_total} B")
-    }
+    format!("{:.2}/{:.2} GB", downloaded_gb, total_gb)
 }
 
 fn render_gauge(frame: &mut Frame, area: Rect, page: &CollectionPage) {

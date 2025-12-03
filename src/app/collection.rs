@@ -12,8 +12,8 @@ pub struct DownloadStats {
     pub failed: u16,
     pub unverified: u16,
     pub bytes_downloaded: u64,
-    pub completed_bytes_sum: u64,
-    pub completed_map_count: u32,
+    pub total_collection_bytes: Option<u64>,
+    pub verified_bytes: u64,
 }
 
 pub struct BeatmapRow {
@@ -129,15 +129,9 @@ impl CollectionPage {
     }
 
     pub fn update_status(&mut self, beatmapset_id: u32, stage: BeatmapStage, message: &str) {
-        let completed_size = if let Some(idx) = self.index.get(&beatmapset_id).copied()
+        if let Some(idx) = self.index.get(&beatmapset_id).copied()
             && let Some(row) = self.beatmaps.get_mut(idx)
         {
-            let size = if stage == BeatmapStage::Success {
-                row.progress
-                    .map(|(downloaded, total)| if total > 0 { total } else { downloaded })
-            } else {
-                None
-            };
             row.stage = stage;
             row.message = message.to_string();
             if matches!(
@@ -149,13 +143,6 @@ impl CollectionPage {
             ) {
                 row.progress = None;
             }
-            size
-        } else {
-            None
-        };
-
-        if let Some(size) = completed_size {
-            self.record_completed_size(size);
         }
     }
 
@@ -213,16 +200,9 @@ impl CollectionPage {
         self.failed_maps = ids;
     }
 
-    pub fn record_completed_size(&mut self, size: u64) {
-        self.stats.completed_bytes_sum += size;
-        self.stats.completed_map_count += 1;
-    }
-
-    pub fn estimated_total_bytes(&self) -> Option<u64> {
-        if self.stats.completed_map_count < 7 {
-            return None;
-        }
-        let avg = self.stats.completed_bytes_sum / self.stats.completed_map_count as u64;
-        Some(avg.saturating_mul(self.total_maps as u64))
+    pub fn total_downloaded_bytes(&self) -> u64 {
+        self.stats
+            .bytes_downloaded
+            .saturating_add(self.stats.verified_bytes)
     }
 }

@@ -558,6 +558,23 @@ async fn run_download(
     let output = prepare_output_directory(&directory, &resolution.collection).await?;
 
     announce_collection_ready(id, &resolution, &output, tx);
+
+    tx.send_log(id, "Fetching collection size from Nekoha...");
+    let size_result = super::size_fetcher::fetch_beatmapset_sizes(&resolution.beatmap_ids).await;
+    let _ = tx.send(DownloadEvent::CollectionSizeResolved {
+        id,
+        total_bytes: size_result.total_bytes,
+    });
+    if size_result.missing_count > 0 {
+        tx.send_log(
+            id,
+            format!(
+                "Size info unavailable for {} beatmapsets",
+                size_result.missing_count
+            ),
+        );
+    }
+
     check_and_warn_low_disk_space(id, &output.output_dir, tx);
 
     let thread_count = concurrent.max(1) as usize;
@@ -575,14 +592,12 @@ async fn run_download(
         skipped: initial_skipped,
         unverified: pre_unverified,
         verified_bytes,
-        verified_count,
     } = precheck;
 
-    if verified_count > 0 {
+    if verified_bytes > 0 {
         let _ = tx.send(DownloadEvent::VerifiedMapSizes {
             id,
             total_bytes: verified_bytes,
-            count: verified_count,
         });
     }
 
@@ -599,7 +614,6 @@ async fn run_download(
         skipped: initial_skipped,
         failed: 0,
         unverified: pre_unverified_count,
-        unverified_sets: pre_unverified.clone(),
     };
 
     if totals.skipped > 0 {
@@ -704,6 +718,23 @@ async fn run_selective_download(
     let output = prepare_selective_output_directory(&directory, &collection_ids).await?;
 
     announce_selective_ready(id, &resolution, &output, tx);
+
+    tx.send_log(id, "Fetching collection size from nekoha...");
+    let size_result = super::size_fetcher::fetch_beatmapset_sizes(&beatmapset_ids).await;
+    let _ = tx.send(DownloadEvent::CollectionSizeResolved {
+        id,
+        total_bytes: size_result.total_bytes,
+    });
+    if size_result.missing_count > 0 {
+        tx.send_log(
+            id,
+            format!(
+                "Size info unavailable for {} beatmapsets",
+                size_result.missing_count
+            ),
+        );
+    }
+
     check_and_warn_low_disk_space(id, &output.output_dir, tx);
 
     let thread_count = concurrent.max(1) as usize;
@@ -717,7 +748,6 @@ async fn run_selective_download(
         skipped: 0,
         failed: 0,
         unverified: 0,
-        unverified_sets: Vec::new(),
     };
 
     let ctx = build_download_context(DownloadContextInputs {
