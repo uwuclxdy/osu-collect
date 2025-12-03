@@ -1,9 +1,9 @@
 [package]
 name = "osu-collect"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 authors = ["uwuclxdy"]
-description = "a program to download osu map collections from osu!collector for free"
+description = "collection downloader for osu!collector"
 license = "MIT"
 
 [dependencies]
@@ -21,7 +21,6 @@ osu-db = "0.3.0"
 ratatui = { version = "0.29.0", default-features = false, features = ["crossterm"] }
 crossterm = "0.29.0"
 md-5 = "0.10.6"
-zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
 tracing = "0.1.43"
 tracing-subscriber = { version = "0.3.22", default-features = false, features = ["fmt", "env-filter", "json", "ansi", "tracing-log"] }
 tracing-appender = "0.2.4"
