@@ -430,7 +430,6 @@ fn beatmap_item(
 
     let status_text = match beatmap.status {
         crate::app::updates::MissingStatus::NotInstalled => "(Not installed)",
-        crate::app::updates::MissingStatus::NewDifficulties => "(New difficulties)",
     };
 
     let spans = vec![
