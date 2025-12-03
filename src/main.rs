@@ -10,8 +10,10 @@ mod tui;
 mod utils;
 mod worker;
 
+mod tests;
 #[cfg(windows)]
 mod windows_init;
+
 use app::run_app;
 use config::ConfigService;
 use tracing::warn;
