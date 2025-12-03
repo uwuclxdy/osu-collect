@@ -4,7 +4,9 @@ use crate::{
     config::Config,
     core::collection::{Collection, api_client},
     download::{self, DownloadEvent, DownloadHandle, DownloadId},
-    osu_db::{BeatmapReader, LazerReader, LocalBeatmapset, OsuClient, StableReader},
+    osu_db::{
+        BeatmapReader, LazerReader, LocalBeatmapset, LocalCollection, OsuClient, StableReader,
+    },
     tui::draw,
     tui::terminal::{cleanup_terminal, setup_terminal, spawn_input_thread},
 };
@@ -13,12 +15,15 @@ use std::{collections::HashMap, path::PathBuf};
 use tokio::sync::mpsc;
 use tracing::{debug, info, trace, warn};
 
+type DatabaseReadResult = (Vec<LocalCollection>, Vec<LocalBeatmapset>, Vec<String>);
+
 #[derive(Debug, Clone)]
 pub enum UpdatesEvent {
     DatabaseRead {
         generation: u64,
-        collections: Vec<crate::osu_db::LocalCollection>,
+        collections: Vec<LocalCollection>,
         beatmapsets: Vec<LocalBeatmapset>,
+        all_checksums: Vec<String>,
     },
     ScanComplete {
         generation: u64,
@@ -162,6 +167,13 @@ fn handle_key_event(
         Some(AppCommand::ScanLocalDatabase) => {
             spawn_scan_task(app, updates_tx.clone());
         }
+        Some(AppCommand::RefetchUpdates) => {
+            // Only refetch from API, don't re-read local database
+            app.updates.scan_generation = app.updates.scan_generation.wrapping_add(1);
+            app.updates.clear_message();
+            app.updates.set_loading("Checking for updates...");
+            spawn_fetch_and_compare_task(app, updates_tx.clone());
+        }
         Some(AppCommand::Quit) => {
             if downloads.is_empty() {
                 info!("No downloads active; exiting application");
@@ -228,6 +240,7 @@ fn handle_updates_event(
             generation,
             collections,
             beatmapsets,
+            all_checksums,
         } => {
             // Ignore stale results from previous scan
             if generation != app.updates.scan_generation {
@@ -241,6 +254,7 @@ fn handle_updates_event(
 
             app.updates.set_collections(collections);
             app.updates.set_local_beatmapsets(beatmapsets);
+            app.updates.set_all_checksums(all_checksums);
             app.updates.scan_status = ScanStatus::FetchingCollection;
             app.updates.set_loading("Fetching collections...");
 
@@ -271,7 +285,8 @@ fn handle_updates_event(
             let count = missing.len();
             app.updates.set_missing_beatmaps(missing);
             app.updates.scan_status = ScanStatus::Ready;
-            app.updates.set_info(format!(" {count} updatable beatmaps"));
+            app.updates
+                .set_info(format!(" {count} missing beatmapsets"));
         }
         UpdatesEvent::Error(msg) => {
             app.updates.set_error(msg);
@@ -296,11 +311,12 @@ fn spawn_scan_task(app: &mut App, tx: mpsc::UnboundedSender<UpdatesEvent>) {
                 .and_then(|r| r);
 
         match result {
-            Ok((collections, beatmapsets)) => {
+            Ok((collections, beatmapsets, all_checksums)) => {
                 let _ = tx.send(UpdatesEvent::DatabaseRead {
                     generation,
                     collections,
                     beatmapsets,
+                    all_checksums,
                 });
             }
             Err(err) => {
@@ -313,19 +329,26 @@ fn spawn_scan_task(app: &mut App, tx: mpsc::UnboundedSender<UpdatesEvent>) {
 fn read_local_database(
     client_type: OsuClient,
     path: PathBuf,
-) -> Result<(Vec<crate::osu_db::LocalCollection>, Vec<LocalBeatmapset>), String> {
+) -> Result<DatabaseReadResult, String> {
     match client_type {
         OsuClient::Stable => {
             let reader = StableReader::new(path);
             let collections = reader.list_collections()?;
             let beatmapsets = reader.list_beatmapsets()?;
-            Ok((collections, beatmapsets))
+            // Stable: derive checksums from beatmapsets (no skipped beatmaps issue)
+            let all_checksums = beatmapsets
+                .iter()
+                .flat_map(|bs| bs.beatmaps.iter().map(|b| b.checksum.clone()))
+                .collect();
+            Ok((collections, beatmapsets, all_checksums))
         }
         OsuClient::Lazer => {
             let reader = LazerReader::new(path);
             let collections = reader.list_collections()?;
             let beatmapsets = reader.list_beatmapsets()?;
-            Ok((collections, beatmapsets))
+            // Lazer: get ALL checksums including beatmaps with invalid OnlineIDs
+            let all_checksums = reader.list_all_checksums()?;
+            Ok((collections, beatmapsets, all_checksums))
         }
     }
 }
@@ -341,12 +364,14 @@ fn spawn_fetch_and_compare_task(app: &mut App, tx: mpsc::UnboundedSender<Updates
         .collect();
 
     let local_beatmapsets: HashMap<u32, LocalBeatmapset> = app.updates.local_beatmapsets.clone();
+    let all_local_checksums = app.updates.all_local_checksums.clone();
     let generation = app.updates.scan_generation;
 
     app.updates.scan_status = ScanStatus::FetchingCollection;
 
     tokio::spawn(async move {
-        let result = fetch_and_compare(all_collection_ids, local_beatmapsets).await;
+        let result =
+            fetch_and_compare(all_collection_ids, local_beatmapsets, all_local_checksums).await;
 
         match result {
             Ok(missing) => {
@@ -365,73 +390,109 @@ fn spawn_fetch_and_compare_task(app: &mut App, tx: mpsc::UnboundedSender<Updates
 async fn fetch_and_compare(
     collection_ids: Vec<u32>,
     local_beatmapsets: HashMap<u32, LocalBeatmapset>,
+    local_checksums: std::collections::HashSet<String>,
 ) -> Result<Vec<MissingBeatmapset>, String> {
     let client = api_client::default_http_client().map_err(|e| e.to_string())?;
-    let mut all_missing: Vec<MissingBeatmapset> = Vec::new();
     let mut seen_beatmapsets: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    let mut candidates_to_check: Vec<(u32, u32, String)> = Vec::new();
 
-    let local_checksums: std::collections::HashSet<String> = local_beatmapsets
-        .values()
-        .flat_map(|bs| bs.beatmaps.iter().map(|b| b.checksum.clone()))
-        .collect();
+    debug!(
+        local_beatmapset_count = local_beatmapsets.len(),
+        local_checksums_count = local_checksums.len(),
+        "Starting fetch_and_compare"
+    );
 
     for collection_id in collection_ids {
         let collection: Collection = api_client::fetch_collection(&client, collection_id)
             .await
             .map_err(|e| e.to_string())?;
 
+        debug!(
+            collection_id,
+            collection_name = %collection.name,
+            beatmapset_count = collection.beatmapsets.len(),
+            "Fetched collection from API"
+        );
+
         for beatmapset in &collection.beatmapsets {
-            // Skip if we've already added this beatmapset (from another collection)
+            // Skip if we've already processed this beatmapset (from another collection)
             if seen_beatmapsets.contains(&beatmapset.id) {
                 continue;
             }
+            seen_beatmapsets.insert(beatmapset.id);
 
-            let local_set = local_beatmapsets.get(&beatmapset.id);
-
-            let status = match local_set {
-                None => Some(MissingStatus::NotInstalled),
-                Some(local) => {
-                    let all_match = beatmapset.beatmaps.iter().all(|remote_beatmap| {
-                        local_checksums.contains(remote_beatmap.checksum.as_ref())
-                    });
-
-                    if all_match {
-                        None
-                    } else {
-                        // Check if online has beatmap IDs that local doesn't have
-                        // This indicates the online version has new difficulties
-                        let local_beatmap_ids: std::collections::HashSet<u32> =
-                            local.beatmaps.iter().map(|b| b.id).collect();
-
-                        let online_has_new_diffs = beatmapset
-                            .beatmaps
-                            .iter()
-                            .any(|rb| !local_beatmap_ids.contains(&rb.id));
-
-                        if online_has_new_diffs {
-                            Some(MissingStatus::NewDifficulties)
-                        } else {
-                            // Same beatmap IDs but different checksums - can't determine
-                            // if online is newer or local has modifications, skip it
-                            None
-                        }
-                    }
-                }
-            };
-
-            if let Some(status) = status {
-                seen_beatmapsets.insert(beatmapset.id);
-                all_missing.push(MissingBeatmapset {
-                    id: beatmapset.id,
-                    status,
-                    collection_id,
-                    collection_name: collection.name.to_string(),
-                });
+            // Skip if beatmapset exists locally (by ID)
+            if local_beatmapsets.contains_key(&beatmapset.id) {
+                trace!(beatmapset_id = beatmapset.id, "Found by ID, skipping");
+                continue;
             }
+
+            // ID not found - check if ALL checksums exist locally (handles beatmapsets with invalid OnlineID)
+            let api_checksums: Vec<&str> = beatmapset
+                .beatmaps
+                .iter()
+                .map(|bm| bm.checksum.as_ref())
+                .filter(|cs| !cs.is_empty())
+                .collect();
+
+            if !api_checksums.is_empty()
+                && api_checksums.iter().all(|cs| local_checksums.contains(*cs))
+            {
+                trace!(
+                    beatmapset_id = beatmapset.id,
+                    "ID not found but all checksums exist locally, skipping"
+                );
+                continue;
+            }
+
+            trace!(
+                beatmapset_id = beatmapset.id,
+                "Not installed, adding to candidates"
+            );
+            candidates_to_check.push((beatmapset.id, collection_id, collection.name.to_string()));
         }
     }
 
-    // Sort by collection_id first, then by beatmapset id within each collection
+    debug!(
+        seen_total = seen_beatmapsets.len(),
+        candidates = candidates_to_check.len(),
+        "Finished scanning collections"
+    );
+
+    let mut all_missing: Vec<MissingBeatmapset> = Vec::new();
+
+    if !candidates_to_check.is_empty() {
+        let beatmapset_ids: Vec<u32> = candidates_to_check.iter().map(|(id, ..)| *id).collect();
+        debug!(
+            count = beatmapset_ids.len(),
+            "Checking beatmapset availability on mirrors"
+        );
+
+        let mirror_result = download::check_mirror_availability(&beatmapset_ids).await;
+
+        for (id, collection_id, collection_name) in candidates_to_check {
+            if mirror_result.unavailable.contains(&id) {
+                trace!(beatmapset_id = id, "Skipping unavailable beatmapset");
+                continue;
+            }
+
+            all_missing.push(MissingBeatmapset {
+                id,
+                status: MissingStatus::NotInstalled,
+                collection_id,
+                collection_name,
+            });
+        }
+
+        info!(
+            candidates = beatmapset_ids.len(),
+            available = mirror_result.available.len(),
+            unavailable = mirror_result.unavailable.len(),
+            missing = all_missing.len(),
+            "Filtered missing beatmapsets by mirror availability"
+        );
+    }
+
     all_missing.sort_by(|a, b| {
         a.collection_id
             .cmp(&b.collection_id)

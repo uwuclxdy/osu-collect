@@ -35,7 +35,6 @@ pub enum ScanStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MissingStatus {
     NotInstalled,
-    NewDifficulties,
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +64,7 @@ pub struct UpdatesTab {
     pub osu_path: InputField,
     pub local_collections: Vec<CollectionEntry>,
     pub local_beatmapsets: HashMap<u32, LocalBeatmapset>,
+    pub all_local_checksums: HashSet<String>,
     /// All missing beatmaps from all fetched collections (cache)
     pub cached_missing_sets: Vec<MissingBeatmapset>,
     /// Filtered missing beatmaps based on selected collections
@@ -96,6 +96,7 @@ impl UpdatesTab {
             },
             local_collections: Vec::new(),
             local_beatmapsets: HashMap::new(),
+            all_local_checksums: HashSet::new(),
             cached_missing_sets: Vec::new(),
             missing_sets: Vec::new(),
             selected_missing: HashSet::new(),
@@ -186,6 +187,7 @@ impl UpdatesTab {
                 // Increment generation to invalidate any in-flight fetch tasks
                 self.scan_generation = self.scan_generation.wrapping_add(1);
                 self.local_collections.clear();
+                self.all_local_checksums.clear();
                 self.cached_missing_sets.clear();
                 self.missing_sets.clear();
                 self.selected_missing.clear();
@@ -444,6 +446,21 @@ impl UpdatesTab {
         self.local_beatmapsets = beatmapsets.into_iter().map(|bs| (bs.id, bs)).collect();
     }
 
+    pub fn set_all_checksums(&mut self, checksums: Vec<String>) {
+        self.all_local_checksums = checksums.into_iter().collect();
+    }
+
+    pub fn has_local_data(&self) -> bool {
+        !self.local_beatmapsets.is_empty() || !self.all_local_checksums.is_empty()
+    }
+
+    pub fn is_scan_ready(&self) -> bool {
+        matches!(
+            self.scan_status,
+            ScanStatus::Ready | ScanStatus::Idle | ScanStatus::Error
+        )
+    }
+
     pub fn set_missing_beatmaps(&mut self, missing: Vec<MissingBeatmapset>) {
         // Store in cache and filter based on current selection
         self.cached_missing_sets = missing;
@@ -469,7 +486,7 @@ impl UpdatesTab {
         self.beatmaps_state.select(Some(0));
 
         let count = self.missing_sets.len();
-        self.set_info(format!(" {count} updatable beatmaps"));
+        self.set_info(format!(" {count} missing beatmapsets"));
     }
 
     fn rebuild_display_items(&mut self) {
