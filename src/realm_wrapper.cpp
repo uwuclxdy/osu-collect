@@ -5,6 +5,7 @@
 #include <realm/list.hpp>
 #include <realm/history.hpp>
 #include <unordered_map>
+#include <unordered_set>
 #include <iostream>
 #include <fstream>
 
@@ -35,19 +36,36 @@ RealmDB::~RealmDB() = default;
 rust::Vec<LocalBeatmapset> RealmDB::list_beatmapsets() const {
     rust::Vec<LocalBeatmapset> results;
 
+    std::ofstream dbg("/tmp/realm_beatmapsets_debug.txt");
+
     try {
         auto tr = impl_->db->start_read();
 
         auto beatmap_table = tr->get_table("class_Beatmap");
         if (!beatmap_table) {
             std::cerr << "Table 'class_Beatmap' not found" << std::endl;
+            dbg << "Table 'class_Beatmap' not found" << std::endl;
             return results;
         }
 
         auto beatmapset_table = tr->get_table("class_BeatmapSet");
         if (!beatmapset_table) {
             std::cerr << "Table 'class_BeatmapSet' not found" << std::endl;
+            dbg << "Table 'class_BeatmapSet' not found" << std::endl;
             return results;
+        }
+
+        dbg << "Beatmap table rows: " << beatmap_table->size() << std::endl;
+        dbg << "BeatmapSet table rows: " << beatmapset_table->size() << std::endl;
+
+        // List columns
+        dbg << "\nBeatmap table columns:" << std::endl;
+        for (auto ck : beatmap_table->get_column_keys()) {
+            dbg << "  - " << beatmap_table->get_column_name(ck) << std::endl;
+        }
+        dbg << "\nBeatmapSet table columns:" << std::endl;
+        for (auto ck : beatmapset_table->get_column_keys()) {
+            dbg << "  - " << beatmapset_table->get_column_name(ck) << std::endl;
         }
 
         auto bm_online_id_col = beatmap_table->get_column_key("OnlineID");
@@ -56,25 +74,41 @@ rust::Vec<LocalBeatmapset> RealmDB::list_beatmapsets() const {
         auto bs_online_id_col = beatmapset_table->get_column_key("OnlineID");
 
         std::unordered_map<uint32_t, LocalBeatmapset> sets_map;
+        std::unordered_set<std::string> all_local_checksums;  // ALL checksums, including skipped ones
+        size_t skipped_no_beatmap_id = 0;
+        size_t skipped_no_set_link = 0;
+        size_t skipped_no_beatmapset_id = 0;
+        size_t total_processed = 0;
 
         for (auto& obj : *beatmap_table) {
+            total_processed++;
+
+            // Collect checksum regardless of OnlineID
+            auto md5_val = obj.get<realm::StringData>(bm_md5_col);
+            std::string md5_str(md5_val.data(), md5_val.size());
+            if (!md5_str.empty()) {
+                all_local_checksums.insert(md5_str);
+            }
+
             int64_t beatmap_id_raw = obj.get<int64_t>(bm_online_id_col);
             if (beatmap_id_raw <= 0) {
+                skipped_no_beatmap_id++;
                 continue;
             }
             uint32_t beatmap_id = static_cast<uint32_t>(beatmap_id_raw);
 
-            auto md5_val = obj.get<realm::StringData>(bm_md5_col);
             rust::String md5_hash(md5_val.data(), md5_val.size());
 
             auto set_link = obj.get<realm::ObjKey>(bm_set_col);
             if (!set_link) {
+                skipped_no_set_link++;
                 continue;
             }
 
             auto set_obj = beatmapset_table->get_object(set_link);
             int64_t beatmapset_id_raw = set_obj.get<int64_t>(bs_online_id_col);
             if (beatmapset_id_raw <= 0) {
+                skipped_no_beatmapset_id++;
                 continue;
             }
             uint32_t beatmapset_id = static_cast<uint32_t>(beatmapset_id_raw);
@@ -96,12 +130,73 @@ rust::Vec<LocalBeatmapset> RealmDB::list_beatmapsets() const {
             }
         }
 
+        dbg << "\nProcessing stats:" << std::endl;
+        dbg << "  Total beatmaps processed: " << total_processed << std::endl;
+        dbg << "  All unique checksums (including skipped): " << all_local_checksums.size() << std::endl;
+        dbg << "  Skipped (no beatmap OnlineID): " << skipped_no_beatmap_id << std::endl;
+        dbg << "  Skipped (no set link): " << skipped_no_set_link << std::endl;
+        dbg << "  Skipped (no beatmapset OnlineID): " << skipped_no_beatmapset_id << std::endl;
+        dbg << "  Total beatmapsets with valid IDs: " << sets_map.size() << std::endl;
+
+        // Count total beatmaps
+        size_t total_beatmaps = 0;
+        for (const auto& [_, set] : sets_map) {
+            total_beatmaps += set.beatmaps.size();
+        }
+        dbg << "  Total beatmaps in result: " << total_beatmaps << std::endl;
+
+        // Write JSON data for external analysis
+        std::ofstream json_out("/tmp/realm_beatmapsets.json");
+        json_out << "{\n  \"beatmapsets\": {\n";
+        bool first_set = true;
+        for (const auto& [set_id, set] : sets_map) {
+            if (!first_set) json_out << ",\n";
+            first_set = false;
+            json_out << "    \"" << set_id << "\": {\n";
+            json_out << "      \"id\": " << set_id << ",\n";
+            json_out << "      \"beatmaps\": [\n";
+            bool first_bm = true;
+            for (const auto& bm : set.beatmaps) {
+                if (!first_bm) json_out << ",\n";
+                first_bm = false;
+                json_out << "        {\"id\": " << bm.id
+                         << ", \"checksum\": \"" << std::string(bm.checksum.data(), bm.checksum.size()) << "\"}";
+            }
+            json_out << "\n      ]\n    }";
+        }
+        json_out << "\n  },\n";
+
+        // Write all checksums (only from valid beatmapsets, for comparison)
+        json_out << "  \"all_checksums\": [\n";
+        bool first_cs = true;
+        for (const auto& [_, set] : sets_map) {
+            for (const auto& bm : set.beatmaps) {
+                if (!first_cs) json_out << ",\n";
+                first_cs = false;
+                json_out << "    \"" << std::string(bm.checksum.data(), bm.checksum.size()) << "\"";
+            }
+        }
+        json_out << "\n  ],\n";
+
+        // Write ALL checksums including from skipped beatmaps
+        json_out << "  \"all_checksums_including_skipped\": [\n";
+        first_cs = true;
+        for (const auto& cs : all_local_checksums) {
+            if (!first_cs) json_out << ",\n";
+            first_cs = false;
+            json_out << "    \"" << cs << "\"";
+        }
+        json_out << "\n  ]\n}\n";
+        json_out.close();
+        dbg << "  Wrote JSON data to /tmp/realm_beatmapsets.json" << std::endl;
+
         for (auto& [_, set] : sets_map) {
             results.push_back(std::move(set));
         }
 
     } catch (const std::exception& e) {
         std::cerr << "Error reading beatmapsets: " << e.what() << std::endl;
+        dbg << "Error: " << e.what() << std::endl;
     }
 
     return results;
@@ -198,6 +293,33 @@ rust::Vec<LocalCollection> RealmDB::list_collections() const {
 
     } catch (const std::exception& e) {
         std::cerr << "[realm-cpp] Error reading collections: " << e.what() << std::endl;
+    }
+
+    return results;
+}
+
+rust::Vec<rust::String> RealmDB::list_all_checksums() const {
+    rust::Vec<rust::String> results;
+
+    try {
+        auto tr = impl_->db->start_read();
+
+        auto beatmap_table = tr->get_table("class_Beatmap");
+        if (!beatmap_table) {
+            return results;
+        }
+
+        auto md5_col = beatmap_table->get_column_key("MD5Hash");
+
+        for (auto& obj : *beatmap_table) {
+            auto md5_val = obj.get<realm::StringData>(md5_col);
+            if (md5_val.size() > 0) {
+                results.push_back(rust::String(md5_val.data(), md5_val.size()));
+            }
+        }
+
+    } catch (const std::exception& e) {
+        std::cerr << "Error reading all checksums: " << e.what() << std::endl;
     }
 
     return results;

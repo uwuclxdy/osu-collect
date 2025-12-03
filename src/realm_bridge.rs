@@ -29,5 +29,6 @@ pub mod ffi {
 
         fn list_beatmapsets(self: &RealmDB) -> Vec<LocalBeatmapset>;
         fn list_collections(self: &RealmDB) -> Vec<LocalCollection>;
+        fn list_all_checksums(self: &RealmDB) -> Vec<String>;
     }
 }

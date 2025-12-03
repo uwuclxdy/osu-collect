@@ -39,7 +39,6 @@ impl BeatmapReader for LazerReader {
                     .beatmaps
                     .into_iter()
                     .map(|b| LocalBeatmap {
-                        id: b.id,
                         checksum: b.checksum,
                     })
                     .collect(),
@@ -136,5 +135,19 @@ impl LazerReader {
         }
 
         paths
+    }
+
+    pub fn list_all_checksums(&self) -> Result<Vec<String>, String> {
+        let db_path = self.realm_path();
+        if !db_path.exists() {
+            return Err(format!("client.realm not found at {}", db_path.display()));
+        }
+
+        let db_path_str = db_path.to_str().ok_or("Invalid path encoding")?;
+
+        let realm =
+            ffi::open_realm(db_path_str).map_err(|e| format!("Failed to open realm: {e}"))?;
+
+        Ok(realm.list_all_checksums().into_iter().collect())
     }
 }

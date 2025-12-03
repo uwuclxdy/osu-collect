@@ -23,6 +23,7 @@ public:
 
     rust::Vec<LocalBeatmapset> list_beatmapsets() const;
     rust::Vec<LocalCollection> list_collections() const;
+    rust::Vec<rust::String> list_all_checksums() const;
 
 private:
     class Impl;
