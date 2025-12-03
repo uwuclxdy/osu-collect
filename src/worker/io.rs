@@ -2,7 +2,6 @@ use crate::utils::{AppError, Result};
 use futures_util::StreamExt;
 use md5::{Digest, Md5};
 use std::{
-    fs::File,
     io::ErrorKind,
     path::Path,
     sync::{
@@ -11,8 +10,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::{fs, io::AsyncWriteExt, task};
-use zip::ZipArchive;
+use tokio::{fs, io::AsyncWriteExt};
 
 pub const MAX_FILE_SIZE: u32 = 100 * 1024 * 1024;
 
@@ -128,18 +126,63 @@ pub async fn download_with_streaming(
 }
 
 pub async fn ensure_valid_archive(path: &Path) -> Result<()> {
-    let path_buf = path.to_path_buf();
-    task::spawn_blocking(move || -> Result<()> {
-        let file = File::open(&path_buf)?;
-        let archive = ZipArchive::new(file)
-            .map_err(|err| AppError::other_dynamic(format!("Invalid archive: {err}")))?;
-        if archive.is_empty() {
-            return Err(AppError::other("Archive did not contain any beatmap files"));
+    let metadata = fs::metadata(path).await?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return Err(AppError::other("Downloaded file is empty or invalid"));
+    }
+
+    // Read first 64 bytes to check magic and detect error pages
+    let mut file = fs::File::open(path).await?;
+    let mut header = [0u8; 64];
+
+    use tokio::io::AsyncReadExt;
+    let bytes_read = match file.read(&mut header).await {
+        Ok(n) => n,
+        Err(_) => {
+            return Err(AppError::other("File too small to be a valid archive"));
         }
-        Ok(())
-    })
-    .await
-    .map_err(|err| AppError::other_dynamic(format!("Archive validation failed: {err}")))?
+    };
+
+    if bytes_read < 4 {
+        return Err(AppError::other("File too small to be a valid archive"));
+    }
+
+    // ZIP local file header signature: 0x50 0x4B 0x03 0x04 ("PK\x03\x04")
+    if header[..4] == [0x50, 0x4B, 0x03, 0x04] {
+        return Ok(());
+    }
+
+    // Not a valid ZIP, check what it is for better error messages
+    let header_slice = &header[..bytes_read];
+
+    // Check for HTML error page (may have leading whitespace)
+    let trimmed = trim_leading_whitespace(header_slice);
+    if trimmed.starts_with(b"<!DOCTYPE")
+        || trimmed.starts_with(b"<!doctype")
+        || trimmed.starts_with(b"<html")
+        || trimmed.starts_with(b"<HTML")
+    {
+        return Err(AppError::other(
+            "Received HTML error page instead of beatmap archive",
+        ));
+    }
+
+    // Check for JSON error response
+    if trimmed.starts_with(b"{") || trimmed.starts_with(b"[") {
+        return Err(AppError::other(
+            "Received JSON error response instead of beatmap archive",
+        ));
+    }
+
+    Err(AppError::other("Invalid archive: missing ZIP signature"))
+}
+
+fn trim_leading_whitespace(data: &[u8]) -> &[u8] {
+    let start = data
+        .iter()
+        .position(|&b| !matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
+        .unwrap_or(data.len());
+    &data[start..]
 }
 
 pub async fn verify_existing_file(path: &Path) -> Result<bool> {
@@ -160,13 +203,8 @@ pub async fn verify_existing_file(path: &Path) -> Result<bool> {
         return Ok(false);
     }
 
-    match ensure_valid_archive(path).await {
-        Ok(_) => Ok(true),
-        Err(_) => {
-            remove_damaged_file(path).await?;
-            Ok(false)
-        }
-    }
+    // Accept the file without zip validation - checksums are verified separately
+    Ok(true)
 }
 
 async fn remove_damaged_file(path: &Path) -> Result<()> {
