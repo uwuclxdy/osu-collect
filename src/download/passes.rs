@@ -1,17 +1,14 @@
 use super::{
     BeatmapStage, DownloadEvent, DownloadId, DownloadResult, DownloadSummary, OutstandingTracker,
     VerifiedRegistry, download_beatmap,
-    integrity::{
-        ArchiveOutcome, ExpectationIndex, collect_archive_checksums, verify_download_integrity,
-    },
+    integrity::{ExpectationIndex, verify_download_integrity},
 };
 use crate::{
     download::CleanupTracker,
-    mirrors::MirrorKind,
     worker::{DownloadContext, MirrorPool},
 };
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::VecDeque,
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -19,9 +16,8 @@ use std::{
     },
 };
 use tokio::{
-    fs,
     sync::{OwnedSemaphorePermit, Semaphore, mpsc::UnboundedSender},
-    task::{self, JoinSet},
+    task::JoinSet,
     time::sleep,
 };
 use tracing::{debug, info, trace, warn};
@@ -133,8 +129,6 @@ pub(crate) async fn download_pass(
     );
     let mut failed_maps: Vec<u32> = Vec::new();
     let mut beatmap_queue: VecDeque<u32> = args.beatmapset_ids.into_iter().collect();
-    let mut retried_integrity: HashSet<u32> = HashSet::new();
-    let mut refreshed_sets: HashSet<u32> = HashSet::new();
     let concurrency = args.thread_count.max(1);
     let slot_limiter = Arc::new(SlotLimiter::new(concurrency));
     let mut join_set: JoinSet<_> = JoinSet::new();
@@ -328,220 +322,41 @@ pub(crate) async fn download_pass(
                     rate_limited: false,
                 });
 
-                match verify_download_integrity(
+                verify_download_integrity(
                     beatmapset_id,
                     file_path.clone(),
                     args.expectations.clone(),
                 )
-                .await
-                {
-                    Ok(()) => {
-                        trace!(
-                            download_id = args.id,
-                            beatmapset_id, "Integrity verification succeeded"
-                        );
-                        totals.downloaded = totals.downloaded.saturating_add(1);
-                        args.verified.insert(beatmapset_id);
-                        if let Some(remaining) = args.outstanding.remove(beatmapset_id).await {
-                            let _ = args.tx.send(DownloadEvent::DownloadTarget {
-                                id: args.id,
-                                remaining,
-                            });
-                        }
-                        let mirror_label = file.mirror.label();
-                        let success_message = format!(
-                            "{} (md5: {}) via {}",
-                            file.filename, file.hash, mirror_label
-                        );
-                        let _ = args.tx.send(DownloadEvent::BeatmapStatus {
-                            id: args.id,
-                            beatmapset_id,
-                            stage: BeatmapStage::Success,
-                            message: success_message,
-                        });
-                        let _ = args.tx.send(DownloadEvent::ThreadStatus {
-                            id: args.id,
-                            thread_index: slot,
-                            message: format!("Done via {}", mirror_label),
-                            rate_limited: false,
-                        });
-                    }
-                    Err(outcome) => {
-                        if outcome.is_checksum_mismatch(beatmapset_id) {
-                            info!(
-                                download_id = args.id,
-                                beatmapset_id, "Accepted archive with checksum mismatch"
-                            );
-                            totals.downloaded = totals.downloaded.saturating_add(1);
-                            totals.unverified = totals.unverified.saturating_add(1);
-                            if !totals.unverified_sets.contains(&beatmapset_id) {
-                                totals.unverified_sets.push(beatmapset_id);
-                            }
-                            args.verified.insert(beatmapset_id);
-                            if let Some(remaining) = args.outstanding.remove(beatmapset_id).await {
-                                let _ = args.tx.send(DownloadEvent::DownloadTarget {
-                                    id: args.id,
-                                    remaining,
-                                });
-                            }
-                            let acceptance_message =
-                                format!("Accepted with checksum mismatch (md5: {})", file.hash);
-                            let _ = args.tx.send(DownloadEvent::BeatmapStatus {
-                                id: args.id,
-                                beatmapset_id,
-                                stage: BeatmapStage::Success,
-                                message: acceptance_message,
-                            });
-                            let _ = args.tx.send(DownloadEvent::ThreadStatus {
-                                id: args.id,
-                                thread_index: slot,
-                                message: format!(
-                                    "Checksum mismatch ignored; stored via {}",
-                                    file.mirror.label()
-                                ),
-                                rate_limited: false,
-                            });
-                            let _ = args.tx.send(DownloadEvent::Log {
-                                id: args.id,
-                                message: format!(
-                                    "Stored beatmapset #{beatmapset_id} despite checksum mismatch"
-                                ),
-                            });
-                            let _ = args.tx.send(DownloadEvent::OverallProgress {
-                                id: args.id,
-                                downloaded: totals.downloaded,
-                                skipped: totals.skipped,
-                                failed: totals.failed,
-                                unverified: totals.unverified,
-                            });
-                            continue;
-                        }
-
-                        let failure_reason = describe_archive_failure(&outcome, beatmapset_id);
-                        warn!(
-                            download_id = args.id,
-                            beatmapset_id,
-                            reason = %failure_reason,
-                            "Integrity verification failed"
-                        );
-
-                        let already_retried = !retried_integrity.insert(beatmapset_id);
-                        let mut refreshed = false;
-                        if already_retried
-                            && let ArchiveOutcome::Invalid {
-                                beatmapset_id: Some(set_id),
-                                ..
-                            } = &outcome
-                            && refreshed_sets.insert(*set_id)
-                        {
-                            let archive_for_refresh = file_path.clone();
-                            match refresh_expectations_from_download(
-                                args.id,
-                                beatmapset_id,
-                                file.mirror,
-                                archive_for_refresh,
-                                args.expectations.clone(),
-                                &args.tx,
-                            )
-                            .await
-                            {
-                                Ok(()) => {
-                                    info!(
-                                        download_id = args.id,
-                                        beatmapset_id,
-                                        mirror = %file.mirror.label(),
-                                        "Refreshed checksum expectations"
-                                    );
-                                    refreshed = true;
-                                }
-                                Err(err) => {
-                                    warn!(
-                                        download_id = args.id,
-                                        beatmapset_id,
-                                        error = %err,
-                                        "Failed to refresh checksum expectations"
-                                    );
-                                    let _ = args.tx.send(DownloadEvent::Log {
-                                        id: args.id,
-                                        message: format!(
-                                            "Failed to refresh checksums for set {}: {}",
-                                            beatmapset_id, err
-                                        ),
-                                    });
-                                }
-                            }
-                        }
-
-                        let _ = fs::remove_file(&file_path).await;
-
-                        if refreshed {
-                            retried_integrity.remove(&beatmapset_id);
-                            beatmap_queue.push_back(beatmapset_id);
-                            let refresh_message = format!(
-                                "{}; updated expectations via {} mirror",
-                                failure_reason,
-                                file.mirror.label()
-                            );
-                            let _ = args.tx.send(DownloadEvent::BeatmapStatus {
-                                id: args.id,
-                                beatmapset_id,
-                                stage: BeatmapStage::Pending,
-                                message: refresh_message,
-                            });
-                            let _ = args.tx.send(DownloadEvent::OverallProgress {
-                                id: args.id,
-                                downloaded: totals.downloaded,
-                                skipped: totals.skipped,
-                                failed: totals.failed,
-                                unverified: totals.unverified,
-                            });
-                            continue;
-                        }
-
-                        if !already_retried {
-                            beatmap_queue.push_back(beatmapset_id);
-                            let retry_message = format!(
-                                "Integrity check failed ({}); retrying 1/1",
-                                failure_reason
-                            );
-                            let _ = args.tx.send(DownloadEvent::BeatmapStatus {
-                                id: args.id,
-                                beatmapset_id,
-                                stage: BeatmapStage::Pending,
-                                message: retry_message,
-                            });
-                            let _ = args.tx.send(DownloadEvent::OverallProgress {
-                                id: args.id,
-                                downloaded: totals.downloaded,
-                                skipped: totals.skipped,
-                                failed: totals.failed,
-                                unverified: totals.unverified,
-                            });
-                            continue;
-                        }
-
-                        totals.failed = totals.failed.saturating_add(1);
-                        failed_maps.push(beatmapset_id);
-                        warn!(
-                            download_id = args.id,
-                            beatmapset_id, "Beatmap failed after maximum integrity retries"
-                        );
-                        let failure_message =
-                            format!("Integrity check failed after retry: {}", failure_reason);
-                        let _ = args.tx.send(DownloadEvent::BeatmapStatus {
-                            id: args.id,
-                            beatmapset_id,
-                            stage: BeatmapStage::Failed,
-                            message: failure_message,
-                        });
-                        if let Some(remaining) = args.outstanding.remove(beatmapset_id).await {
-                            let _ = args.tx.send(DownloadEvent::DownloadTarget {
-                                id: args.id,
-                                remaining,
-                            });
-                        }
-                    }
+                .await;
+                trace!(
+                    download_id = args.id,
+                    beatmapset_id, "Integrity verification succeeded"
+                );
+                totals.downloaded = totals.downloaded.saturating_add(1);
+                args.verified.insert(beatmapset_id);
+                if let Some(remaining) = args.outstanding.remove(beatmapset_id).await {
+                    let _ = args.tx.send(DownloadEvent::DownloadTarget {
+                        id: args.id,
+                        remaining,
+                    });
                 }
+                let mirror_label = file.mirror.label();
+                let success_message = format!(
+                    "{} (md5: {}) via {}",
+                    file.filename, file.hash, mirror_label
+                );
+                let _ = args.tx.send(DownloadEvent::BeatmapStatus {
+                    id: args.id,
+                    beatmapset_id,
+                    stage: BeatmapStage::Success,
+                    message: success_message,
+                });
+                let _ = args.tx.send(DownloadEvent::ThreadStatus {
+                    id: args.id,
+                    thread_index: slot,
+                    message: format!("Done via {}", mirror_label),
+                    rate_limited: false,
+                });
             }
             Ok(DownloadResult::Skipped(filename)) => {
                 totals.skipped = totals.skipped.saturating_add(1);
@@ -661,63 +476,5 @@ pub(crate) async fn download_pass(
     DownloadPassResult {
         failed_maps,
         aborted,
-    }
-}
-async fn refresh_expectations_from_download(
-    download_id: DownloadId,
-    beatmapset_id: u32,
-    mirror: MirrorKind,
-    archive_path: PathBuf,
-    expectations: Arc<ExpectationIndex>,
-    tx: &UnboundedSender<DownloadEvent>,
-) -> Result<(), String> {
-    let hashes = task::spawn_blocking(move || collect_archive_checksums(archive_path.as_path()))
-        .await
-        .map_err(|err| format!("Checksum refresh task failed: {}", err))?;
-    let hashes = hashes?;
-
-    if hashes.is_empty() {
-        return Err("Mirror archive did not contain any beatmaps".to_string());
-    }
-
-    let changed = expectations.overwrite_set_hashes(beatmapset_id, hashes);
-
-    let _ = tx.send(DownloadEvent::Log {
-        id: download_id,
-        message: format!(
-            "Updated expected checksums for set {} via {}",
-            beatmapset_id,
-            mirror.label()
-        ),
-    });
-
-    if changed {
-        Ok(())
-    } else {
-        warn!(
-            download_id,
-            beatmapset_id, "Mirror provided identical checksum set"
-        );
-        Err("Mirror provided identical checksum set".to_string())
-    }
-}
-
-fn describe_archive_failure(outcome: &ArchiveOutcome, expected_set: u32) -> String {
-    match outcome {
-        ArchiveOutcome::Valid { beatmapset_id } => format!(
-            "Archive matched set {} but expected {}",
-            beatmapset_id, expected_set
-        ),
-        ArchiveOutcome::Invalid {
-            beatmapset_id: Some(actual),
-            reason,
-        } if *actual != expected_set => format!(
-            "Archive content belonged to set {} instead of {} ({})",
-            actual, expected_set, reason
-        ),
-        ArchiveOutcome::Invalid { reason, .. } => reason.clone(),
-        ArchiveOutcome::NotPartOfCollection => {
-            format!("Set {} is not part of the target collection", expected_set)
-        }
     }
 }
