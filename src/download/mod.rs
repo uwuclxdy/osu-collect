@@ -5,10 +5,12 @@ mod outstanding;
 mod passes;
 mod pipeline;
 mod precheck;
+mod size_fetcher;
 mod verified;
 
 use client::{DownloadResult, create_download_client, download_beatmap};
 pub use pipeline::{spawn_download, spawn_selective_download};
+pub use size_fetcher::check_mirror_availability;
 pub(crate) use {
     cleanup::CleanupTracker, outstanding::OutstandingTracker, verified::VerifiedRegistry,
 };
@@ -65,6 +67,10 @@ pub enum DownloadEvent {
         total_maps: usize,
         output_dir: String,
     },
+    CollectionSizeResolved {
+        id: DownloadId,
+        total_bytes: u64,
+    },
     LowDiskSpace {
         id: DownloadId,
         available_bytes: u64,
@@ -72,7 +78,6 @@ pub enum DownloadEvent {
     VerifiedMapSizes {
         id: DownloadId,
         total_bytes: u64,
-        count: u32,
     },
     BeatmapsRegistered {
         id: DownloadId,
@@ -156,5 +161,4 @@ pub struct DownloadSummary {
     pub skipped: u16,
     pub failed: u16,
     pub unverified: u16,
-    pub unverified_sets: Vec<u32>,
 }
