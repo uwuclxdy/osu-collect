@@ -16,8 +16,33 @@ const MIRROR_CHECK_URLS: &[&str] = &[
     "https://mirror.nekoha.moe/api4/download/{id}",
 ];
 
+fn deserialize_string_to_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrNumber {
+        String(String),
+        Number(u64),
+        Null,
+    }
+
+    match StringOrNumber::deserialize(deserializer)? {
+        StringOrNumber::String(s) => s
+            .parse::<u64>()
+            .map(Some)
+            .map_err(|_| D::Error::custom("invalid u64 string")),
+        StringOrNumber::Number(n) => Ok(Some(n)),
+        StringOrNumber::Null => Ok(None),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct BeatmapsetResponse {
+    #[serde(default, deserialize_with = "deserialize_string_to_u64")]
     file_size: Option<u64>,
 }
 
