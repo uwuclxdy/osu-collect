@@ -55,13 +55,9 @@ impl BeatmapReader for StableReader {
             }
 
             let beatmapset_id = beatmap.beatmapset_id as u32;
-            let beatmap_id = beatmap.beatmap_id as u32;
             let checksum = beatmap.hash.unwrap_or_default();
 
-            let local_beatmap = LocalBeatmap {
-                id: beatmap_id,
-                checksum,
-            };
+            let local_beatmap = LocalBeatmap { checksum };
 
             sets.entry(beatmapset_id)
                 .or_insert_with(|| LocalBeatmapset {

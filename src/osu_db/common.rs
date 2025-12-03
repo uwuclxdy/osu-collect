@@ -18,7 +18,6 @@ impl OsuClient {
 
 #[derive(Debug, Clone)]
 pub struct LocalBeatmap {
-    pub id: u32,
     pub checksum: String,
 }
 
