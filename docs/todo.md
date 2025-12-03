@@ -32,7 +32,9 @@ updater should generate a collection.db and the empty file—like it normally do
 
 updater should also recheck the database before refetching missing beatmaps in all cases.
 
+combine the updater and downloder pipelines as much as possible.
+
 **bugs:**
 
 - dl speed is calculated wrong - multithreading issue
-- fetching collections and checking for updates are very slow. is there a way to speed it up?
+- updater: fetching collections and checking for updates are very slow. is there a way to speed it up?
