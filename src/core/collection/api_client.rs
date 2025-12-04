@@ -1,15 +1,18 @@
 use super::model::Collection;
-use crate::utils::{AppError, Result};
-use std::{future::Future, pin::Pin, time::Duration};
+use crate::{
+    download::http_client,
+    utils::{AppError, Result},
+};
+use std::time::Duration;
 use tokio::time::sleep;
 
-const MAX_RETRIES: u8 = 3;
-const COLLECTION_FETCH_TIMEOUT_SECS: u64 = 30;
-
-pub type CollectionFetchFuture<'a> = Pin<Box<dyn Future<Output = Result<Collection>> + Send + 'a>>;
+const API_MAX_RETRIES: u8 = 3;
 
 pub trait CollectionService: Send + Sync {
-    fn fetch_collection(&self, collection_id: u32) -> CollectionFetchFuture<'_>;
+    fn fetch_collection(
+        &self,
+        collection_id: u32,
+    ) -> impl std::future::Future<Output = Result<Collection>> + Send;
 }
 
 pub struct HttpCollectionService {
@@ -24,15 +27,11 @@ impl HttpCollectionService {
     pub fn builder() -> HttpCollectionServiceBuilder {
         HttpCollectionServiceBuilder::new()
     }
-
-    async fn fetch_internal(&self, collection_id: u32) -> Result<Collection> {
-        fetch_collection(&self.client, collection_id).await
-    }
 }
 
 impl CollectionService for HttpCollectionService {
-    fn fetch_collection(&self, collection_id: u32) -> CollectionFetchFuture<'_> {
-        Box::pin(self.fetch_internal(collection_id))
+    async fn fetch_collection(&self, collection_id: u32) -> Result<Collection> {
+        fetch_collection(&self.client, collection_id).await
     }
 }
 
@@ -44,29 +43,22 @@ impl HttpCollectionServiceBuilder {
     }
 
     pub fn build(self) -> Result<HttpCollectionService> {
-        let client = default_http_client()?;
+        let client = http_client::api_client()?;
         Ok(HttpCollectionService::new(client))
     }
-}
-
-pub fn default_http_client() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(COLLECTION_FETCH_TIMEOUT_SECS))
-        .build()
-        .map_err(AppError::from)
 }
 
 pub async fn fetch_collection(client: &reqwest::Client, collection_id: u32) -> Result<Collection> {
     let url = format!("https://osucollector.com/api/collections/{collection_id}");
     let mut last_error = None;
 
-    for attempt in 1..=MAX_RETRIES {
+    for attempt in 1..=API_MAX_RETRIES {
         match try_fetch_collection(client, &url, collection_id).await {
             Ok(collection) => return Ok(collection),
             Err(err) => {
                 let should_retry = matches!(err, AppError::Network(_));
 
-                if should_retry && attempt < MAX_RETRIES {
+                if should_retry && attempt < API_MAX_RETRIES {
                     eprintln!("Attempt {attempt} failed, retrying... ({err})");
                     let delay_secs = 2_u64.pow((attempt - 1) as u32);
                     sleep(Duration::from_secs(delay_secs)).await;

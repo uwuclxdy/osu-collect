@@ -1,28 +1,70 @@
 use crate::{
+    check_shutdown,
+    download::{http_client, status},
     mirrors::{MirrorEndpoint, MirrorKind},
     utils::{AppError, FileExistsAction, Result, determine_file_exists_action, sanitize_filename},
     worker::{
         DownloadContext, MirrorPool,
-        io::{MAX_FILE_SIZE, download_with_streaming, ensure_valid_archive, verify_existing_file},
+        io::{
+            ArchiveValidationOptions, ArchiveValidationResult, download_with_streaming,
+            ensure_valid_archive, validate_archive,
+        },
     },
 };
-use std::{
-    io::ErrorKind,
-    sync::{Arc, atomic::Ordering},
-};
-use tokio::fs;
-
-const DOWNLOAD_TIMEOUT_SECS: u64 = 60;
+use std::path::Path;
+use std::{borrow::Cow, io::ErrorKind, path::PathBuf, sync::Arc, time::Duration};
+use tokio::{fs, time::sleep};
 
 type StatusCallback = Arc<dyn Fn(&str) + Send + Sync>;
+
+#[derive(Clone, Default)]
+pub struct StatusReporter {
+    callback: Option<StatusCallback>,
+}
+
+impl StatusReporter {
+    pub fn new(callback: Option<StatusCallback>) -> Self {
+        Self { callback }
+    }
+
+    pub fn emit_with<F>(&self, build: F)
+    where
+        F: FnOnce() -> String,
+    {
+        if let Some(callback) = &self.callback {
+            let message = build();
+            callback(&message);
+        }
+    }
+}
+
+impl From<Option<StatusCallback>> for StatusReporter {
+    fn from(callback: Option<StatusCallback>) -> Self {
+        StatusReporter::new(callback)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DownloadResult {
     Success(CompletedDownload),
     Skipped(Box<str>),
-    Failed(&'static str),
-    FailedDynamic(Box<str>),
+    Failed(DownloadFailure),
     Aborted,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DownloadFailure {
+    pub mirror: Option<MirrorKind>,
+    pub reason: Cow<'static, str>,
+}
+
+impl DownloadResult {
+    fn failed(mirror: Option<MirrorKind>, reason: impl Into<Cow<'static, str>>) -> Self {
+        DownloadResult::Failed(DownloadFailure {
+            mirror,
+            reason: reason.into(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -34,11 +76,7 @@ pub struct CompletedDownload {
 
 #[inline]
 pub fn create_download_client() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
-        .redirect(reqwest::redirect::Policy::limited(5))
-        .build()
-        .map_err(AppError::from)
+    http_client::download_client()
 }
 
 pub async fn download_beatmap(
@@ -46,103 +84,137 @@ pub async fn download_beatmap(
     mirrors: &[MirrorEndpoint],
     context: &DownloadContext,
     progress_callback: Option<Arc<dyn Fn(u64, u64) + Send + Sync>>,
-    status_callback: Option<StatusCallback>,
+    status_reporter: StatusReporter,
     rate_limiter: Option<MirrorPool>,
 ) -> Result<DownloadResult> {
-    if context.shutdown.load(Ordering::Acquire) {
-        return Ok(DownloadResult::Aborted);
-    }
+    check_shutdown!(context.shutdown);
 
     let mut last_error: Option<DownloadResult> = None;
+    let mut pending: Vec<MirrorEndpoint> = mirrors.to_vec();
 
-    for (idx, mirror) in mirrors.iter().enumerate() {
-        if context.shutdown.load(Ordering::Acquire) {
-            return Ok(DownloadResult::Aborted);
-        }
+    while !pending.is_empty() {
+        let mut deferred_rate_limited: Vec<MirrorEndpoint> = Vec::new();
 
-        if let Some(ref callback) = status_callback {
-            callback(&format!("Contacting {}...", mirror.display_name()));
-        }
+        for mirror in pending.iter() {
+            check_shutdown!(context.shutdown);
 
-        let url = mirror.url_for(beatmapset_id);
-        let response = match context.client.get(&url).send().await {
-            Ok(resp) => resp,
-            Err(e) => {
-                let err = if e.is_timeout() {
-                    DownloadResult::Failed("Connection timeout")
-                } else if e.is_connect() {
-                    DownloadResult::Failed("Connection failed")
-                } else {
-                    DownloadResult::FailedDynamic(
-                        format!("Request failed on {}: {e}", mirror.display_name())
-                            .into_boxed_str(),
-                    )
-                };
-                last_error = Some(err);
-                continue;
-            }
-        };
+            status_reporter.emit_with(|| {
+                format!(
+                    "{} #{} from {}",
+                    status::FETCHING,
+                    beatmapset_id,
+                    mirror.display_name()
+                )
+            });
 
-        let status = response.status();
-
-        let catboy_rate_limited = matches!(mirror.kind, MirrorKind::Catboy(_))
-            && status == reqwest::StatusCode::FORBIDDEN;
-
-        if status == reqwest::StatusCode::TOO_MANY_REQUESTS || catboy_rate_limited {
-            if let Some(ref limiter) = rate_limiter {
-                limiter.mark_rate_limited(mirror.kind);
-            }
-            if let Some(ref callback) = status_callback {
-                let mut message = format!("Rate limited on {}", mirror.display_name());
-                if let Some(next) = mirrors.get(idx + 1) {
-                    message.push_str(&format!(", switching to {}", next.display_name()));
+            let url = mirror.url_for(beatmapset_id);
+            let response = match context.client.get(&url).send().await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    let err = if e.is_timeout() {
+                        DownloadResult::failed(Some(mirror.kind), "Connection timeout")
+                    } else if e.is_connect() {
+                        DownloadResult::failed(Some(mirror.kind), "Connection failed")
+                    } else {
+                        DownloadResult::failed(
+                            Some(mirror.kind),
+                            format!("Request failed on {}: {e}", mirror.display_name()),
+                        )
+                    };
+                    last_error = Some(err);
+                    continue;
                 }
-                callback(&message);
-            }
-            last_error = Some(DownloadResult::Failed("Rate limited"));
-            continue;
-        }
+            };
 
-        if status == reqwest::StatusCode::NOT_FOUND {
-            last_error = Some(DownloadResult::Failed("Not found (404)"));
-            continue;
-        }
+            let status = response.status();
 
-        if !status.is_success() {
-            last_error = Some(DownloadResult::FailedDynamic(
-                format!("HTTP {}", status).into_boxed_str(),
-            ));
-            continue;
-        }
+            let catboy_rate_limited = matches!(mirror.kind, MirrorKind::Catboy(_))
+                && status == reqwest::StatusCode::FORBIDDEN;
 
-        let result = match process_mirror_response(
-            mirror,
-            response,
-            beatmapset_id,
-            context,
-            progress_callback.clone(),
-        )
-        .await
-        {
-            Ok(res) => res,
-            Err(err) => {
-                last_error = Some(DownloadResult::FailedDynamic(
-                    format!("{} via {}", err, mirror.display_name()).into_boxed_str(),
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS || catboy_rate_limited {
+                if let Some(ref limiter) = rate_limiter {
+                    limiter.mark_rate_limited(mirror.kind);
+                }
+                deferred_rate_limited.push(mirror.clone());
+                last_error = Some(DownloadResult::failed(
+                    Some(mirror.kind),
+                    status::RATE_LIMITED,
                 ));
                 continue;
             }
-        };
 
-        match result {
-            DownloadResult::Success(_) | DownloadResult::Skipped(_) => return Ok(result),
-            DownloadResult::Aborted => return Ok(DownloadResult::Aborted),
-            DownloadResult::Failed(_) | DownloadResult::FailedDynamic(_) => {
-                last_error = Some(result);
+            if status == reqwest::StatusCode::NOT_FOUND {
+                last_error = Some(DownloadResult::failed(Some(mirror.kind), "Not found (404)"));
+                continue;
+            }
+
+            if !status.is_success() {
+                last_error = Some(DownloadResult::failed(
+                    Some(mirror.kind),
+                    format!("HTTP {}", status),
+                ));
+                continue;
+            }
+
+            status_reporter.emit_with(|| {
+                format!(
+                    "{} #{} from {}",
+                    status::DOWNLOADING,
+                    beatmapset_id,
+                    mirror.display_name()
+                )
+            });
+
+            let result = match process_mirror_response(
+                mirror,
+                response,
+                beatmapset_id,
+                context,
+                progress_callback.clone(),
+            )
+            .await
+            {
+                Ok(res) => res,
+                Err(err) => {
+                    last_error = Some(DownloadResult::failed(
+                        Some(mirror.kind),
+                        format!("{} via {}", err, mirror.display_name()),
+                    ));
+                    continue;
+                }
+            };
+
+            match result {
+                DownloadResult::Success(_) | DownloadResult::Skipped(_) => return Ok(result),
+                DownloadResult::Aborted => return Ok(DownloadResult::Aborted),
+                DownloadResult::Failed(_) => {
+                    last_error = Some(result);
+                }
             }
         }
+
+        if deferred_rate_limited.is_empty() {
+            break;
+        }
+
+        let Some(ref limiter) = rate_limiter else {
+            break;
+        };
+
+        let wait_duration = deferred_rate_limited
+            .iter()
+            .filter_map(|mirror| limiter.penalty_remaining(mirror.kind))
+            .min()
+            .unwrap_or(Duration::from_secs(0));
+
+        if !wait_duration.is_zero() {
+            sleep(wait_duration).await;
+        }
+
+        pending = deferred_rate_limited;
     }
 
-    Ok(last_error.unwrap_or_else(|| DownloadResult::FailedDynamic("All mirrors failed".into())))
+    Ok(last_error.unwrap_or_else(|| DownloadResult::failed(None, "All mirrors failed")))
 }
 
 async fn process_mirror_response(
@@ -162,20 +234,13 @@ async fn process_mirror_response(
     if let Some(ref ct) = content_type
         && !is_archive_content_type(ct)
     {
-        return Ok(DownloadResult::FailedDynamic(
+        return Ok(DownloadResult::failed(
+            Some(mirror.kind),
             format!(
                 "Unexpected content type '{}' from {}",
                 ct,
                 mirror.display_name()
-            )
-            .into_boxed_str(),
-        ));
-    }
-    if let Some(len) = content_length
-        && len > MAX_FILE_SIZE as u64
-    {
-        return Ok(DownloadResult::FailedDynamic(
-            format!("File too large ({} MB, max 100 MB)", len / 1024 / 1024).into_boxed_str(),
+            ),
         ));
     }
 
@@ -190,25 +255,31 @@ async fn process_mirror_response(
     };
 
     if existing_metadata.is_some() {
-        if context.shutdown.load(Ordering::Acquire) {
-            return Ok(DownloadResult::Aborted);
-        }
+        check_shutdown!(context.shutdown);
 
         if context.skip_existing {
-            if let Some(registry) = &context.verified_registry
-                && registry.contains(beatmapset_id)
-            {
+            if context.tracker.is_verified(beatmapset_id) {
                 return Ok(DownloadResult::Skipped(
                     sanitized_filename.clone().into_boxed_str(),
                 ));
             }
 
-            if verify_existing_file(&output_path).await? {
-                return Ok(DownloadResult::Skipped(
-                    sanitized_filename.clone().into_boxed_str(),
-                ));
+            let validation_opts = ArchiveValidationOptions {
+                verify_zip_eocd: context.verify_zip_eocd,
+                remove_on_invalid: true,
+            };
+            match validate_archive(&output_path, validation_opts).await? {
+                ArchiveValidationResult::Valid => {
+                    return Ok(DownloadResult::Skipped(
+                        sanitized_filename.clone().into_boxed_str(),
+                    ));
+                }
+                ArchiveValidationResult::NotFound
+                | ArchiveValidationResult::Invalid(_)
+                | ArchiveValidationResult::Removed(_) => {
+                    // Fall through to download
+                }
             }
-            // invalid archives are deleted inside verify_existing_file, so fall through
         } else {
             let action =
                 determine_file_exists_action(context.skip_existing, context.auto_overwrite)?;
@@ -220,6 +291,27 @@ async fn process_mirror_response(
         }
     }
 
+    write_and_verify_archive(
+        mirror,
+        response,
+        context,
+        output_path,
+        sanitized_filename,
+        content_length,
+        progress_callback,
+    )
+    .await
+}
+
+async fn write_and_verify_archive(
+    mirror: &MirrorEndpoint,
+    response: reqwest::Response,
+    context: &DownloadContext,
+    output_path: PathBuf,
+    sanitized_filename: String,
+    content_length: Option<u64>,
+    progress_callback: Option<Arc<dyn Fn(u64, u64) + Send + Sync>>,
+) -> Result<DownloadResult> {
     context.cleanup_tracker.track(&output_path);
 
     let stream = match download_with_streaming(
@@ -227,6 +319,7 @@ async fn process_mirror_response(
         &output_path,
         content_length,
         progress_callback,
+        context.progress_watchdog,
         context.shutdown.clone(),
     )
     .await
@@ -243,32 +336,38 @@ async fn process_mirror_response(
         return Ok(DownloadResult::Aborted);
     }
 
+    // Check for incomplete download - but still validate the file in case server sent incorrect Content-Length
+    // If the file is valid despite being "incomplete", we accept it
     if let Some(expected) = content_length
         && stream.bytes_written < expected
     {
+        // Try to validate anyway - server might have sent wrong Content-Length
+        if ensure_valid_archive(&output_path, context.verify_zip_eocd)
+            .await
+            .is_err()
+        {
+            let _ = fs::remove_file(&output_path).await;
+            context.cleanup_tracker.mark_removed(&output_path);
+            return Ok(DownloadResult::failed(
+                Some(mirror.kind),
+                format!(
+                    "Download incomplete from {} (received {} of {} bytes)",
+                    mirror.display_name(),
+                    stream.bytes_written,
+                    expected
+                ),
+            ));
+        }
+    } else if let Err(err) = ensure_valid_archive(&output_path, context.verify_zip_eocd).await {
         let _ = fs::remove_file(&output_path).await;
         context.cleanup_tracker.mark_removed(&output_path);
-        return Ok(DownloadResult::FailedDynamic(
-            format!(
-                "Download incomplete from {} (received {} of {} bytes)",
-                mirror.display_name(),
-                stream.bytes_written,
-                expected
-            )
-            .into_boxed_str(),
-        ));
-    }
-
-    if let Err(err) = ensure_valid_archive(&output_path).await {
-        let _ = fs::remove_file(&output_path).await;
-        context.cleanup_tracker.mark_removed(&output_path);
-        return Ok(DownloadResult::FailedDynamic(
+        return Ok(DownloadResult::failed(
+            Some(mirror.kind),
             format!(
                 "{} returned an invalid archive: {}",
                 mirror.display_name(),
                 err
-            )
-            .into_boxed_str(),
+            ),
         ));
     }
 
@@ -300,14 +399,25 @@ fn extract_filename_from_response(
     response: &reqwest::Response,
     beatmapset_id: u32,
 ) -> Result<String> {
-    if let Some(content_disposition) = response.headers().get(reqwest::header::CONTENT_DISPOSITION)
+    let filename = if let Some(content_disposition) =
+        response.headers().get(reqwest::header::CONTENT_DISPOSITION)
         && let Ok(value) = content_disposition.to_str()
-        && let Some(filename) = parse_content_disposition(value)
+        && let Some(name) = parse_content_disposition(value)
     {
-        return Ok(filename);
-    }
+        name
+    } else {
+        format!("{}.osz", beatmapset_id)
+    };
 
-    Ok(format!("{}.osz", beatmapset_id))
+    let has_osz_extension = Path::new(&filename)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("osz"));
+
+    if has_osz_extension {
+        Ok(filename)
+    } else {
+        Ok(format!("{}.osz", filename))
+    }
 }
 
 fn parse_content_disposition(value: &str) -> Option<String> {
