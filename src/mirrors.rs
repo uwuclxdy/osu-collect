@@ -37,6 +37,7 @@ pub enum MirrorKind {
 }
 
 impl MirrorKind {
+    #[inline]
     pub fn label(&self) -> &'static str {
         match self {
             MirrorKind::Nerinyan => "Nerinyan",
@@ -116,6 +117,7 @@ impl MirrorEndpoint {
         })
     }
 
+    #[inline]
     pub fn url_for(&self, beatmapset_id: u32) -> String {
         self.template.replace("{id}", &beatmapset_id.to_string())
     }

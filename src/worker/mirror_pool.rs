@@ -1,9 +1,13 @@
 use crate::mirrors::{MirrorEndpoint, MirrorKind};
+use smallvec::SmallVec;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+
+type MirrorPlan = SmallVec<[MirrorEndpoint; 5]>;
+type CoolingQueue = SmallVec<[(MirrorEndpoint, Instant); 5]>;
 
 #[derive(Clone)]
 pub struct MirrorPool {
@@ -23,11 +27,11 @@ impl MirrorPool {
         self.mirrors.len() == 1
     }
 
-    pub fn plan(&self) -> Vec<MirrorEndpoint> {
+    pub fn plan(&self) -> MirrorPlan {
         let now = Instant::now();
         let mut penalties = self.penalties.lock().unwrap();
-        let mut ready = Vec::with_capacity(self.mirrors.len());
-        let mut cooling = Vec::new();
+        let mut ready: MirrorPlan = SmallVec::with_capacity(self.mirrors.len());
+        let mut cooling: CoolingQueue = SmallVec::new();
 
         for mirror in self.mirrors.iter() {
             match penalties.get(&mirror.kind).copied() {
@@ -44,7 +48,10 @@ impl MirrorPool {
 
         if ready.is_empty() {
             cooling.sort_by_key(|(_, until)| *until);
-            return cooling.into_iter().map(|(mirror, _)| mirror).collect();
+            return cooling
+                .into_iter()
+                .map(|(mirror, _)| mirror)
+                .collect::<MirrorPlan>();
         }
 
         cooling.sort_by_key(|(_, until)| *until);
@@ -78,5 +85,13 @@ impl MirrorPool {
     pub fn clear_penalty(&self, kind: MirrorKind) {
         let mut penalties = self.penalties.lock().unwrap();
         penalties.remove(&kind);
+    }
+
+    pub fn penalty_remaining(&self, kind: MirrorKind) -> Option<Duration> {
+        let now = Instant::now();
+        let penalties = self.penalties.lock().unwrap();
+        penalties
+            .get(&kind)
+            .and_then(|&until| (until > now).then_some(until - now))
     }
 }
