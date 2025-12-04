@@ -26,7 +26,9 @@ pub enum ConfigField {
     MirrorCustomUrl,
     DownloadSkipExisting,
     DownloadThreads,
+    DownloadRetries,
     DownloadNoVideo,
+    DownloadVerifyZipEocd,
     LoggingEnabled,
     LoggingLevel,
     LoggingFormat,
@@ -39,6 +41,7 @@ impl ConfigField {
             self,
             ConfigField::MirrorCustomUrl
                 | ConfigField::DownloadThreads
+                | ConfigField::DownloadRetries
                 | ConfigField::LoggingDirectory
         )
     }
@@ -55,7 +58,9 @@ pub struct ConfigTab {
     pub custom_mirror: InputField,
     pub skip_existing: bool,
     pub threads: InputField,
+    pub retries: InputField,
     pub no_video: bool,
+    pub verify_zip_eocd: bool,
     pub logging_enabled: bool,
     pub logging_level: LogLevel,
     pub logging_format: LogFormat,
@@ -89,7 +94,17 @@ impl ConfigTab {
                     .unwrap_or_default(),
                 placeholder: format!("leave blank (default {})", DownloadConfig::DEFAULT_THREADS),
             },
+            retries: InputField {
+                label: "Download retries",
+                value: config
+                    .download
+                    .max_retries
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                placeholder: DownloadConfig::DEFAULT_RETRIES.to_string(),
+            },
             no_video: config.download.no_video,
+            verify_zip_eocd: config.download.verify_zip_eocd,
             logging_enabled: config.logging.enabled,
             logging_level: config.logging.level,
             logging_format: config.logging.format,
@@ -114,8 +129,10 @@ impl ConfigTab {
             ConfigField::MirrorNekoha => ConfigField::MirrorCustomUrl,
             ConfigField::MirrorCustomUrl => ConfigField::DownloadSkipExisting,
             ConfigField::DownloadSkipExisting => ConfigField::DownloadThreads,
-            ConfigField::DownloadThreads => ConfigField::DownloadNoVideo,
-            ConfigField::DownloadNoVideo => ConfigField::LoggingEnabled,
+            ConfigField::DownloadThreads => ConfigField::DownloadRetries,
+            ConfigField::DownloadRetries => ConfigField::DownloadNoVideo,
+            ConfigField::DownloadNoVideo => ConfigField::DownloadVerifyZipEocd,
+            ConfigField::DownloadVerifyZipEocd => ConfigField::LoggingEnabled,
             ConfigField::LoggingEnabled => ConfigField::LoggingLevel,
             ConfigField::LoggingLevel => ConfigField::LoggingFormat,
             ConfigField::LoggingFormat => ConfigField::LoggingDirectory,
@@ -135,8 +152,10 @@ impl ConfigTab {
             ConfigField::MirrorCustomUrl => ConfigField::MirrorNekoha,
             ConfigField::DownloadSkipExisting => ConfigField::MirrorCustomUrl,
             ConfigField::DownloadThreads => ConfigField::DownloadSkipExisting,
-            ConfigField::DownloadNoVideo => ConfigField::DownloadThreads,
-            ConfigField::LoggingEnabled => ConfigField::DownloadNoVideo,
+            ConfigField::DownloadRetries => ConfigField::DownloadThreads,
+            ConfigField::DownloadNoVideo => ConfigField::DownloadRetries,
+            ConfigField::LoggingEnabled => ConfigField::DownloadVerifyZipEocd,
+            ConfigField::DownloadVerifyZipEocd => ConfigField::DownloadNoVideo,
             ConfigField::LoggingLevel => ConfigField::LoggingEnabled,
             ConfigField::LoggingFormat => ConfigField::LoggingLevel,
             ConfigField::LoggingDirectory => ConfigField::LoggingFormat,
@@ -152,6 +171,11 @@ impl ConfigTab {
                     self.threads.value.push(ch);
                 }
             }
+            ConfigField::DownloadRetries => {
+                if ch.is_ascii_digit() {
+                    self.retries.value.push(ch);
+                }
+            }
             ConfigField::LoggingDirectory => self.logging_dir.value.push(ch),
             _ => {}
         }
@@ -165,6 +189,9 @@ impl ConfigTab {
             }
             ConfigField::DownloadThreads => {
                 self.threads.value.pop();
+            }
+            ConfigField::DownloadRetries => {
+                self.retries.value.pop();
             }
             ConfigField::LoggingDirectory => {
                 self.logging_dir.value.pop();
@@ -185,6 +212,9 @@ impl ConfigTab {
             ConfigField::MirrorNekoha => self.nekoha = !self.nekoha,
             ConfigField::DownloadSkipExisting => self.skip_existing = !self.skip_existing,
             ConfigField::DownloadNoVideo => self.no_video = !self.no_video,
+            ConfigField::DownloadVerifyZipEocd => {
+                self.verify_zip_eocd = !self.verify_zip_eocd;
+            }
             ConfigField::LoggingEnabled => self.logging_enabled = !self.logging_enabled,
             ConfigField::LoggingLevel => self.cycle_logging_level(),
             ConfigField::LoggingFormat => self.cycle_logging_format(),
@@ -219,6 +249,8 @@ impl ConfigTab {
             skip_existing: self.skip_existing,
             concurrent,
             no_video: self.no_video,
+            verify_zip_eocd: self.verify_zip_eocd,
+            max_retries: self.parse_retries()?,
         };
 
         let logging = LoggingConfig {
@@ -266,6 +298,22 @@ impl ConfigTab {
             .map_err(|_| "Thread count must be a valid number between 1 and 50".to_string())?;
         if value == 0 || value > 50 {
             return Err("Thread count must be between 1 and 50".to_string());
+        }
+
+        Ok(Some(value))
+    }
+
+    fn parse_retries(&self) -> Result<Option<u8>, String> {
+        let trimmed = self.retries.value.trim();
+        if trimmed.is_empty() {
+            return Ok(None);
+        }
+
+        let value = trimmed
+            .parse::<u8>()
+            .map_err(|_| "Download retries must be a number between 1 and 10".to_string())?;
+        if !(1..=10).contains(&value) {
+            return Err("Download retries must be between 1 and 10".to_string());
         }
 
         Ok(Some(value))

@@ -1,17 +1,18 @@
+use dashmap::DashSet;
 use std::{
-    collections::HashSet,
     io::ErrorKind,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 use tokio::fs;
+use tracing::{info, warn};
 
 #[derive(Clone, Default)]
-pub(crate) struct CleanupTracker {
-    pending: Arc<Mutex<HashSet<PathBuf>>>,
+pub struct CleanupTracker {
+    pending: Arc<DashSet<PathBuf>>,
 }
 
-pub(crate) struct CleanupOutcome {
+pub struct CleanupOutcome {
     pub removed: usize,
     pub failures: Vec<(PathBuf, String)>,
 }
@@ -19,38 +20,41 @@ pub(crate) struct CleanupOutcome {
 impl CleanupTracker {
     pub fn new() -> Self {
         Self {
-            pending: Arc::new(Mutex::new(HashSet::new())),
+            pending: Arc::new(DashSet::new()),
         }
     }
 
     pub fn track(&self, path: &Path) {
-        let mut guard = self.pending.lock().expect("cleanup tracker poisoned");
-        guard.insert(path.to_path_buf());
+        let path_buf = path.to_path_buf();
+        if !self.pending.insert(path_buf.clone()) {
+            info!(path = %path_buf.display(), "CleanupTracker: path already tracked");
+        }
     }
 
     pub fn mark_complete(&self, path: &Path) {
-        let mut guard = self.pending.lock().expect("cleanup tracker poisoned");
-        guard.remove(path);
+        if self.pending.remove(path).is_none() {
+            warn!(path = %path.display(), "CleanupTracker: mark_complete called for untracked path");
+        }
     }
 
     pub fn mark_removed(&self, path: &Path) {
-        let mut guard = self.pending.lock().expect("cleanup tracker poisoned");
-        guard.remove(path);
+        self.pending.remove(path);
     }
 
     pub async fn cleanup_incomplete(&self) -> CleanupOutcome {
-        let paths: Vec<PathBuf> = {
-            let mut guard = self.pending.lock().expect("cleanup tracker poisoned");
-            guard.drain().collect()
-        };
-
+        let paths: Vec<PathBuf> = self.pending.iter().map(|r| r.clone()).collect();
         let mut removed = 0;
         let mut failures = Vec::new();
 
         for path in paths {
             match fs::remove_file(&path).await {
-                Ok(_) => removed += 1,
-                Err(err) if err.kind() == ErrorKind::NotFound => {}
+                Ok(_) => {
+                    removed += 1;
+                    self.pending.remove(&path);
+                }
+                Err(err) if err.kind() == ErrorKind::NotFound => {
+                    self.pending.remove(&path);
+                }
                 Err(err) => failures.push((path.clone(), err.to_string())),
             }
         }
