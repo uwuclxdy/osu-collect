@@ -1,3 +1,4 @@
+use super::constants::CONCURRENT_REQUESTS;
 use futures_util::{StreamExt, stream};
 use reqwest::Client;
 use serde::Deserialize;
@@ -5,7 +6,6 @@ use std::{collections::HashSet, time::Duration};
 use tracing::{debug, info, trace, warn};
 
 const NEKOHA_API_BASE: &str = "https://mirror.nekoha.moe/api4";
-const CONCURRENT_REQUESTS: usize = 50;
 
 /// Mirror URLs for availability checking (using HEAD requests)
 const MIRROR_CHECK_URLS: &[&str] = &[
@@ -61,12 +61,10 @@ pub struct MirrorAvailabilityResult {
 
 /// Check beatmapsets availability across mirrors.
 /// Uses ZIP magic byte verification to ensure actual archives are available.
-pub async fn check_mirror_availability(beatmapset_ids: &[u32]) -> MirrorAvailabilityResult {
-    let client = Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .unwrap_or_else(|_| Client::new());
-
+pub async fn check_mirror_availability(
+    client: &Client,
+    beatmapset_ids: &[u32],
+) -> MirrorAvailabilityResult {
     let results: Vec<(u32, bool)> = stream::iter(beatmapset_ids.iter().copied())
         .map(|id| {
             let client = client.clone();
@@ -103,12 +101,7 @@ pub async fn check_mirror_availability(beatmapset_ids: &[u32]) -> MirrorAvailabi
     }
 }
 
-pub async fn fetch_beatmapset_sizes(beatmapset_ids: &[u32]) -> SizeFetchResult {
-    let client = Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .unwrap_or_else(|_| Client::new());
-
+pub async fn fetch_beatmapset_sizes(client: &Client, beatmapset_ids: &[u32]) -> SizeFetchResult {
     let results: Vec<(u32, Option<u64>)> = stream::iter(beatmapset_ids.iter().copied())
         .map(|id| {
             let client = client.clone();
