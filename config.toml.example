@@ -22,6 +22,9 @@ concurrent = 6
 # download beatmapsets without video if the mirror supports it
 no_video = false
 
+# check the ZIP EOCD footer to verify .osz integrity
+verify_zip_eocd = false
+
 [logging]
 # structured logging is disabled by default, set to true to enable tracing output
 enabled = false
