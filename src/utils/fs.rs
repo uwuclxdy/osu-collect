@@ -84,7 +84,8 @@ pub async fn validate_and_prepare_directory(directory: &str) -> Result<PathBuf> 
     match fs::File::create(&test_file).await {
         Ok(_) => {
             let _ = fs::remove_file(&test_file).await;
-            Ok(expanded_path)
+            let canonical_path = fs::canonicalize(&expanded_path).await?;
+            Ok(canonical_path)
         }
         Err(err) => {
             let message = format!(
