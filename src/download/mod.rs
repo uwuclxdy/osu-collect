@@ -1,19 +1,33 @@
 mod cleanup;
-mod client;
+pub(crate) mod client;
+pub mod constants;
+pub mod error;
+pub mod http_client;
 mod integrity;
-mod outstanding;
 mod passes;
 mod pipeline;
 mod precheck;
 mod size_fetcher;
-mod verified;
+mod tracker;
 
-use client::{DownloadResult, create_download_client, download_beatmap};
+pub use cleanup::CleanupTracker;
+use client::download_beatmap;
+pub use client::{DownloadResult, StatusReporter, create_download_client};
+pub use error::DownloadError;
 pub use pipeline::{spawn_download, spawn_selective_download};
 pub use size_fetcher::check_mirror_availability;
-pub(crate) use {
-    cleanup::CleanupTracker, outstanding::OutstandingTracker, verified::VerifiedRegistry,
-};
+pub use tracker::BeatmapTracker;
+
+pub mod status {
+    pub const RATE_LIMITED: &str = "Rate limited";
+    pub const CONTACTING_PREFIX: &str = "Contacting";
+    pub const ABORTED: &str = "Aborted";
+    pub const RECHECKING_PREFIX: &str = "Rechecking";
+    pub const STARTING_DOWNLOAD: &str = "Starting download";
+    pub const DOWNLOADING: &str = "Downloading";
+    pub const FETCHING: &str = "Fetching";
+    pub const VERIFYING_PREFIX: &str = "Verifying integrity for";
+}
 
 use crate::mirrors::MirrorEndpoint;
 use std::sync::{
@@ -21,17 +35,59 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use tokio::task::JoinHandle;
+use tracing::warn;
+
+#[derive(Clone, Debug, Default)]
+pub struct ShutdownToken {
+    cancelled: Arc<AtomicBool>,
+    completed: Arc<AtomicBool>,
+}
+
+impl ShutdownToken {
+    pub fn new() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            completed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    pub fn cancel(&self) {
+        if self.completed.load(Ordering::Acquire) {
+            warn!("ShutdownToken: cancel called after completion");
+        }
+        if self.cancelled.swap(true, Ordering::SeqCst) {
+            warn!("ShutdownToken: cancel called multiple times");
+        }
+    }
+
+    pub fn mark_completed(&self) {
+        self.completed.store(true, Ordering::Release);
+    }
+}
+
+#[macro_export]
+macro_rules! check_shutdown {
+    ($token:expr) => {
+        if ($token).is_cancelled() {
+            return Ok($crate::download::DownloadResult::Aborted);
+        }
+    };
+}
 
 pub type DownloadId = u64;
 
 pub struct DownloadHandle {
-    shutdown: Arc<AtomicBool>,
+    shutdown: ShutdownToken,
     join_handle: JoinHandle<()>,
 }
 
 impl DownloadHandle {
     pub fn request_shutdown(&self) {
-        self.shutdown.store(true, Ordering::SeqCst);
+        self.shutdown.cancel();
     }
 
     pub async fn wait(self) {
@@ -40,11 +96,18 @@ impl DownloadHandle {
 }
 
 #[derive(Debug, Clone)]
-pub struct DownloadRequest {
-    pub collection_input: String,
+pub struct DownloadConfig {
     pub directory: String,
     pub mirrors: Vec<MirrorEndpoint>,
     pub concurrent: u8,
+    pub verify_zip_eocd: bool,
+    pub max_retries: u8,
+}
+
+#[derive(Debug, Clone)]
+pub struct DownloadRequest {
+    pub collection_input: String,
+    pub config: DownloadConfig,
     pub skip_existing: bool,
     pub auto_overwrite: bool,
 }
@@ -53,9 +116,7 @@ pub struct DownloadRequest {
 pub struct SelectiveDownloadRequest {
     pub collection_ids: Vec<u32>,
     pub beatmapset_ids: Vec<u32>,
-    pub directory: String,
-    pub mirrors: Vec<MirrorEndpoint>,
-    pub concurrent: u8,
+    pub config: DownloadConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -102,10 +163,10 @@ pub enum DownloadEvent {
     },
     OverallProgress {
         id: DownloadId,
-        downloaded: u16,
-        skipped: u16,
-        failed: u16,
-        unverified: u16,
+        downloaded: u32,
+        skipped: u32,
+        failed: u32,
+        unverified: u32,
     },
     Log {
         id: DownloadId,
@@ -116,6 +177,7 @@ pub enum DownloadEvent {
         thread_index: usize,
         message: String,
         rate_limited: bool,
+        beatmapset_id: Option<u32>,
     },
     StageChanged {
         id: DownloadId,
@@ -123,7 +185,7 @@ pub enum DownloadEvent {
     },
     FailedMaps {
         id: DownloadId,
-        beatmapset_ids: Vec<u32>,
+        failures: Vec<(u32, String)>,
     },
     Finished {
         id: DownloadId,
@@ -157,8 +219,8 @@ pub enum DownloadStage {
 
 #[derive(Debug, Clone)]
 pub struct DownloadSummary {
-    pub downloaded: u16,
-    pub skipped: u16,
-    pub failed: u16,
-    pub unverified: u16,
+    pub downloaded: u32,
+    pub skipped: u32,
+    pub failed: u32,
+    pub unverified: u32,
 }
