@@ -305,10 +305,7 @@ fn osu_path_item(form: &UpdatesTab) -> ListItem<'static> {
     let field = &form.path.osu_path;
 
     let value = if field.value.is_empty() {
-        Span::styled(
-            field.placeholder.clone(),
-            Style::default(),
-        )
+        Span::styled(field.placeholder.clone(), Style::default())
     } else if form.is_path_auto_detected() {
         // Auto-detected path: show in dark gray like placeholder
         Span::styled(field.value.clone(), Style::default().fg(Color::DarkGray))
@@ -322,10 +319,7 @@ fn osu_path_item(form: &UpdatesTab) -> ListItem<'static> {
             if focused { "> " } else { "  " },
             Style::default().fg(Color::Cyan),
         ),
-        Span::styled(
-            format!("{}: ", field.label),
-            Style::default(),
-        ),
+        Span::styled(format!("{}: ", field.label), Style::default()),
         value,
     ];
 
@@ -435,14 +429,12 @@ fn beatmaps_header(form: &UpdatesTab) -> ListItem<'static> {
     ];
 
     if let Some(text) = suffix {
-        spans.push(
-            Span::styled(
-                text,
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        );
+        spans.push(Span::styled(
+            text,
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ));
     }
 
     ListItem::new(Line::from(spans)).style(style)

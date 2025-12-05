@@ -3,6 +3,7 @@ use crate::{
     utils::{AppError, Result},
 };
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 #[derive(Debug, Deserialize, Serialize, Default)]
 pub struct Config {
@@ -161,11 +162,11 @@ impl Config {
             }
 
             if concurrent > 50 {
-                eprintln!(
-                    "Warning: thread count set to {}, which is unusually high.",
-                    concurrent
+                warn!(
+                    concurrent,
+                    "Thread count is unusually high; consider lowering to avoid rate limiting"
                 );
-                eprintln!("Recommended maximum is 20 to avoid rate limiting.");
+                warn!("Recommended maximum is 20 to avoid rate limiting");
             }
         }
 
@@ -184,10 +185,7 @@ impl Config {
             }
 
             if retries > 10 {
-                eprintln!(
-                    "Warning: max_retries set to {}, which may cause long runtimes.",
-                    retries
-                );
+                warn!(retries, "Max retries is high; this may cause long runtimes");
             }
         }
 

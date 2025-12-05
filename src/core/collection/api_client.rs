@@ -6,6 +6,7 @@ use crate::{
 };
 use std::time::Duration;
 use tokio::time::sleep;
+use tracing::warn;
 
 pub trait CollectionService: Send + Sync {
     fn fetch_collection(
@@ -58,8 +59,14 @@ pub async fn fetch_collection(client: &reqwest::Client, collection_id: u32) -> R
                 let should_retry = matches!(err, AppError::Network(_));
 
                 if should_retry && attempt < API_MAX_RETRIES {
-                    eprintln!("Attempt {attempt} failed, retrying... ({err})");
                     let delay_secs = 2_u64.pow((attempt - 1) as u32);
+                    warn!(
+                        attempt,
+                        remaining_attempts = API_MAX_RETRIES - attempt,
+                        delay_secs,
+                        error = %err,
+                        "Fetch collection attempt failed; retrying"
+                    );
                     sleep(Duration::from_secs(delay_secs)).await;
                     last_error = Some(err);
                 } else {
