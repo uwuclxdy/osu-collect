@@ -265,7 +265,7 @@ fn client_toggle(form: &UpdatesTab) -> ListItem<'static> {
             if focused { "> " } else { "  " },
             Style::default().fg(Color::Cyan),
         ),
-        Span::styled("Client: ", Style::default().fg(Color::Gray)),
+        Span::styled("Client: ", Style::default()),
         Span::raw("["),
         Span::styled(
             if form.path.client_type == crate::osu_db::OsuClient::Lazer {
@@ -307,7 +307,7 @@ fn osu_path_item(form: &UpdatesTab) -> ListItem<'static> {
     let value = if field.value.is_empty() {
         Span::styled(
             field.placeholder.clone(),
-            Style::default().fg(Color::DarkGray),
+            Style::default(),
         )
     } else if form.is_path_auto_detected() {
         // Auto-detected path: show in dark gray like placeholder
@@ -324,7 +324,7 @@ fn osu_path_item(form: &UpdatesTab) -> ListItem<'static> {
         ),
         Span::styled(
             format!("{}: ", field.label),
-            Style::default().fg(Color::Gray),
+            Style::default(),
         ),
         value,
     ];
@@ -409,6 +409,10 @@ fn beatmaps_header(form: &UpdatesTab) -> ListItem<'static> {
     let focused =
         form.selection.focus == UpdatesField::BeatmapList && !form.selection.in_collection_list;
     let in_list = form.selection.in_beatmap_list;
+    let is_fetching = matches!(
+        form.scan.scan_status,
+        ScanStatus::ReadingDatabase | ScanStatus::FetchingCollection
+    );
 
     let style = if focused || in_list {
         Style::default().fg(Color::Cyan)
@@ -417,22 +421,29 @@ fn beatmaps_header(form: &UpdatesTab) -> ListItem<'static> {
     };
 
     let prefix = if focused && !in_list { "> " } else { "  " };
-    let suffix = if in_list {
-        "(Space: toggle, a: all, d: none, Enter/Esc: exit)"
+    let suffix: Option<&str> = if is_fetching {
+        None
+    } else if in_list {
+        Some("(Space: toggle, a: all, d: none, Enter/Esc: exit)")
     } else {
-        "(Space: expand)"
+        Some("(Space: expand)")
     };
 
-    let spans = vec![
+    let mut spans = vec![
         Span::styled(prefix, Style::default().fg(Color::Cyan)),
         Span::styled("Missing Beatmaps: ".to_string(), style),
-        Span::styled(
-            suffix.to_string(),
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        ),
     ];
+
+    if let Some(text) = suffix {
+        spans.push(
+            Span::styled(
+                text,
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        );
+    }
 
     ListItem::new(Line::from(spans)).style(style)
 }

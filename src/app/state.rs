@@ -300,13 +300,16 @@ impl App {
                 }
                 if self.active_tab() == UPDATES_TAB_INDEX {
                     // Don't allow download while scan is in progress
-                    if !self.updates.is_scan_ready() {
+                    let in_list = self.updates.selection.in_collection_list
+                        || self.updates.selection.in_beatmap_list;
+                    if !in_list && !self.updates.is_scan_ready() {
                         return None;
                     }
                     if let UpdatesAction::Download = self.updates.handle_enter()
-                        && let Some((id, request)) = self.request_selective_download() {
-                            return Some(AppCommand::StartSelectiveDownload { id, request });
-                        }
+                        && let Some((id, request)) = self.request_selective_download()
+                    {
+                        return Some(AppCommand::StartSelectiveDownload { id, request });
+                    }
                 }
             }
             KeyCode::Char(' ') => match self.active_tab() {

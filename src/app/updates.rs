@@ -247,6 +247,9 @@ impl UpdatesTab {
                 if self.selection.in_beatmap_list {
                     self.toggle_beatmap_at_scroll();
                 } else {
+                    if !self.is_scan_ready() {
+                        return UpdatesAction::None;
+                    }
                     self.selection.in_beatmap_list = true;
                 }
                 UpdatesAction::None
@@ -562,9 +565,6 @@ impl UpdatesTab {
 
         self.rebuild_display_items();
         self.selection.beatmaps_state.select(Some(0));
-
-        let count = self.selection.visible_missing.len();
-        self.set_info(format!(" {count} missing beatmapsets"));
     }
 
     fn rebuild_display_items(&mut self) {
