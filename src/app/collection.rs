@@ -38,6 +38,8 @@ pub struct ThreadStatusLine {
     active_beatmap: Option<u32>,
 }
 
+const SPEED_STALE_AFTER: Duration = Duration::from_secs(1);
+
 impl ThreadStatusLine {
     fn new(message: impl Into<String>) -> Self {
         Self {
@@ -51,7 +53,10 @@ impl ThreadStatusLine {
     }
 
     pub fn speed_bytes_per_sec(&self) -> f64 {
-        self.speed_bytes_per_sec
+        match self.last_update {
+            Some(last) if last.elapsed() <= SPEED_STALE_AFTER => self.speed_bytes_per_sec,
+            _ => 0.0,
+        }
     }
 
     pub fn is_completion_message(message: &str) -> bool {
