@@ -96,7 +96,6 @@ pub struct ScanState {
     pub local_beatmapsets: HashMap<u32, LocalBeatmapset>,
     pub all_local_checksums: HashSet<String>,
     pub scan_status: ScanStatus,
-    pub needs_scan: bool,
     pub scan_generation: u64,
 }
 
@@ -106,7 +105,6 @@ impl ScanState {
             local_beatmapsets: HashMap::new(),
             all_local_checksums: HashSet::new(),
             scan_status: ScanStatus::Idle,
-            needs_scan: true,
             scan_generation: 0,
         }
     }
@@ -511,10 +509,6 @@ impl UpdatesTab {
 
     pub fn set_all_checksums(&mut self, checksums: Vec<String>) {
         self.scan.all_local_checksums = checksums.into_iter().collect();
-    }
-
-    pub fn has_local_data(&self) -> bool {
-        !self.scan.local_beatmapsets.is_empty() || !self.scan.all_local_checksums.is_empty()
     }
 
     pub fn is_scan_ready(&self) -> bool {

@@ -4,9 +4,8 @@ use crate::{
     config::Config,
     core::collection::{Collection, api_client},
     download::{self, DownloadEvent, DownloadHandle, DownloadId},
-    osu_db::{
-        BeatmapReader, LazerReader, LocalBeatmapset, LocalCollection, OsuClient, StableReader,
-    },
+    osu_db::common::BeatmapReader,
+    osu_db::{LazerReader, LocalBeatmapset, LocalCollection, OsuClient, StableReader},
     tui::draw,
     tui::terminal::{cleanup_terminal, setup_terminal, spawn_input_thread},
 };
@@ -166,13 +165,6 @@ fn handle_key_event(
         }
         Some(AppCommand::ScanLocalDatabase) => {
             spawn_scan_task(app, updates_tx.clone());
-        }
-        Some(AppCommand::RefetchUpdates) => {
-            // Only refetch from API, don't re-read local database
-            app.updates.scan.scan_generation = app.updates.scan.scan_generation.wrapping_add(1);
-            app.updates.clear_message();
-            app.updates.set_loading("Checking for updates...");
-            spawn_fetch_and_compare_task(app, updates_tx.clone());
         }
         Some(AppCommand::Quit) => {
             if downloads.is_empty() {

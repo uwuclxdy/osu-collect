@@ -42,7 +42,6 @@ pub enum AppCommand {
         id: DownloadId,
     },
     ScanLocalDatabase,
-    RefetchUpdates,
     Quit,
 }
 
@@ -81,17 +80,8 @@ impl App {
 
     fn check_auto_scan(&mut self) -> Option<AppCommand> {
         if self.active_tab == UPDATES_TAB_INDEX {
-            // Check if we have local database loaded already
-            if self.updates.has_local_data() {
-                // Database is loaded, just refetch from API
-                Some(AppCommand::RefetchUpdates)
-            } else if self.updates.scan.needs_scan {
-                // First visit, need full scan
-                self.updates.scan.needs_scan = false;
-                Some(AppCommand::ScanLocalDatabase)
-            } else {
-                None
-            }
+            self.updates.scan.scan_generation = self.updates.scan.scan_generation.wrapping_add(1);
+            Some(AppCommand::ScanLocalDatabase)
         } else {
             None
         }
@@ -313,14 +303,10 @@ impl App {
                     if !self.updates.is_scan_ready() {
                         return None;
                     }
-                    match self.updates.handle_enter() {
-                        UpdatesAction::Download => {
-                            if let Some((id, request)) = self.request_selective_download() {
-                                return Some(AppCommand::StartSelectiveDownload { id, request });
-                            }
+                    if let UpdatesAction::Download = self.updates.handle_enter()
+                        && let Some((id, request)) = self.request_selective_download() {
+                            return Some(AppCommand::StartSelectiveDownload { id, request });
                         }
-                        UpdatesAction::RefreshAll | UpdatesAction::None => {}
-                    }
                 }
             }
             KeyCode::Char(' ') => match self.active_tab() {
