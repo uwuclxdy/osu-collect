@@ -61,7 +61,7 @@ fn build_items(form: &UpdatesTab, area_height: u16) -> Vec<ListItem<'static>> {
 
     items.push(collections_header(form));
 
-    if form.in_collection_list {
+    if form.selection.in_collection_list {
         // area_height includes borders (2 lines), and we have 3 header lines above
         let collection_list_header_offset = 3u16;
         let collection_list_footer_offset = 3u16; // beatmaps header + summary + some padding
@@ -70,13 +70,14 @@ fn build_items(form: &UpdatesTab, area_height: u16) -> Vec<ListItem<'static>> {
             .saturating_sub(collection_list_header_offset)
             .saturating_sub(collection_list_footer_offset) as usize;
 
-        let selected_idx = form.collections_state.selected().unwrap_or(0);
-        let total_items = form.local_collections.len();
+        let selected_idx = form.selection.collections_state.selected().unwrap_or(0);
+        let total_items = form.selection.local_collections.len();
 
         // Calculate scroll offset to keep selection visible
         let scroll_offset = calculate_scroll_offset(selected_idx, total_items, available_height);
 
         for (i, collection) in form
+            .selection
             .local_collections
             .iter()
             .enumerate()
@@ -86,9 +87,9 @@ fn build_items(form: &UpdatesTab, area_height: u16) -> Vec<ListItem<'static>> {
             let is_scroll_pos = i == selected_idx;
             items.push(collection_item(collection, is_scroll_pos));
         }
-    } else if !form.local_collections.is_empty() {
+    } else if !form.selection.local_collections.is_empty() {
         let selected = form.selected_collection_count();
-        let total = form.local_collections.len();
+        let total = form.selection.local_collections.len();
         items.push(ListItem::new(Line::from(vec![
             Span::raw("    "),
             Span::styled(
@@ -100,21 +101,22 @@ fn build_items(form: &UpdatesTab, area_height: u16) -> Vec<ListItem<'static>> {
 
     items.push(beatmaps_header(form));
 
-    if form.in_beatmap_list {
+    if form.selection.in_beatmap_list {
         let lines_above_beatmap_list = 5u16;
         let available_height = area_height
             .saturating_sub(2) // borders
             .saturating_sub(lines_above_beatmap_list) as usize;
 
-        let selected_idx = form.beatmaps_state.selected().unwrap_or(0);
+        let selected_idx = form.selection.beatmaps_state.selected().unwrap_or(0);
 
         // Use display items from form (includes collection headers)
-        let total_items = form.display_items.len();
+        let total_items = form.selection.display_items.len();
 
         // Calculate scroll offset to keep selection visible
         let scroll_offset = calculate_scroll_offset(selected_idx, total_items, available_height);
 
         for (i, item) in form
+            .selection
             .display_items
             .iter()
             .enumerate()
@@ -124,7 +126,7 @@ fn build_items(form: &UpdatesTab, area_height: u16) -> Vec<ListItem<'static>> {
             let is_scroll_pos = i == selected_idx;
             items.push(display_item_to_list_item(item, is_scroll_pos, form));
         }
-    } else if !form.missing_sets.is_empty() {
+    } else if form.total_missing_count() > 0 {
         let selected = form.selected_beatmap_count();
         let total = form.total_missing_count();
         items.push(ListItem::new(Line::from(vec![
@@ -136,7 +138,7 @@ fn build_items(form: &UpdatesTab, area_height: u16) -> Vec<ListItem<'static>> {
         ])));
     } else {
         let is_loading = matches!(
-            form.scan_status,
+            form.scan.scan_status,
             ScanStatus::ReadingDatabase | ScanStatus::FetchingCollection
         );
         if is_loading {
@@ -182,21 +184,35 @@ fn display_item_to_list_item(
     match item {
         BeatmapDisplayItem::CollectionHeader { collection_id } => {
             let name = form
-                .missing_sets
+                .selection
+                .cached_missing_sets
                 .iter()
                 .find(|b| b.collection_id == *collection_id)
                 .map(|b| b.collection_name.clone())
                 .unwrap_or_default();
 
-            let beatmap_ids: Vec<u32> = form
-                .missing_sets
+            let visible_cache_indices: Vec<usize> = form
+                .selection
+                .visible_missing
                 .iter()
-                .filter(|b| b.collection_id == *collection_id)
-                .map(|b| b.id)
+                .copied()
+                .filter(|&cache_idx| {
+                    form.selection
+                        .cached_missing_sets
+                        .get(cache_idx)
+                        .map(|beatmap| beatmap.collection_id == *collection_id)
+                        .unwrap_or(false)
+                })
                 .collect();
-            let all_selected = beatmap_ids
-                .iter()
-                .all(|id| form.selected_missing.contains(id));
+
+            let all_selected = !visible_cache_indices.is_empty()
+                && visible_cache_indices.iter().all(|&cache_idx| {
+                    form.selection
+                        .cached_missing_sets
+                        .get(cache_idx)
+                        .map(|beatmap| beatmap.selected)
+                        .unwrap_or(false)
+                });
             let marker = if all_selected { "[x]" } else { "[ ]" };
 
             let style = Style::default()
@@ -213,19 +229,22 @@ fn display_item_to_list_item(
             ];
             ListItem::new(Line::from(spans))
         }
-        BeatmapDisplayItem::Beatmap { beatmap_idx } => {
-            let beatmap = &form.missing_sets[*beatmap_idx];
-            let is_selected = form.selected_missing.contains(&beatmap.id);
-            beatmap_item(beatmap, is_selected, is_scroll_pos)
+        BeatmapDisplayItem::Beatmap { cache_index } => {
+            if let Some(beatmap) = form.selection.cached_missing_sets.get(*cache_index) {
+                beatmap_item(beatmap, is_scroll_pos)
+            } else {
+                ListItem::new(Line::from(""))
+            }
         }
     }
 }
 
 fn client_toggle(form: &UpdatesTab) -> ListItem<'static> {
-    let focused =
-        form.focus == UpdatesField::ClientType && !form.in_collection_list && !form.in_beatmap_list;
+    let focused = form.selection.focus == UpdatesField::ClientType
+        && !form.selection.in_collection_list
+        && !form.selection.in_beatmap_list;
 
-    let lazer_style = if form.client_type == crate::osu_db::OsuClient::Lazer {
+    let lazer_style = if form.path.client_type == crate::osu_db::OsuClient::Lazer {
         Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD)
@@ -233,7 +252,7 @@ fn client_toggle(form: &UpdatesTab) -> ListItem<'static> {
         Style::default().fg(Color::DarkGray)
     };
 
-    let stable_style = if form.client_type == crate::osu_db::OsuClient::Stable {
+    let stable_style = if form.path.client_type == crate::osu_db::OsuClient::Stable {
         Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD)
@@ -249,7 +268,7 @@ fn client_toggle(form: &UpdatesTab) -> ListItem<'static> {
         Span::styled("Client: ", Style::default().fg(Color::Gray)),
         Span::raw("["),
         Span::styled(
-            if form.client_type == crate::osu_db::OsuClient::Lazer {
+            if form.path.client_type == crate::osu_db::OsuClient::Lazer {
                 "●"
             } else {
                 "○"
@@ -259,7 +278,7 @@ fn client_toggle(form: &UpdatesTab) -> ListItem<'static> {
         Span::styled(" Lazer", lazer_style),
         Span::raw(" "),
         Span::styled(
-            if form.client_type == crate::osu_db::OsuClient::Stable {
+            if form.path.client_type == crate::osu_db::OsuClient::Stable {
                 "●"
             } else {
                 "○"
@@ -280,9 +299,10 @@ fn client_toggle(form: &UpdatesTab) -> ListItem<'static> {
 }
 
 fn osu_path_item(form: &UpdatesTab) -> ListItem<'static> {
-    let focused =
-        form.focus == UpdatesField::OsuPath && !form.in_collection_list && !form.in_beatmap_list;
-    let field = &form.osu_path;
+    let focused = form.selection.focus == UpdatesField::OsuPath
+        && !form.selection.in_collection_list
+        && !form.selection.in_beatmap_list;
+    let field = &form.path.osu_path;
 
     let value = if field.value.is_empty() {
         Span::styled(
@@ -319,8 +339,9 @@ fn osu_path_item(form: &UpdatesTab) -> ListItem<'static> {
 }
 
 fn collections_header(form: &UpdatesTab) -> ListItem<'static> {
-    let focused = form.focus == UpdatesField::Collections && !form.in_beatmap_list;
-    let in_list = form.in_collection_list;
+    let focused =
+        form.selection.focus == UpdatesField::Collections && !form.selection.in_beatmap_list;
+    let in_list = form.selection.in_collection_list;
 
     let style = if focused || in_list {
         Style::default().fg(Color::Cyan)
@@ -385,8 +406,9 @@ fn collection_item(
 }
 
 fn beatmaps_header(form: &UpdatesTab) -> ListItem<'static> {
-    let focused = form.focus == UpdatesField::BeatmapList && !form.in_collection_list;
-    let in_list = form.in_beatmap_list;
+    let focused =
+        form.selection.focus == UpdatesField::BeatmapList && !form.selection.in_collection_list;
+    let in_list = form.selection.in_beatmap_list;
 
     let style = if focused || in_list {
         Style::default().fg(Color::Cyan)
@@ -417,10 +439,9 @@ fn beatmaps_header(form: &UpdatesTab) -> ListItem<'static> {
 
 fn beatmap_item(
     beatmap: &crate::app::updates::MissingBeatmapset,
-    is_selected: bool,
     is_scroll_pos: bool,
 ) -> ListItem<'static> {
-    let marker = if is_selected { "[x]" } else { "[ ]" };
+    let marker = if beatmap.selected { "[x]" } else { "[ ]" };
 
     let style = if is_scroll_pos {
         Style::default().fg(Color::Yellow)

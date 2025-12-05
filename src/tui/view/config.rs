@@ -71,10 +71,16 @@ fn render_form(frame: &mut Frame, area: Rect, form: &ConfigTab) {
             form.focus == ConfigField::DownloadSkipExisting,
         ),
         components::input_item(&form.threads, form.focus == ConfigField::DownloadThreads),
+        components::input_item(&form.retries, form.focus == ConfigField::DownloadRetries),
         components::toggle_item(
             "Default: download without video",
             form.no_video,
             form.focus == ConfigField::DownloadNoVideo,
+        ),
+        components::toggle_item(
+            "Check .osz file integrity",
+            form.verify_zip_eocd,
+            form.focus == ConfigField::DownloadVerifyZipEocd,
         ),
         components::toggle_item(
             "Enable logging",

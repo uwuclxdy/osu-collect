@@ -15,17 +15,54 @@ use super::{DownloadView, components};
 
 pub fn render(frame: &mut Frame, area: Rect, view: DownloadView) {
     let page = view.page;
-    let info_height = if page.low_disk_space.is_some() { 7 } else { 6 };
-    let layout = Layout::vertical([
-        Constraint::Length(info_height),
-        Constraint::Length(3),
-        Constraint::Min(0),
-    ]);
-    let [info_area, gauge_area, threads_area] = layout.areas(area);
+    let show_disk_warning = should_render_disk_warning(page);
+    let info_height = 6;
+    let mut constraints = Vec::with_capacity(4);
+    if show_disk_warning {
+        constraints.push(Constraint::Length(1));
+    }
+    constraints.push(Constraint::Length(info_height));
+    constraints.push(Constraint::Length(3));
+    constraints.push(Constraint::Min(0));
+
+    let sections = Layout::vertical(constraints).split(area);
+    let mut index = 0;
+    if show_disk_warning {
+        render_disk_warning(frame, sections[index], page);
+        index += 1;
+    }
+    let info_area = sections[index];
+    index += 1;
+    let gauge_area = sections[index];
+    index += 1;
+    let threads_area = sections[index];
 
     render_info(frame, info_area, page);
     render_gauge(frame, gauge_area, page);
     render_threads(frame, threads_area, page);
+}
+
+fn should_render_disk_warning(page: &CollectionPage) -> bool {
+    page.low_disk_space.is_some()
+        && page.stats.downloaded == 0
+        && matches!(
+            page.stage,
+            DownloadStage::Pending
+                | DownloadStage::Resolving
+                | DownloadStage::Rechecking
+                | DownloadStage::Downloading
+        )
+}
+
+fn render_disk_warning(frame: &mut Frame, area: Rect, page: &CollectionPage) {
+    if let Some(available) = page.low_disk_space {
+        let text = format!(
+            " ⚠ Not enough free space in target directory ({} available). Free up space before downloading.",
+            format_bytes(available)
+        );
+        let paragraph = Paragraph::new(text).style(Style::default().fg(Color::Yellow));
+        frame.render_widget(paragraph, area);
+    }
 }
 
 fn render_info(frame: &mut Frame, area: Rect, page: &CollectionPage) {
@@ -55,7 +92,7 @@ fn render_info(frame: &mut Frame, area: Rect, page: &CollectionPage) {
         None
     };
 
-    let counts_line = |label: &str, downloaded: u16, skipped: u16, failed: u16, unverified: u16| {
+    let counts_line = |label: &str, downloaded: u32, skipped: u32, failed: u32, unverified: u32| {
         let displayed_skipped = skipped.saturating_add(unverified);
         let mut parts = vec![
             format!("{downloaded} downloaded"),
@@ -140,16 +177,6 @@ fn render_info(frame: &mut Frame, area: Rect, page: &CollectionPage) {
         ]),
         Line::from(status_spans),
     ];
-
-    if let Some(available) = page.low_disk_space {
-        lines.push(Line::from(vec![
-            Span::styled("⚠ Warning: ", Style::default().fg(Color::Yellow)),
-            Span::styled(
-                format!("Low disk space ({} available)", format_bytes(available)),
-                Style::default().fg(Color::Yellow),
-            ),
-        ]));
-    }
 
     lines.push(Line::from(summary_line));
 
@@ -236,12 +263,20 @@ fn render_threads(frame: &mut Frame, area: Rect, page: &CollectionPage) {
         return;
     }
 
-    let mut items: Vec<ListItem> = page
-        .thread_statuses
-        .iter()
-        .enumerate()
-        .map(|(idx, status)| components::thread_item(idx, status))
-        .collect();
+    let mut items: Vec<ListItem> = Vec::new();
+
+    for (idx, status) in page.thread_statuses.iter().enumerate() {
+        if status.should_display() {
+            items.push(components::thread_item(idx, status));
+        }
+    }
+
+    if items.is_empty() && page.failed_maps.is_empty() {
+        items.push(ListItem::new(Line::from(vec![Span::styled(
+            "No active threads",
+            Style::default().fg(Color::DarkGray),
+        )])));
+    }
 
     if matches!(page.stage, DownloadStage::Completed | DownloadStage::Failed)
         && !page.failed_maps.is_empty()
@@ -253,14 +288,10 @@ fn render_threads(frame: &mut Frame, area: Rect, page: &CollectionPage) {
         )]);
         items.push(ListItem::new(header_line));
 
-        for chunk in page.failed_maps.chunks(5) {
-            let joined = chunk
-                .iter()
-                .map(|id| id.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
+        for failure in &page.failed_maps {
+            let reason = summarize_failure(&failure.reason);
             let chunk_line = Line::from(vec![Span::styled(
-                format!("  {joined}"),
+                format!("  #{} - {}", failure.id, reason),
                 Style::default().fg(Color::Red),
             )]);
             items.push(ListItem::new(chunk_line));
@@ -319,4 +350,20 @@ fn render_results_block(frame: &mut Frame, area: Rect, summary: &DownloadSummary
             .border_type(BorderType::Rounded),
     );
     frame.render_widget(list, area);
+}
+
+fn summarize_failure(reason: &str) -> String {
+    const MAX_CHARS: usize = 80;
+    if reason.is_empty() {
+        return "Unknown error".to_string();
+    }
+
+    let mut truncated: String = reason.chars().take(MAX_CHARS).collect();
+    if reason.chars().count() > MAX_CHARS {
+        if truncated.len() >= 3 {
+            truncated.truncate(truncated.len().saturating_sub(3));
+        }
+        truncated.push_str("...");
+    }
+    truncated
 }
