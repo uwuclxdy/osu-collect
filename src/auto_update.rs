@@ -6,8 +6,7 @@ use thiserror::Error;
 use tokio::{fs, io::AsyncWriteExt};
 use tracing::{debug, info};
 
-const RELEASES_URL: &str = "https://api.github.com/repos/uwuclxdy/osu-collect/releases/latest";
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60);
+use crate::config::constants::{AUTO_UPDATE_TIMEOUT, RELEASES_URL};
 
 pub async fn check_and_apply() -> Result<Option<String>, AutoUpdateError> {
     let Some(target_asset) = target_asset_name() else {
@@ -44,7 +43,7 @@ pub async fn check_and_apply() -> Result<Option<String>, AutoUpdateError> {
         .ok_or_else(|| AutoUpdateError::AssetMissing(target_asset.to_string()))?;
 
     info!(release = %release.name, "Downloading newer release");
-    let tmp_path = download_asset(&client, asset, DOWNLOAD_TIMEOUT).await?;
+    let tmp_path = download_asset(&client, asset, AUTO_UPDATE_TIMEOUT).await?;
     apply_update(&tmp_path).await?;
 
     let message = format!("Application updated to {}, please restart", release.name);

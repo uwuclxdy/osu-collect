@@ -5,6 +5,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::config::constants::{COMPLETION_PREFIXES, MAX_LOG_LINES, SPEED_STALE_AFTER};
+
 #[derive(Debug, Default, Clone)]
 pub struct DownloadStats {
     pub downloaded: u32,
@@ -38,8 +40,6 @@ pub struct ThreadStatusLine {
     active_beatmap: Option<u32>,
 }
 
-const SPEED_STALE_AFTER: Duration = Duration::from_secs(1);
-
 impl ThreadStatusLine {
     fn new(message: impl Into<String>) -> Self {
         Self {
@@ -60,7 +60,6 @@ impl ThreadStatusLine {
     }
 
     pub fn is_completion_message(message: &str) -> bool {
-        const COMPLETION_PREFIXES: [&str; 4] = ["Done", "Skipped", "Failed", "Accepted"];
         COMPLETION_PREFIXES
             .iter()
             .any(|prefix| message.starts_with(prefix))
@@ -175,7 +174,6 @@ impl CollectionPage {
     }
 
     pub fn push_log(&mut self, message: &str) {
-        const MAX_LOG_LINES: usize = 5;
         self.logs.push_front(message.to_string());
         while self.logs.len() > MAX_LOG_LINES {
             self.logs.pop_back();

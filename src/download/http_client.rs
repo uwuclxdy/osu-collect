@@ -1,4 +1,4 @@
-use super::constants::{COLLECTION_FETCH_TIMEOUT_SECS, DOWNLOAD_TIMEOUT_SECS};
+use crate::config::constants::{COLLECTION_FETCH_TIMEOUT_SECS, DOWNLOAD_TIMEOUT_SECS};
 use crate::utils::{AppError, Result};
 use std::{sync::OnceLock, time::Duration};
 

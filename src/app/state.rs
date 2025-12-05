@@ -5,7 +5,10 @@ use super::{
     updates::{UpdatesAction, UpdatesTab},
 };
 use crate::{
-    config::{Config, ConfigService},
+    config::{
+        Config, ConfigService,
+        constants::{CONFIG_TAB_INDEX, HOME_TAB_INDEX, STATIC_TABS, UPDATES_TAB_INDEX},
+    },
     download::{
         DownloadConfig, DownloadEvent, DownloadId, DownloadRequest, DownloadStage,
         SelectiveDownloadRequest,
@@ -14,11 +17,6 @@ use crate::{
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tracing::debug;
-
-const HOME_TAB_INDEX: usize = 0;
-const UPDATES_TAB_INDEX: usize = 1;
-const CONFIG_TAB_INDEX: usize = 2;
-const STATIC_TABS: usize = 3;
 
 pub struct App {
     pub home: HomeTab,

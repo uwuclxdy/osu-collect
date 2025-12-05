@@ -1,5 +1,8 @@
 use crate::{
-    download::{ShutdownToken, constants::MAX_EOCD_SEARCH_BYTES},
+    config::constants::{
+        EOCD_SIGNATURE, MAX_EOCD_SEARCH_BYTES, MIN_PROGRESS_DELTA, MIN_PROGRESS_INTERVAL,
+    },
+    download::ShutdownToken,
     utils::{AppError, Result},
 };
 use bytes::Bytes;
@@ -18,8 +21,6 @@ use tokio::{
     time::timeout,
 };
 use tracing::debug;
-
-const EOCD_SIGNATURE: [u8; 4] = [0x50, 0x4B, 0x05, 0x06];
 
 struct HashWorker {
     sender: Option<mpsc::Sender<Bytes>>,
@@ -89,8 +90,6 @@ pub async fn download_with_streaming(
 
     let mut last_progress_bytes = 0u64;
     let mut last_progress_emitted = Instant::now();
-    const MIN_PROGRESS_DELTA: u64 = 256 * 1024;
-    const MIN_PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
     let mut last_progress_at = Instant::now();
 
     loop {

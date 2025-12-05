@@ -6,9 +6,7 @@ use std::{
 };
 use tracing::warn;
 
-const CONFIG_SUBDIR: &str = "osu-collect";
-const CONFIG_FILE: &str = "config.toml";
-const CONFIG_ENV_PATH: &str = "OSU_COLLECT_CONFIG";
+use super::constants::{CONFIG_ENV_PATH, CONFIG_FILE, CONFIG_SUBDIR};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ConfigService;

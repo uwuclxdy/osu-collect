@@ -1,14 +1,13 @@
 use super::{
     BeatmapStage, BeatmapTracker, CleanupTracker, DownloadConfig, DownloadError, DownloadEvent,
     DownloadHandle, DownloadId, DownloadRequest, DownloadStage, DownloadSummary,
-    SelectiveDownloadRequest, ShutdownToken,
-    constants::DEFAULT_PROGRESS_WATCHDOG_SECS,
-    http_client,
+    SelectiveDownloadRequest, ShutdownToken, http_client,
     integrity::ExpectationIndex,
     passes::{FailureReport, PassCoordinator},
     precheck::{PrecheckOptions, PrecheckReport, verify_existing_beatmapsets},
 };
 use crate::{
+    config::constants::{DEFAULT_PROGRESS_WATCHDOG_SECS, DIRECTORY_LOCK_FILE},
     core::collection::{
         CollectionService, HttpCollectionService, create_collection_db,
         generate_collection_folder_name, model::Collection,
@@ -33,8 +32,6 @@ use std::{
 use tokio::{fs, sync::mpsc::UnboundedSender};
 use tracing::Instrument;
 use tracing::{debug, error, info, info_span, warn};
-
-const DIRECTORY_LOCK_FILE: &str = ".osu-collect.lock";
 
 /// Global tracker for active downloads to prevent concurrent downloads to the same directory
 static ACTIVE_DOWNLOADS: LazyLock<DashSet<PathBuf>> = LazyLock::new(DashSet::new);

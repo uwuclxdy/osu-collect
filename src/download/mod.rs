@@ -1,6 +1,5 @@
 mod cleanup;
 pub(crate) mod client;
-pub mod constants;
 pub mod error;
 pub mod http_client;
 mod integrity;
@@ -18,16 +17,7 @@ pub use pipeline::{spawn_download, spawn_selective_download};
 pub use size_fetcher::check_mirror_availability;
 pub use tracker::BeatmapTracker;
 
-pub mod status {
-    pub const RATE_LIMITED: &str = "Rate limited";
-    pub const CONTACTING_PREFIX: &str = "Contacting";
-    pub const ABORTED: &str = "Aborted";
-    pub const RECHECKING_PREFIX: &str = "Rechecking";
-    pub const STARTING_DOWNLOAD: &str = "Starting download";
-    pub const DOWNLOADING: &str = "Downloading";
-    pub const FETCHING: &str = "Fetching";
-    pub const VERIFYING_PREFIX: &str = "Verifying integrity for";
-}
+pub use crate::config::constants::status;
 
 use crate::mirrors::MirrorEndpoint;
 use std::sync::{

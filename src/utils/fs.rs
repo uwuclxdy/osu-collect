@@ -1,9 +1,10 @@
-use crate::utils::error::{AppError, Result};
+use crate::{
+    config::constants::{GB, KB, LOW_SPACE_THRESHOLD_BYTES, MB},
+    utils::error::{AppError, Result},
+};
 use fs2::available_space;
 use std::path::{Path, PathBuf};
 use tokio::fs;
-
-const LOW_SPACE_THRESHOLD_BYTES: u64 = 1024 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FileExistsAction {
@@ -20,10 +21,6 @@ pub fn is_low_disk_space(path: &Path) -> bool {
 }
 
 pub fn format_bytes(bytes: u64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = KB * 1024.0;
-    const GB: f64 = MB * 1024.0;
-
     let bytes_f = bytes as f64;
     if bytes_f >= GB {
         format!("{:.2} GB", bytes_f / GB)

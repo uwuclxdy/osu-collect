@@ -1,12 +1,11 @@
 use super::model::Collection;
 use crate::{
+    config::constants::API_MAX_RETRIES,
     download::http_client,
     utils::{AppError, Result},
 };
 use std::time::Duration;
 use tokio::time::sleep;
-
-const API_MAX_RETRIES: u8 = 3;
 
 pub trait CollectionService: Send + Sync {
     fn fetch_collection(

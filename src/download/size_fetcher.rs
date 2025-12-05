@@ -1,20 +1,9 @@
-use super::constants::CONCURRENT_REQUESTS;
+use crate::config::constants::{CONCURRENT_REQUESTS, MIRROR_CHECK_URLS, NEKOHA_API_BASE};
 use futures_util::{StreamExt, stream};
 use reqwest::Client;
 use serde::Deserialize;
 use std::{collections::HashSet, time::Duration};
 use tracing::{debug, info, trace, warn};
-
-const NEKOHA_API_BASE: &str = "https://mirror.nekoha.moe/api4";
-
-/// Mirror URLs for availability checking (using HEAD requests)
-const MIRROR_CHECK_URLS: &[&str] = &[
-    "https://catboy.best/d/{id}",
-    "https://api.nerinyan.moe/d/{id}",
-    "https://osu.direct/api/d/{id}",
-    "https://dl.sayobot.cn/beatmaps/download/full/{id}",
-    "https://mirror.nekoha.moe/api4/download/{id}",
-];
 
 fn deserialize_string_to_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
 where

@@ -2,17 +2,10 @@ use super::{
     home::InputField,
     messages::{AppMessage, MessageKind},
 };
-use crate::config::{Config, DownloadConfig, LogFormat, LogLevel, LoggingConfig, MirrorConfig};
-
-const LOG_LEVELS: [LogLevel; 5] = [
-    LogLevel::Error,
-    LogLevel::Warn,
-    LogLevel::Info,
-    LogLevel::Debug,
-    LogLevel::Trace,
-];
-
-const LOG_FORMATS: [LogFormat; 2] = [LogFormat::Compact, LogFormat::Pretty];
+use crate::config::{
+    Config, DownloadConfig, LogFormat, LogLevel, LoggingConfig, MirrorConfig,
+    constants::{DEFAULT_RETRIES, DEFAULT_THREADS, LOG_FORMATS, LOG_LEVELS},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigField {
@@ -92,7 +85,7 @@ impl ConfigTab {
                     .concurrent
                     .map(|value| value.to_string())
                     .unwrap_or_default(),
-                placeholder: format!("leave blank (default {})", DownloadConfig::DEFAULT_THREADS),
+                placeholder: format!("leave blank (default {})", DEFAULT_THREADS),
             },
             retries: InputField {
                 label: "Download retries",
@@ -101,7 +94,7 @@ impl ConfigTab {
                     .max_retries
                     .map(|value| value.to_string())
                     .unwrap_or_default(),
-                placeholder: DownloadConfig::DEFAULT_RETRIES.to_string(),
+                placeholder: DEFAULT_RETRIES.to_string(),
             },
             no_video: config.download.no_video,
             verify_zip_eocd: config.download.verify_zip_eocd,

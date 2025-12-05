@@ -4,10 +4,6 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-const fn default_true() -> bool {
-    true
-}
-
 #[derive(Debug, Deserialize, Serialize, Default)]
 pub struct Config {
     pub mirror: MirrorConfig,
@@ -18,7 +14,7 @@ pub struct Config {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MirrorConfig {
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub nerinyan: bool,
     #[serde(default)]
     pub osu_direct: bool,
@@ -128,15 +124,13 @@ impl MirrorConfig {
 }
 
 impl DownloadConfig {
-    pub const DEFAULT_THREADS: u8 = 3;
-    pub const DEFAULT_RETRIES: u8 = 1;
-
     pub fn resolved_concurrent(&self) -> u8 {
-        self.concurrent.unwrap_or(Self::DEFAULT_THREADS)
+        self.concurrent.unwrap_or(super::constants::DEFAULT_THREADS)
     }
 
     pub fn resolved_max_retries(&self) -> u8 {
-        self.max_retries.unwrap_or(Self::DEFAULT_RETRIES)
+        self.max_retries
+            .unwrap_or(super::constants::DEFAULT_RETRIES)
     }
 }
 

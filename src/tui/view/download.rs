@@ -1,5 +1,6 @@
 use crate::{
     app::CollectionPage,
+    config::constants::{GB, KB, MAX_TRUNCATED_CHARS, MB},
     download::{DownloadStage, DownloadSummary},
     utils::format_bytes,
 };
@@ -193,9 +194,6 @@ fn render_info(frame: &mut Frame, area: Rect, page: &CollectionPage) {
 }
 
 fn format_speed(bytes_per_sec: f64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = KB * 1024.0;
-
     if bytes_per_sec >= MB {
         format!("{:.2} MB/s", bytes_per_sec / MB)
     } else if bytes_per_sec >= KB {
@@ -206,8 +204,6 @@ fn format_speed(bytes_per_sec: f64) -> String {
 }
 
 fn format_bytes_progress(downloaded: u64, total: u64) -> String {
-    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
-
     let downloaded_gb = downloaded as f64 / GB;
     let total_gb = total as f64 / GB;
 
@@ -353,13 +349,12 @@ fn render_results_block(frame: &mut Frame, area: Rect, summary: &DownloadSummary
 }
 
 fn summarize_failure(reason: &str) -> String {
-    const MAX_CHARS: usize = 80;
     if reason.is_empty() {
         return "Unknown error".to_string();
     }
 
-    let mut truncated: String = reason.chars().take(MAX_CHARS).collect();
-    if reason.chars().count() > MAX_CHARS {
+    let mut truncated: String = reason.chars().take(MAX_TRUNCATED_CHARS).collect();
+    if reason.chars().count() > MAX_TRUNCATED_CHARS {
         if truncated.len() >= 3 {
             truncated.truncate(truncated.len().saturating_sub(3));
         }

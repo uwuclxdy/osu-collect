@@ -9,7 +9,7 @@ use std::{
     time::SystemTime,
 };
 
-const VALIDATION_CACHE_LIMIT: usize = 4096;
+use crate::config::constants::VALIDATION_CACHE_LIMIT;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)]

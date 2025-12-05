@@ -1,9 +1,10 @@
 use super::model::Collection;
-use crate::utils::{AppError, Result, sanitize_filename};
+use crate::{
+    config::constants::OSU_DB_VERSION,
+    utils::{AppError, Result, sanitize_filename},
+};
 use osu_db::collection::{Collection as DbCollection, CollectionList};
 use std::path::Path;
-
-const OSU_DB_VERSION: u32 = 20150203;
 
 /// Persist collection metadata to osu!'s collection.db format.
 pub fn create_collection_db(
