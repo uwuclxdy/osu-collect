@@ -1,11 +1,12 @@
 use super::messages::{AppMessage, MessageKind};
 use crate::{
     config::Config,
-    download::DownloadRequest,
+    download::{DownloadConfig, DownloadRequest},
     mirrors::{CatboyRegion, MirrorEndpoint, MirrorKind},
 };
 use std::{env, str::FromStr};
 
+#[derive(Debug, Clone)]
 pub struct InputField {
     pub label: &'static str,
     pub value: String,
@@ -55,10 +56,12 @@ pub struct HomeTab {
     pub sayobot: bool,
     pub nekoha: bool,
     pub no_video: bool,
+    pub verify_zip_eocd: bool,
     pub focus: HomeField,
     pub message: Option<AppMessage>,
     pub quit_prompt: bool,
     default_threads: u8,
+    default_retries: u8,
     default_directory: String,
 }
 
@@ -97,6 +100,7 @@ impl HomeTab {
             .concurrent
             .map(|value| value.to_string())
             .unwrap_or_default();
+        let default_retries = config.download.resolved_max_retries();
 
         Self {
             collection: InputField {
@@ -129,10 +133,12 @@ impl HomeTab {
             sayobot,
             nekoha,
             no_video: config.download.no_video,
+            verify_zip_eocd: config.download.verify_zip_eocd,
             focus: HomeField::Collection,
             message: None,
             quit_prompt: false,
             default_threads,
+            default_retries,
             default_directory,
         }
     }
@@ -353,11 +359,17 @@ impl HomeTab {
             return Err("Select at least one mirror".to_string());
         }
 
-        Ok(DownloadRequest {
-            collection_input: collection_input.to_string(),
+        let config = DownloadConfig {
             directory,
             mirrors,
             concurrent: threads_value,
+            verify_zip_eocd: self.verify_zip_eocd,
+            max_retries: self.default_retries,
+        };
+
+        Ok(DownloadRequest {
+            collection_input: collection_input.to_string(),
+            config,
             skip_existing: self.skip_existing,
             auto_overwrite: self.auto_overwrite,
         })
@@ -427,6 +439,10 @@ impl HomeTab {
         } else {
             parse_thread_count(&self.threads.value).unwrap_or(self.default_threads)
         }
+    }
+
+    pub fn resolved_retries(&self) -> u8 {
+        self.default_retries
     }
 }
 
