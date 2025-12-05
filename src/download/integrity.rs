@@ -1,10 +1,5 @@
 use crate::core::collection::Beatmapset;
-use std::{
-    collections::HashSet,
-    path::PathBuf,
-    sync::{Arc, RwLock},
-};
-use tracing::trace;
+use std::{collections::HashSet, sync::Arc};
 
 #[derive(Clone)]
 pub(crate) struct ExpectationData {
@@ -12,7 +7,7 @@ pub(crate) struct ExpectationData {
 }
 
 pub(crate) struct ExpectationIndex {
-    data: RwLock<Arc<ExpectationData>>,
+    data: Arc<ExpectationData>,
 }
 
 impl ExpectationIndex {
@@ -20,19 +15,19 @@ impl ExpectationIndex {
         let by_set: HashSet<u32> = beatmapsets.iter().map(|set| set.id).collect();
         let data = ExpectationData { by_set };
         Self {
-            data: RwLock::new(Arc::new(data)),
+            data: Arc::new(data),
         }
     }
 
-    pub(crate) fn snapshot(&self) -> Arc<ExpectationData> {
-        self.data.read().expect("ExpectationIndex poisoned").clone()
+    pub(crate) fn from_ids(ids: &[u32]) -> Self {
+        let by_set: HashSet<u32> = ids.iter().copied().collect();
+        let data = ExpectationData { by_set };
+        Self {
+            data: Arc::new(data),
+        }
     }
-}
 
-pub(crate) async fn verify_download_integrity(
-    expected_set_id: u32,
-    path: PathBuf,
-    _expectations: Arc<ExpectationIndex>,
-) {
-    trace!(set_id = expected_set_id, file = %path.display(), "Accepting downloaded archive without zip validation");
+    pub(crate) fn data(&self) -> Arc<ExpectationData> {
+        Arc::clone(&self.data)
+    }
 }

@@ -169,7 +169,7 @@ fn handle_key_event(
         }
         Some(AppCommand::RefetchUpdates) => {
             // Only refetch from API, don't re-read local database
-            app.updates.scan_generation = app.updates.scan_generation.wrapping_add(1);
+            app.updates.scan.scan_generation = app.updates.scan.scan_generation.wrapping_add(1);
             app.updates.clear_message();
             app.updates.set_loading("Checking for updates...");
             spawn_fetch_and_compare_task(app, updates_tx.clone());
@@ -243,9 +243,9 @@ fn handle_updates_event(
             all_checksums,
         } => {
             // Ignore stale results from previous scan
-            if generation != app.updates.scan_generation {
+            if generation != app.updates.scan.scan_generation {
                 debug!(
-                    expected = app.updates.scan_generation,
+                    expected = app.updates.scan.scan_generation,
                     got = generation,
                     "Ignoring stale DatabaseRead event"
                 );
@@ -255,12 +255,12 @@ fn handle_updates_event(
             app.updates.set_collections(collections);
             app.updates.set_local_beatmapsets(beatmapsets);
             app.updates.set_all_checksums(all_checksums);
-            app.updates.scan_status = ScanStatus::FetchingCollection;
+            app.updates.scan.scan_status = ScanStatus::FetchingCollection;
             app.updates.set_loading("Fetching collections...");
 
             let selected_ids = app.updates.selected_collection_ids();
             if selected_ids.is_empty() {
-                app.updates.scan_status = ScanStatus::Ready;
+                app.updates.scan.scan_status = ScanStatus::Ready;
                 app.updates
                     .set_info("No collections with IDs found to compare");
                 return;
@@ -273,9 +273,9 @@ fn handle_updates_event(
             missing,
         } => {
             // Ignore stale results from previous scan
-            if generation != app.updates.scan_generation {
+            if generation != app.updates.scan.scan_generation {
                 debug!(
-                    expected = app.updates.scan_generation,
+                    expected = app.updates.scan.scan_generation,
                     got = generation,
                     "Ignoring stale ScanComplete event"
                 );
@@ -284,7 +284,7 @@ fn handle_updates_event(
 
             let count = missing.len();
             app.updates.set_missing_beatmaps(missing);
-            app.updates.scan_status = ScanStatus::Ready;
+            app.updates.scan.scan_status = ScanStatus::Ready;
             app.updates
                 .set_info(format!(" {count} missing beatmapsets"));
         }
@@ -295,11 +295,11 @@ fn handle_updates_event(
 }
 
 fn spawn_scan_task(app: &mut App, tx: mpsc::UnboundedSender<UpdatesEvent>) {
-    let client_type = app.updates.client_type;
+    let client_type = app.updates.path.client_type;
     let osu_path = PathBuf::from(app.updates.osu_path());
-    let generation = app.updates.scan_generation;
+    let generation = app.updates.scan.scan_generation;
 
-    app.updates.scan_status = ScanStatus::ReadingDatabase;
+    app.updates.scan.scan_status = ScanStatus::ReadingDatabase;
     app.updates.clear_message();
     app.updates.set_loading("Reading database...");
 
@@ -358,16 +358,18 @@ fn spawn_fetch_and_compare_task(app: &mut App, tx: mpsc::UnboundedSender<Updates
     // Selection filtering happens locally from cache
     let all_collection_ids: Vec<u32> = app
         .updates
+        .selection
         .local_collections
         .iter()
         .filter_map(|c| c.collection_id.and_then(|id| u32::try_from(id).ok()))
         .collect();
 
-    let local_beatmapsets: HashMap<u32, LocalBeatmapset> = app.updates.local_beatmapsets.clone();
-    let all_local_checksums = app.updates.all_local_checksums.clone();
-    let generation = app.updates.scan_generation;
+    let local_beatmapsets: HashMap<u32, LocalBeatmapset> =
+        app.updates.scan.local_beatmapsets.clone();
+    let all_local_checksums = app.updates.scan.all_local_checksums.clone();
+    let generation = app.updates.scan.scan_generation;
 
-    app.updates.scan_status = ScanStatus::FetchingCollection;
+    app.updates.scan.scan_status = ScanStatus::FetchingCollection;
 
     tokio::spawn(async move {
         let result =
@@ -392,7 +394,7 @@ async fn fetch_and_compare(
     local_beatmapsets: HashMap<u32, LocalBeatmapset>,
     local_checksums: std::collections::HashSet<String>,
 ) -> Result<Vec<MissingBeatmapset>, String> {
-    let client = api_client::default_http_client().map_err(|e| e.to_string())?;
+    let client = crate::download::http_client::api_client().map_err(|e| e.to_string())?;
     let mut seen_beatmapsets: std::collections::HashSet<u32> = std::collections::HashSet::new();
     let mut candidates_to_check: Vec<(u32, u32, String)> = Vec::new();
 
@@ -468,7 +470,9 @@ async fn fetch_and_compare(
             "Checking beatmapset availability on mirrors"
         );
 
-        let mirror_result = download::check_mirror_availability(&beatmapset_ids).await;
+        let mirror_client = download::create_download_client().map_err(|e| e.to_string())?;
+        let mirror_result =
+            download::check_mirror_availability(&mirror_client, &beatmapset_ids).await;
 
         for (id, collection_id, collection_name) in candidates_to_check {
             if mirror_result.unavailable.contains(&id) {
@@ -481,6 +485,7 @@ async fn fetch_and_compare(
                 status: MissingStatus::NotInstalled,
                 collection_id,
                 collection_name,
+                selected: true,
             });
         }
 

@@ -1,5 +1,5 @@
 use super::{
-    collection::CollectionPage,
+    collection::{CollectionPage, ThreadStatusLine},
     config::ConfigTab,
     home::{HomeField, HomeTab},
     updates::{UpdatesAction, UpdatesTab},
@@ -7,7 +7,8 @@ use super::{
 use crate::{
     config::{Config, ConfigService},
     download::{
-        DownloadEvent, DownloadId, DownloadRequest, DownloadStage, SelectiveDownloadRequest,
+        DownloadConfig, DownloadEvent, DownloadId, DownloadRequest, DownloadStage,
+        SelectiveDownloadRequest,
     },
     utils,
 };
@@ -86,9 +87,9 @@ impl App {
             if self.updates.has_local_data() {
                 // Database is loaded, just refetch from API
                 Some(AppCommand::RefetchUpdates)
-            } else if self.updates.needs_scan {
+            } else if self.updates.scan.needs_scan {
                 // First visit, need full scan
-                self.updates.needs_scan = false;
+                self.updates.scan.needs_scan = false;
                 Some(AppCommand::ScanLocalDatabase)
             } else {
                 None
@@ -156,7 +157,7 @@ impl App {
 
                 let placeholder_title =
                     Self::placeholder_collection_title(&request.collection_input, id);
-                let concurrent = usize::from(request.concurrent.max(1));
+                let concurrent = usize::from(request.config.concurrent.max(1));
                 let mut page = CollectionPage::new(id, placeholder_title, concurrent);
                 page.stage = DownloadStage::Resolving;
                 self.downloads.push(page);
@@ -234,12 +235,18 @@ impl App {
             beatmapset_ids.len()
         ));
 
-        let request = SelectiveDownloadRequest {
-            collection_ids,
-            beatmapset_ids,
+        let config = DownloadConfig {
             directory,
             mirrors,
             concurrent,
+            verify_zip_eocd: self.home.verify_zip_eocd,
+            max_retries: self.home.resolved_retries(),
+        };
+
+        let request = SelectiveDownloadRequest {
+            collection_ids,
+            beatmapset_ids,
+            config,
         };
 
         Some((id, request))
@@ -260,16 +267,16 @@ impl App {
                 return self.handle_quit_key();
             }
             KeyCode::Left => {
-                if !self.updates.in_collection_list
-                    && !self.updates.in_beatmap_list
+                if !self.updates.selection.in_collection_list
+                    && !self.updates.selection.in_beatmap_list
                     && let Some(cmd) = self.prev_tab()
                 {
                     return Some(cmd);
                 }
             }
             KeyCode::Right => {
-                if !self.updates.in_collection_list
-                    && !self.updates.in_beatmap_list
+                if !self.updates.selection.in_collection_list
+                    && !self.updates.selection.in_beatmap_list
                     && let Some(cmd) = self.next_tab()
                 {
                     return Some(cmd);
@@ -279,7 +286,8 @@ impl App {
             KeyCode::BackTab => self.focus_prev_field(),
             KeyCode::Up => {
                 if self.active_tab() == UPDATES_TAB_INDEX
-                    && (self.updates.in_collection_list || self.updates.in_beatmap_list)
+                    && (self.updates.selection.in_collection_list
+                        || self.updates.selection.in_beatmap_list)
                 {
                     self.updates.scroll_up();
                 } else {
@@ -288,7 +296,8 @@ impl App {
             }
             KeyCode::Down => {
                 if self.active_tab() == UPDATES_TAB_INDEX
-                    && (self.updates.in_collection_list || self.updates.in_beatmap_list)
+                    && (self.updates.selection.in_collection_list
+                        || self.updates.selection.in_beatmap_list)
                 {
                     self.updates.scroll_down();
                 } else {
@@ -480,16 +489,14 @@ impl App {
                 thread_index,
                 message,
                 rate_limited,
+                beatmapset_id,
             } => {
                 if let Some(page) = self.page_mut(id) {
-                    let completed = message.starts_with("Done")
-                        || message.starts_with("Skipped")
-                        || message.starts_with("Failed")
-                        || message.starts_with("Accepted");
+                    let completed = ThreadStatusLine::is_completion_message(&message);
                     if completed {
                         page.reset_thread_speed(thread_index);
                     }
-                    page.update_thread_status(thread_index, &message, rate_limited);
+                    page.update_thread_status(thread_index, &message, rate_limited, beatmapset_id);
                 }
             }
             DownloadEvent::StageChanged { id, stage } => {
@@ -497,9 +504,9 @@ impl App {
                     page.stage = stage;
                 }
             }
-            DownloadEvent::FailedMaps { id, beatmapset_ids } => {
+            DownloadEvent::FailedMaps { id, failures } => {
                 if let Some(page) = self.page_mut(id) {
-                    page.set_failed_maps(beatmapset_ids);
+                    page.set_failed_maps(failures);
                 }
             }
             DownloadEvent::Finished { id, summary } => {
