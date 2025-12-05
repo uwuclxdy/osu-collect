@@ -2,6 +2,7 @@ use crate::{
     download::{ShutdownToken, constants::MAX_EOCD_SEARCH_BYTES},
     utils::{AppError, Result},
 };
+use bytes::Bytes;
 use futures_util::StreamExt;
 use md5::{Digest, Md5};
 use std::{
@@ -21,13 +22,13 @@ use tracing::debug;
 const EOCD_SIGNATURE: [u8; 4] = [0x50, 0x4B, 0x05, 0x06];
 
 struct HashWorker {
-    sender: Option<mpsc::Sender<Vec<u8>>>,
+    sender: Option<mpsc::Sender<Bytes>>,
     handle: task::JoinHandle<Box<str>>,
 }
 
 impl HashWorker {
     fn new() -> Self {
-        let (sender, receiver) = mpsc::channel::<Vec<u8>>();
+        let (sender, receiver) = mpsc::channel::<Bytes>();
         let handle = task::spawn_blocking(move || {
             let mut hasher = Md5::new();
             while let Ok(chunk) = receiver.recv() {
@@ -41,9 +42,9 @@ impl HashWorker {
         }
     }
 
-    fn update(&self, data: &[u8]) {
+    fn update(&self, data: Bytes) {
         if let Some(sender) = &self.sender {
-            let _ = sender.send(data.to_vec());
+            let _ = sender.send(data);
         }
     }
 
@@ -144,7 +145,7 @@ pub async fn download_with_streaming(
         }
 
         if let Some(worker) = hash_worker.as_ref() {
-            worker.update(&chunk);
+            worker.update(chunk.clone());
         }
 
         last_progress_at = Instant::now();

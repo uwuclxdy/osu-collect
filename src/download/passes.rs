@@ -4,9 +4,11 @@ use super::{
 };
 use crate::{
     mirrors::MirrorKind,
+    utils::AppError,
     worker::{DownloadContext, StatusSink},
 };
 use std::{
+    any::Any,
     collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
 };
@@ -537,10 +539,40 @@ async fn pass_worker_loop(
             beatmapset_id, slot, "Dispatching beatmap download task"
         );
 
-        let result = download_single_target(&context, slot, beatmapset_id).await;
+        let job_context = context.clone();
+        let result_task =
+            tokio::spawn(
+                async move { download_single_target(&job_context, slot, beatmapset_id).await },
+            );
+
+        let result = match result_task.await {
+            Ok(res) => res,
+            Err(join_err) => {
+                let reason = if join_err.is_panic() {
+                    describe_panic(join_err.into_panic())
+                } else {
+                    "download task cancelled".to_string()
+                };
+
+                Err(AppError::other_dynamic(
+                    format!("Download worker failed for #{}: {}", beatmapset_id, reason)
+                        .into_boxed_str(),
+                ))
+            }
+        };
         if result_tx.send((slot, beatmapset_id, result)).is_err() {
             break;
         }
+    }
+}
+
+fn describe_panic(panic: Box<dyn Any + Send + 'static>) -> String {
+    if let Some(message) = panic.downcast_ref::<&str>() {
+        message.to_string()
+    } else if let Some(message) = panic.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "unknown panic".to_string()
     }
 }
 

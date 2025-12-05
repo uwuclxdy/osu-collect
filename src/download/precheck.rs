@@ -9,6 +9,7 @@ use crate::worker::{
 use futures_util::{StreamExt, stream};
 use std::{
     collections::{HashMap, HashSet},
+    ffi::OsStr,
     path::{Path, PathBuf},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -97,10 +98,12 @@ pub(crate) async fn verify_existing_beatmapsets(
             });
         }
 
-        let path = entry.path();
-        if !is_osz_file(&path) {
+        let file_name = entry.file_name();
+        if !is_osz_name(&file_name) {
             continue;
         }
+
+        let path = entry.path();
 
         let Some(beatmapset_id) = extract_beatmapset_id_from_filename(&path) else {
             debug!(file = %path.display(), "Could not extract beatmapset ID from filename");
@@ -317,17 +320,13 @@ async fn capture_osz_snapshot(dir: &Path) -> Result<Vec<OszSnapshotEntry>, Downl
     let mut entries = fs::read_dir(dir).await?;
 
     while let Some(entry) = entries.next_entry().await? {
-        let path = entry.path();
-        if !is_osz_file(&path) {
+        let file_name = entry.file_name();
+        if !is_osz_name(&file_name) {
             continue;
         }
 
         let metadata = entry.metadata().await?;
-        let file_name = entry
-            .file_name()
-            .to_string_lossy()
-            .into_owned()
-            .into_boxed_str();
+        let file_name = file_name.to_string_lossy().into_owned().into_boxed_str();
         let modified_micros = metadata.modified().ok().and_then(system_time_to_micros);
 
         snapshot.push(OszSnapshotEntry {
@@ -393,10 +392,17 @@ fn detect_changed_beatmapsets(
 
 #[inline]
 fn is_osz_file(path: &Path) -> bool {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.eq_ignore_ascii_case("osz"))
-        .unwrap_or(false)
+    path.extension().is_some_and(is_osz_extension)
+}
+
+#[inline]
+fn is_osz_name(name: &OsStr) -> bool {
+    is_osz_file(Path::new(name))
+}
+
+#[inline]
+fn is_osz_extension(ext: &OsStr) -> bool {
+    ext.eq_ignore_ascii_case("osz")
 }
 
 #[inline]

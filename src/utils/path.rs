@@ -1,11 +1,36 @@
 pub fn sanitize_filename(filename: &str) -> String {
-    filename
-        .chars()
-        .map(|c| match c {
+    let mut sanitized = String::with_capacity(filename.len());
+
+    for c in filename.chars() {
+        sanitized.push(match c {
             '/' | '\\' | '\0' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
             other => other,
-        })
-        .collect::<String>()
-        .trim()
-        .to_string()
+        });
+    }
+
+    let mut start = sanitized.len();
+    let mut end = 0;
+
+    for (idx, ch) in sanitized.char_indices() {
+        if !ch.is_whitespace() {
+            start = idx;
+            break;
+        }
+    }
+
+    for (idx, ch) in sanitized.char_indices().rev() {
+        if !ch.is_whitespace() {
+            end = idx + ch.len_utf8();
+            break;
+        }
+    }
+
+    if start >= end {
+        sanitized.clear();
+    } else {
+        sanitized.drain(..start);
+        sanitized.truncate(end - start);
+    }
+
+    sanitized
 }

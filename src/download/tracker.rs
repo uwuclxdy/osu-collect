@@ -9,6 +9,8 @@ use std::{
     time::SystemTime,
 };
 
+const VALIDATION_CACHE_LIMIT: usize = 4096;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum BeatmapState {
@@ -291,6 +293,11 @@ impl BeatmapTracker {
     ) {
         let key = ValidationCacheKey::from_owned(path, size, mtime, file_id);
         self.validation_cache.insert(key, valid);
+        self.prune_validation_cache();
+    }
+
+    pub fn clear_validation_cache(&self) {
+        self.validation_cache.clear();
     }
 
     pub fn invalidate_cache(&self, path: &Path) {
@@ -335,6 +342,27 @@ impl BeatmapTracker {
             BeatmapState::Verified => self.counters.inc_verified(),
             BeatmapState::Failed => self.counters.inc_failed(),
             BeatmapState::InProgress => {}
+        }
+    }
+}
+
+impl BeatmapTracker {
+    fn prune_validation_cache(&self) {
+        let len = self.validation_cache.len();
+        if len <= VALIDATION_CACHE_LIMIT {
+            return;
+        }
+
+        let excess = len - VALIDATION_CACHE_LIMIT;
+        let keys: Vec<_> = self
+            .validation_cache
+            .iter()
+            .map(|entry| entry.key().clone())
+            .take(excess)
+            .collect();
+
+        for key in keys {
+            self.validation_cache.remove(&key);
         }
     }
 }

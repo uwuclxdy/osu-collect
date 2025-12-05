@@ -761,6 +761,7 @@ async fn run_download_core(
     )?;
 
     let failure_report = run_download_loop(&ctx, &mut totals, flavor.log_prefix).await;
+    ctx.tracker.clear_validation_cache();
 
     if abort_if_shutdown(
         &status,
