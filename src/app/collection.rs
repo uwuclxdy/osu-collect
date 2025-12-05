@@ -1,4 +1,4 @@
-use crate::download::{BeatmapStage, DownloadId, DownloadStage, DownloadSummary};
+use crate::download::{BeatmapStage, DownloadId, DownloadStage, DownloadSummary, status};
 use std::{
     collections::HashMap,
     collections::VecDeque,
@@ -7,10 +7,10 @@ use std::{
 
 #[derive(Debug, Default, Clone)]
 pub struct DownloadStats {
-    pub downloaded: u16,
-    pub skipped: u16,
-    pub failed: u16,
-    pub unverified: u16,
+    pub downloaded: u32,
+    pub skipped: u32,
+    pub failed: u32,
+    pub unverified: u32,
     pub bytes_downloaded: u64,
     pub total_collection_bytes: Option<u64>,
     pub verified_bytes: u64,
@@ -23,12 +23,19 @@ pub struct BeatmapRow {
 }
 
 #[derive(Debug, Clone)]
+pub struct FailedBeatmap {
+    pub id: u32,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct ThreadStatusLine {
     pub message: String,
     pub rate_limited: bool,
     bytes_downloaded: u64,
     last_update: Option<Instant>,
     speed_bytes_per_sec: f64,
+    active_beatmap: Option<u32>,
 }
 
 impl ThreadStatusLine {
@@ -39,11 +46,27 @@ impl ThreadStatusLine {
             bytes_downloaded: 0,
             last_update: None,
             speed_bytes_per_sec: 0.0,
+            active_beatmap: None,
         }
     }
 
     pub fn speed_bytes_per_sec(&self) -> f64 {
         self.speed_bytes_per_sec
+    }
+
+    pub fn is_completion_message(message: &str) -> bool {
+        const COMPLETION_PREFIXES: [&str; 4] = ["Done", "Skipped", "Failed", "Accepted"];
+        COMPLETION_PREFIXES
+            .iter()
+            .any(|prefix| message.starts_with(prefix))
+    }
+
+    pub fn is_idle_message(message: &str) -> bool {
+        message.trim().eq_ignore_ascii_case("idle")
+    }
+
+    pub fn should_display(&self) -> bool {
+        !(Self::is_idle_message(&self.message) || Self::is_completion_message(&self.message))
     }
 }
 
@@ -61,7 +84,7 @@ pub struct CollectionPage {
     index: HashMap<u32, usize>,
     pub logs: VecDeque<String>,
     pub summary: Option<DownloadSummary>,
-    pub failed_maps: Vec<u32>,
+    pub failed_maps: Vec<FailedBeatmap>,
     pub progress_label_style_locked: bool,
     pub progress_label_bold_when_locked: bool,
     pub low_disk_space: Option<u64>,
@@ -154,10 +177,41 @@ impl CollectionPage {
         }
     }
 
-    pub fn update_thread_status(&mut self, thread_index: usize, message: &str, rate_limited: bool) {
+    pub fn update_thread_status(
+        &mut self,
+        thread_index: usize,
+        message: &str,
+        rate_limited: bool,
+        beatmapset_id: Option<u32>,
+    ) {
         if let Some(status) = self.thread_statuses.get_mut(thread_index) {
+            let is_assignment = message.starts_with(status::DOWNLOADING)
+                || message.starts_with(status::RECHECKING_PREFIX);
+            let is_completion = ThreadStatusLine::is_completion_message(message);
+
+            if let Some(job_id) = beatmapset_id {
+                if !is_assignment {
+                    if let Some(current) = status.active_beatmap {
+                        if current != job_id {
+                            return;
+                        }
+                    } else if is_completion {
+                        return;
+                    }
+                }
+                status.active_beatmap = Some(job_id);
+            } else if is_completion {
+                return;
+            }
+
             status.message = message.to_string();
             status.rate_limited = rate_limited;
+
+            if (beatmapset_id.is_some() && is_completion)
+                || ThreadStatusLine::is_idle_message(message)
+            {
+                status.active_beatmap = None;
+            }
         }
     }
 
@@ -195,9 +249,13 @@ impl CollectionPage {
             .sum()
     }
 
-    pub fn set_failed_maps(&mut self, mut ids: Vec<u32>) {
-        ids.sort_unstable();
-        self.failed_maps = ids;
+    pub fn set_failed_maps(&mut self, failures: Vec<(u32, String)>) {
+        let mut entries: Vec<FailedBeatmap> = failures
+            .into_iter()
+            .map(|(id, reason)| FailedBeatmap { id, reason })
+            .collect();
+        entries.sort_by(|a, b| a.id.cmp(&b.id));
+        self.failed_maps = entries;
     }
 
     pub fn total_downloaded_bytes(&self) -> u64 {
