@@ -111,7 +111,7 @@ jobs:
             dist/osu-collect-windows-x64.exe.sha256
 
   build-macos:
-    runs-on: macos-latest
+    runs-on: macos-14
     env:
       OSU_CLIENT_ID: ${{ secrets.OSU_CLIENT_ID }}
       OSU_CLIENT_SECRET: ${{ secrets.OSU_CLIENT_SECRET }}
