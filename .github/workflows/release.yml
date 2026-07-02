@@ -9,6 +9,17 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Release page exists the moment the tag lands; notes are NOT auto-generated
+  # (the release script writes them), assets attach when the builds finish.
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: false
+
   build-linux:
     runs-on: ubuntu-latest
     steps:
@@ -127,7 +138,7 @@ jobs:
             release/osu-collect-macos-arm64.sha256
 
   release:
-    needs: [build-linux, build-windows, build-macos]
+    needs: [build-linux, build-windows, build-macos, create-release]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -170,6 +181,5 @@ jobs:
             release/SHA256SUMS
           draft: false
           prerelease: false
-          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
