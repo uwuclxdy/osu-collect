@@ -1,9 +1,9 @@
+use std::hint::black_box;
 use std::sync::{LazyLock, mpsc};
 
 use bytes::Bytes;
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use md5::{Digest, Md5};
-use memchr;
 use osu_downloader::{Mirror, sanitize_filename};
 
 fn bench_md5_hex_format(c: &mut Criterion) {
@@ -344,7 +344,7 @@ fn bench_collection_hashes(c: &mut Criterion) {
                 b.iter(|| {
                     let hashes: Vec<String> = black_box(beatmapsets)
                         .iter()
-                        .flat_map(|set| set.iter().map(|hash| hash.clone()))
+                        .flat_map(|set| set.iter().cloned())
                         .collect();
                     black_box(hashes)
                 })
