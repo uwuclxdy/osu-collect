@@ -34,6 +34,7 @@ osu!collect is a terminal app (TUI) that **downloads osu! beatmap collections fr
 - **Integrity verification**: MD5 plus archive validation on every download; files already on disk are verified and skipped.
 - **Skips what you already own**: Reads your osu! library (stable `osu!.db` / lazer realm) and skips maps you've already imported instead of re-fetching them; they still go into the generated `collection.db`.
 - **Retry failed maps**: Failures persist between runs. Retry them with one key, or on the next download.
+- **Self-updating**: Checks for a newer release on launch and installs it. Flip auto-update off in config to just get a notice; then press <kbd>u</kbd> to read the changelog and update when you want.
 - **Parallel collection tabs**: Queue several collections and download them at once.
 
 ## Installation
@@ -108,6 +109,7 @@ Paste a collection link, pick a directory, press <kbd>↵</kbd>.
 | <kbd>r</kbd> | Retry all failed maps on a download tab |
 | <kbd>x</kbd> | Dismiss an error message |
 | <kbd>?</kbd> | Help overlay listing every key |
+| <kbd>u</kbd> | Open the changelog + update prompt when a newer release is available (shows only when auto-update is off) |
 | <kbd>q</kbd> | Back / quit (press twice to confirm; aborts a running download the same way) |
 | <kbd>ctrl</kbd>+<kbd>c</kbd> | Quit immediately from anywhere |
 | <kbd>home</kbd> <kbd>end</kbd> | Jump to the first / last row of a list or form |

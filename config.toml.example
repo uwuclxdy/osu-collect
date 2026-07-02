@@ -61,4 +61,10 @@ format = "compact"
 # optional directory for rolled JSON log files
 # file_dir = "/home/user/.local/share/osu-collect/logs"
 
+[update]
+# check for a newer release on launch. true (default) downloads and installs it
+# automatically; false only surfaces that one is available (header indicator +
+# `u` changelog modal) so you review and apply it on demand
+auto_update = true
+
 # [recent] is managed automatically (last collection + download dir) — no need to edit it
