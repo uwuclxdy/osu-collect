@@ -32,7 +32,10 @@ const DOWNLOAD_TAB_HINT_RUNNING: &str = "↑↓ scroll  ·  q abort  ·  ? help"
 // not a download-page action) so it isn't advertised here.
 const DOWNLOAD_TAB_HINT_SETTLED: &str = "↑↓ scroll  ·  esc/q close  ·  ? help";
 const HINT_RETRY: &str = "r retry failed";
-const HINT_SKIP_RATE_LIMITED: &str = "s skip rate-limited";
+const HINT_DEFER_DROP: &str = "s defer · S drop";
+/// Drop-only variant: shown when maps are queue-deferred but none are parked
+/// inline, so `s defer` cannot act but `S drop` still drains the queue.
+const HINT_DROP: &str = "S drop";
 
 const HINT_MOVE: &str = "↑↓ move";
 const HINT_SCROLL: &str = "↑↓ scroll";
@@ -185,13 +188,17 @@ fn download_tab_hint(app: &App) -> String {
         DOWNLOAD_TAB_HINT_RUNNING
     };
     let mut segments = vec![base];
-    // `s skip rate-limited` whenever *any* active map is parked on a cooldown —
-    // matches the key gate in `handle_download_tab_key` so the hint never lies.
-    let any_rate_limited = page.is_some_and(|page| {
-        matches!(page.stage, DownloadStage::Downloading) && page.any_active_rate_limited()
-    });
-    if any_rate_limited {
-        segments.push(HINT_SKIP_RATE_LIMITED);
+    // `s defer` can act only on a row parked on an inline cooldown right now
+    // (`defer_rate_limited` wakes inline waiters); `S drop` also drains
+    // deferred-pending queue items, so it shows under the broader parked-or-
+    // deferred gate. Matches the key gates in `handle_download_tab_key` so
+    // neither hint advertises a dead key.
+    if let Some(page) = page.filter(|page| matches!(page.stage, DownloadStage::Downloading)) {
+        if page.any_active_rate_limited() {
+            segments.push(HINT_DEFER_DROP);
+        } else if page.rate_limited_or_deferred() {
+            segments.push(HINT_DROP);
+        }
     }
     // Advertise `r retry failed` only when something is actually retryable —
     // 404 (NotFound) failures are never retryable, so a page of pure 404s must

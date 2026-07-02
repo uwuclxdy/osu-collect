@@ -21,7 +21,7 @@ use crate::osu_db::OsuClient;
 use fs2::available_space;
 use osu_downloader::size::SizeFetcher;
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::{sync::watch, task::JoinHandle};
 use tracing::{debug, warn};
 
@@ -35,9 +35,13 @@ pub type Emit<'a> = &'a (dyn Fn(DownloadEvent) + Send + Sync);
 /// Handle to a running download task.
 pub struct DownloadHandle {
     cancel: watch::Sender<bool>,
-    /// Generation counter: each bump asks the running session to skip whatever
-    /// maps are sitting on a rate-limit cooldown right now. A counter (not a
-    /// bool) so repeated presses each register as a distinct `changed()`.
+    /// Generation counter: each bump asks the running session to defer (requeue)
+    /// whatever maps are sitting on a rate-limit cooldown right now. A counter
+    /// (not a bool) so repeated presses each register as a distinct `changed()`.
+    defer: watch::Sender<u64>,
+    /// Generation counter: each bump asks the running session to hard-drop
+    /// whatever maps are sitting on a rate-limit cooldown right now. A counter
+    /// (not a bool) so repeated presses each register as a distinct `changed()`.
     skip: watch::Sender<u64>,
     join: JoinHandle<()>,
 }
@@ -45,18 +49,31 @@ pub struct DownloadHandle {
 impl DownloadHandle {
     pub(crate) fn new(
         cancel: watch::Sender<bool>,
+        defer: watch::Sender<u64>,
         skip: watch::Sender<u64>,
         join: JoinHandle<()>,
     ) -> Self {
-        Self { cancel, skip, join }
+        Self {
+            cancel,
+            defer,
+            skip,
+            join,
+        }
     }
 
     pub fn request_shutdown(&self) {
         let _ = self.cancel.send(true);
     }
 
-    /// Ask the running session to skip every map currently waiting on a mirror
-    /// rate-limit cooldown. No-op if the task has already finished.
+    /// Ask the running session to defer (requeue) every map currently waiting on
+    /// a mirror rate-limit cooldown, so it retries once a mirror frees rather
+    /// than being dropped. No-op if the task has already finished.
+    pub fn defer_rate_limited(&self) {
+        self.defer.send_modify(|n| *n = n.wrapping_add(1));
+    }
+
+    /// Ask the running session to hard-drop every map currently waiting on a
+    /// mirror rate-limit cooldown. No-op if the task has already finished.
     pub fn skip_rate_limited(&self) {
         self.skip.send_modify(|n| *n = n.wrapping_add(1));
     }
@@ -193,6 +210,20 @@ pub enum DownloadEvent {
     BeatmapVerified {
         id: DownloadId,
         duration_us: u64,
+    },
+    /// A beatmapset was deferred by the library: every candidate mirror was
+    /// rate-limited past the inline-wait threshold, so it returned to the queue
+    /// tail instead of parking a worker. The active slot frees and the map
+    /// counts as queued again (never failed / skipped); it retries after
+    /// `retry_in`. Toastless.
+    BeatmapDeferred {
+        id: DownloadId,
+        beatmapset_id: u32,
+        /// Rate-limit deferral count so far. A pure request-spacing requeue keeps
+        /// the current count (may be 0); only cooling defers increment it.
+        pass: u32,
+        /// Time until the earliest candidate mirror frees.
+        retry_in: Duration,
     },
     Finished {
         id: DownloadId,

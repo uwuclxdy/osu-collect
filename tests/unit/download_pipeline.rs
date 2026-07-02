@@ -130,6 +130,31 @@ fn network_error_counts_as_failed() {
 }
 
 #[test]
+fn deferred_map_emits_deferred_event_and_touches_no_tally() {
+    let (tally, events) = drive_translate(vec![LibEvent::BeatmapsetDeferred {
+        beatmapset_id: 42,
+        pass: 2,
+        retry_in: std::time::Duration::from_secs(30),
+    }]);
+
+    // Deferred is a soft requeue: nothing counted, so the map stays "queued".
+    assert_eq!(tally.downloaded, 0);
+    assert_eq!(tally.skipped, 0);
+    assert_eq!(tally.failed, 0);
+    assert!(tally.failures.is_empty());
+
+    // Exactly one BeatmapDeferred, carrying the pass + retry_in; no progress emit.
+    assert!(matches!(
+        events.as_slice(),
+        [DownloadEvent::BeatmapDeferred {
+            beatmapset_id: 42,
+            pass: 2,
+            ..
+        }]
+    ));
+}
+
+#[test]
 fn already_exists_still_counts_as_skipped() {
     let (tally, _events) = drive_translate(vec![LibEvent::BeatmapsetSkipped {
         beatmapset_id: 5,

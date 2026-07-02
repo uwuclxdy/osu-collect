@@ -126,8 +126,14 @@ pub enum AppCommand {
     CancelDownload {
         id: DownloadId,
     },
-    /// Skip every map of this download currently waiting on a rate-limit
-    /// cooldown (offered only while all active maps are rate-limited).
+    /// Defer (requeue) every map of this download currently waiting on a
+    /// rate-limit cooldown, so it retries once a mirror frees instead of being
+    /// dropped (`s`).
+    DeferRateLimited {
+        id: DownloadId,
+    },
+    /// Hard-drop every map of this download currently waiting on a rate-limit
+    /// cooldown (`S`).
     SkipRateLimited {
         id: DownloadId,
     },
@@ -1903,6 +1909,13 @@ impl App {
                     }
                 }
             }
+            DownloadEvent::BeatmapDeferred {
+                id, beatmapset_id, ..
+            } => {
+                if let Some(page) = self.page_mut(id) {
+                    page.mark_deferred(beatmapset_id);
+                }
+            }
             DownloadEvent::BeatmapVerified { id, duration_us } => {
                 if let Some(page) = self.page_mut(id) {
                     page.stats.verify_total_count = page.stats.verify_total_count.saturating_add(1);
@@ -2092,15 +2105,25 @@ impl App {
                     Some(AppCommand::RetryAllFailed { download_id })
                 }
             }
-            // `s`/`S` skip every map currently stuck on a rate-limit cooldown.
-            // Gated on *any* active map being parked: `skip_rate_limited` wakes
-            // only the maps on a cooldown at that instant, so pressing it mid-run
-            // skips the stuck ones and leaves the actively-downloading rows alone.
-            's' | 'S' => {
+            // `s` defers (requeues) and `S` hard-drops rate-limit-stuck maps.
+            // `defer_rate_limited` wakes only rows parked on an inline cooldown
+            // *right now*, so `s` is gated on an inline-parked row existing;
+            // gating it on the broader parked-or-deferred set would advertise a
+            // dead key when everything is queue-deferred and nothing is parked.
+            // `S` additionally drains deferred-pending queue items, so it keeps
+            // the broader gate.
+            's' => {
                 let page = self.active_download_page_mut()?;
                 if page.any_active_rate_limited() {
-                    let id = page.id;
-                    Some(AppCommand::SkipRateLimited { id })
+                    Some(AppCommand::DeferRateLimited { id: page.id })
+                } else {
+                    None
+                }
+            }
+            'S' => {
+                let page = self.active_download_page_mut()?;
+                if page.rate_limited_or_deferred() {
+                    Some(AppCommand::SkipRateLimited { id: page.id })
                 } else {
                     None
                 }

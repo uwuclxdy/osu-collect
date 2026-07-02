@@ -139,6 +139,25 @@ fn config_render_shows_download_help() {
 }
 
 #[test]
+fn config_render_shows_auto_defer_label() {
+    let mut app = App::new(Config::default());
+    app.active_tab = CONFIG_TAB_INDEX;
+    // Focus the row so the scrollable panel brings it (and its secs input) into view.
+    app.config.focus = ConfigField::DownloadAutoSkipRateLimited;
+
+    let output = render_app(&app, 80, 20);
+
+    assert!(
+        output.contains("auto-defer rate limited"),
+        "auto-defer toggle label must render: {output}"
+    );
+    assert!(
+        output.contains("defer after (secs)"),
+        "the delay input must be worded as a defer: {output}"
+    );
+}
+
+#[test]
 fn config_render_shows_strict_help_only_when_strict_selected() {
     use crate::download::ArchiveValidation;
 
@@ -1238,6 +1257,54 @@ fn rapid_status_transitions_coalesce_to_latest() {
         "intermediate texts must coalesce; only the final state shows after the window, got {visible:?}"
     );
     assert!(line.displayed_rate_limited());
+}
+
+#[test]
+fn footer_offers_defer_and_drop_when_a_row_is_parked() {
+    let mut app = App::new(Config::default());
+    let mut page = CollectionPage::new(1, "ranked".into(), 1);
+    page.stage = DownloadStage::Downloading;
+    // First write lands instantly, so the row reads as parked without a debounce.
+    page.update_active_status(
+        42,
+        crate::download::BeatmapStage::Downloading,
+        "rate limited on mirror",
+        true,
+        Some(std::time::Instant::now() + std::time::Duration::from_secs(30)),
+    );
+    app.downloads.push(page);
+    app.active_tab = 3;
+
+    let output = render_app(&app, 120, 24);
+    assert!(
+        output.contains("s defer"),
+        "footer must offer defer when a row is parked inline: {output}"
+    );
+    assert!(
+        output.contains("S drop"),
+        "footer must offer drop when a row is parked inline: {output}"
+    );
+}
+
+#[test]
+fn footer_offers_drop_only_when_only_deferred() {
+    let mut app = App::new(Config::default());
+    let mut page = CollectionPage::new(1, "ranked".into(), 1);
+    page.stage = DownloadStage::Downloading;
+    // A queue-deferred map with nothing parked inline: only `S drop` can act.
+    page.mark_deferred(42);
+    app.downloads.push(page);
+    app.active_tab = 3;
+
+    let output = render_app(&app, 120, 24);
+    assert!(
+        output.contains("S drop"),
+        "footer must offer drop for a queue-deferred map: {output}"
+    );
+    assert!(
+        !output.contains("s defer"),
+        "footer must not offer defer when nothing is parked inline: {output}"
+    );
 }
 
 #[test]

@@ -133,6 +133,8 @@ const DOWNLOAD_TAB: &[HelpRow] = &[
     HelpRow::new("↵", "expand / collapse failed"),
     HelpRow::new("↑ ↓", "navigate failed rows"),
     HelpRow::new("r", "retry failed maps"),
+    HelpRow::new("s", "defer rate-limited"),
+    HelpRow::new("S", "drop rate-limited"),
     HelpRow::new("esc / q", "close completed tab"),
 ];
 

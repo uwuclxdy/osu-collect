@@ -133,6 +133,18 @@ pub fn translate_event(id: DownloadId, event: LibEvent, tally: &mut Tally, emit:
                 emit_overall_progress(id, tally, emit);
             }
         },
+        // Soft requeue: the map is not counted (stays "queued"); the app frees
+        // its active slot and tracks it as deferred-pending. No toast.
+        LibEvent::BeatmapsetDeferred {
+            beatmapset_id,
+            pass,
+            retry_in,
+        } => emit(DownloadEvent::BeatmapDeferred {
+            id,
+            beatmapset_id,
+            pass,
+            retry_in,
+        }),
         LibEvent::BeatmapsetFailed {
             beatmapset_id,
             error,

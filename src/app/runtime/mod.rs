@@ -285,10 +285,16 @@ fn dispatch_command(
             };
             app.handle_cancel_result(id, was_running);
         }
+        Some(AppCommand::DeferRateLimited { id }) => {
+            if let Some(handle) = downloads.get(&id) {
+                handle.defer_rate_limited();
+                info!(download_id = id, "Deferring rate-limited maps");
+            }
+        }
         Some(AppCommand::SkipRateLimited { id }) => {
             if let Some(handle) = downloads.get(&id) {
                 handle.skip_rate_limited();
-                info!(download_id = id, "Skipping rate-limited maps");
+                info!(download_id = id, "Dropping rate-limited maps");
             }
         }
         Some(AppCommand::LazerLogin { username, password }) => {

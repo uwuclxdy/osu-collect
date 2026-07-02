@@ -34,7 +34,7 @@ const HELP_VIM_KEYS: &str = "hjkl move · gg/G top/bottom · ctrl+d/u page · i/
 const LABEL_VIDEO: &str = "video";
 const LABEL_VERIFY_INTEGRITY: &str = "verify .osz integrity";
 const LABEL_RETRY_FAILED: &str = "retry failed on download";
-const LABEL_AUTO_SKIP_RATE_LIMITED: &str = "auto-skip rate limited";
+const LABEL_AUTO_DEFER_RATE_LIMITED: &str = "auto-defer rate limited";
 const LABEL_SKIP_IMPORTED: &str = "skip already imported";
 const LABEL_LOGGING_ENABLED: &str = "enable logging";
 const LABEL_LOGGING_LEVEL: &str = "log level";
@@ -286,7 +286,7 @@ fn build_config_items(
     items.push_focusable(
         ConfigField::DownloadAutoSkipRateLimited,
         widgets::row_item(
-            LABEL_AUTO_SKIP_RATE_LIMITED,
+            LABEL_AUTO_DEFER_RATE_LIMITED,
             None,
             form.auto_skip_rate_limited,
             focus == ConfigField::DownloadAutoSkipRateLimited,

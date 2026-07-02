@@ -158,7 +158,7 @@ fn render_compact(frame: &mut Frame, area: Rect, page: &CollectionPage, tick: u6
 /// title row (see [`render_gauge`]), not here.
 fn overview_lines(page: &CollectionPage) -> Vec<Line<'_>> {
     let rate_limited =
-        matches!(page.stage, DownloadStage::Downloading) && page.all_active_rate_limited();
+        matches!(page.stage, DownloadStage::Downloading) && page.fully_rate_limited();
     let status = if rate_limited {
         crate::config::constants::status::RATE_LIMITED
     } else {

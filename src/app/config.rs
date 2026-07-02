@@ -539,7 +539,7 @@ fn threads_field(download: &DownloadConfig) -> InputField {
 
 fn rate_limit_skip_secs_field(download: &DownloadConfig) -> InputField {
     InputField::new(
-        "skip after (secs)",
+        "defer after (secs)",
         download.rate_limit_skip_secs.to_string(),
         "60",
     )

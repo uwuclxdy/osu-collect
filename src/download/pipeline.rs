@@ -43,9 +43,14 @@ pub fn spawn_download(
         mirror_count = request.config.mirrors.len(),
         concurrent = request.config.concurrent
     );
-    spawn(id, span, tx, move |cancel_rx, skip_rx, emit| async move {
-        run_collection(id, request, cancel_rx, skip_rx, emit).await
-    })
+    spawn(
+        id,
+        span,
+        tx,
+        move |cancel_rx, defer_rx, skip_rx, emit| async move {
+            run_collection(id, request, cancel_rx, defer_rx, skip_rx, emit).await
+        },
+    )
 }
 
 pub fn spawn_selective_download(
@@ -60,9 +65,14 @@ pub fn spawn_selective_download(
         concurrent = request.config.concurrent,
         beatmapset_count = request.beatmapset_ids.len()
     );
-    spawn(id, span, tx, move |cancel_rx, skip_rx, emit| async move {
-        run_selective(id, request, cancel_rx, skip_rx, emit).await
-    })
+    spawn(
+        id,
+        span,
+        tx,
+        move |cancel_rx, defer_rx, skip_rx, emit| async move {
+            run_selective(id, request, cancel_rx, defer_rx, skip_rx, emit).await
+        },
+    )
 }
 
 type EmitArc = Arc<dyn Fn(DownloadEvent) + Send + Sync>;
@@ -74,10 +84,13 @@ fn spawn<F, Fut>(
     runner: F,
 ) -> DownloadHandle
 where
-    F: FnOnce(watch::Receiver<bool>, watch::Receiver<u64>, EmitArc) -> Fut + Send + 'static,
+    F: FnOnce(watch::Receiver<bool>, watch::Receiver<u64>, watch::Receiver<u64>, EmitArc) -> Fut
+        + Send
+        + 'static,
     Fut: std::future::Future<Output = Result<(), DownloadError>> + Send,
 {
     let (cancel_tx, cancel_rx) = watch::channel(false);
+    let (defer_tx, defer_rx) = watch::channel(0u64);
     let (skip_tx, skip_rx) = watch::channel(0u64);
     let failure_tx = tx.clone();
     let emit: EmitArc = Arc::new(move |event: DownloadEvent| {
@@ -87,7 +100,7 @@ where
     let join = tokio::spawn(
         async move {
             info!("download task started");
-            if let Err(err) = runner(cancel_rx, skip_rx, emit).await {
+            if let Err(err) = runner(cancel_rx, defer_rx, skip_rx, emit).await {
                 error!(error = %err, "download task failed");
                 let _ = failure_tx.send(DownloadEvent::Failed {
                     id,
@@ -100,7 +113,7 @@ where
         .instrument(span),
     );
 
-    DownloadHandle::new(cancel_tx, skip_tx, join)
+    DownloadHandle::new(cancel_tx, defer_tx, skip_tx, join)
 }
 
 fn emit_resolving(id: DownloadId, emit: Emit<'_>) {
@@ -114,6 +127,7 @@ async fn run_collection(
     id: DownloadId,
     request: DownloadRequest,
     cancel_rx: watch::Receiver<bool>,
+    defer_rx: watch::Receiver<u64>,
     skip_rx: watch::Receiver<u64>,
     emit: EmitArc,
 ) -> Result<(), DownloadError> {
@@ -170,6 +184,7 @@ async fn run_collection(
         &config,
         auto_overwrite,
         cancel_rx,
+        defer_rx,
         skip_rx,
         emit.as_ref(),
     )
@@ -233,6 +248,7 @@ async fn run_selective(
     id: DownloadId,
     request: SelectiveDownloadRequest,
     cancel_rx: watch::Receiver<bool>,
+    defer_rx: watch::Receiver<u64>,
     skip_rx: watch::Receiver<u64>,
     emit: EmitArc,
 ) -> Result<(), DownloadError> {
@@ -288,6 +304,7 @@ async fn run_selective(
         &config,
         false,
         cancel_rx,
+        defer_rx,
         skip_rx,
         emit.as_ref(),
     )
@@ -376,6 +393,7 @@ async fn run_pipeline_core(
     config: &DownloadConfig,
     auto_overwrite: bool,
     cancel_rx: watch::Receiver<bool>,
+    defer_rx: watch::Receiver<u64>,
     skip_rx: watch::Receiver<u64>,
     emit: Emit<'_>,
 ) -> Result<Option<Tally>, DownloadError> {
@@ -434,12 +452,14 @@ async fn run_pipeline_core(
         .events()
         .expect("events() called once per session");
     let mut cancel_signal = cancel_rx;
+    let mut defer_signal = defer_rx;
     let mut skip_signal = skip_rx;
 
     let cancelled = drive_session(
         &mut session_handle,
         &mut events,
         &mut cancel_signal,
+        &mut defer_signal,
         &mut skip_signal,
         |lib_event| translate_event(id, lib_event, &mut tally, emit),
     )
@@ -473,6 +493,7 @@ async fn drive_session<F, S>(
     session_handle: &mut LibDownloadSession,
     events: &mut S,
     cancel_signal: &mut watch::Receiver<bool>,
+    defer_signal: &mut watch::Receiver<u64>,
     skip_signal: &mut watch::Receiver<u64>,
     mut on_event: F,
 ) -> bool
@@ -488,6 +509,13 @@ where
                 if *cancel_signal.borrow() {
                     session_handle.cancel();
                     return true;
+                }
+            }
+            // Each bump of the defer counter forwards to the library, which
+            // requeues every map currently parked on a rate-limit cooldown.
+            changed = defer_signal.changed() => {
+                if changed.is_ok() {
+                    session_handle.defer_rate_limited();
                 }
             }
             // Each bump of the skip counter forwards to the library, which drops

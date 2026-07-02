@@ -121,11 +121,15 @@ pub struct DownloadConfig {
     pub video: bool,
     pub archive_validation: ArchiveValidation,
     pub retry_failed_on_download: RetryFailedOnDownload,
-    /// When true, maps parked on a rate-limit cooldown are automatically skipped
-    /// after `rate_limit_skip_secs` seconds instead of waiting indefinitely.
+    /// When true, maps parked on a rate-limit cooldown are automatically
+    /// deferred (requeued to retry once a mirror frees) after
+    /// `rate_limit_skip_secs` seconds instead of waiting indefinitely. The key
+    /// name is kept for config compatibility.
     pub auto_skip_rate_limited: bool,
-    /// Seconds to wait before auto-skipping a rate-limited map. Only meaningful
-    /// when `auto_skip_rate_limited` is true. Floored at 1 s in the pipeline.
+    /// Per-pass seconds of inline cooldown wait before auto-deferring a
+    /// rate-limited map (the budget resets each processing pass, so a map may wait
+    /// up to ~3x this across the deferral pass cap). Only meaningful when
+    /// `auto_skip_rate_limited` is true. Floored at 1 s in the pipeline.
     pub rate_limit_skip_secs: u32,
     /// When true, a Get-Maps download pre-skips beatmapsets already present in
     /// the configured osu! client's library (still written to `collection.db`).

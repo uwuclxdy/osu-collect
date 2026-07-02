@@ -4,7 +4,7 @@ use crate::download::{
 use ratatui::style::Color;
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     time::{Duration, Instant},
 };
 
@@ -236,6 +236,11 @@ pub struct CollectionPage {
     /// so the row stops rendering rather than lingering with a final message.
     /// A new download then claims the lowest free slot.
     pub active_downloads: Vec<Option<ActiveDownloadLine>>,
+    /// Beatmapsets the library deferred (requeued after a long rate-limit) that
+    /// have not yet re-entered with a fresh status. Not counted in any tally —
+    /// they are still "queued". Gates the defer/drop keys + footer hint and the
+    /// stalled OVERVIEW status; cleared when a map re-attempts or the run ends.
+    deferred_ids: HashSet<u32>,
     pub concurrent: usize,
     /// Last-seen downloaded bytes per beatmapset id; used by `update_progress`
     /// to compute the delta added to `stats.bytes_downloaded` each call.
@@ -276,6 +281,7 @@ impl CollectionPage {
             uploader: None,
             download_config: None,
             active_downloads: (0..slot_count).map(|_| None).collect(),
+            deferred_ids: HashSet::new(),
             concurrent,
             prev_bytes: HashMap::new(),
             summary: None,
@@ -311,15 +317,43 @@ impl CollectionPage {
 
     pub fn clear_active_downloads(&mut self) {
         self.active_downloads.fill(None);
+        self.deferred_ids.clear();
     }
 
-    pub fn all_active_rate_limited(&self) -> bool {
-        let mut lines = self.active_lines().peekable();
-        lines.peek().is_some() && lines.all(|l| l.displayed_rate_limited())
+    /// Free the active slot for a deferred map and remember it as
+    /// deferred-pending. The map is not counted terminal (the library will retry
+    /// it); the id is dropped again the moment it re-enters with a fresh status.
+    pub fn mark_deferred(&mut self, beatmapset_id: u32) {
+        if let Some(slot) = self.active_downloads.iter_mut().find(|slot| {
+            slot.as_ref()
+                .is_some_and(|l| l.beatmapset_id == beatmapset_id)
+        }) {
+            *slot = None;
+        }
+        self.deferred_ids.insert(beatmapset_id);
+    }
+
+    pub fn deferred_count(&self) -> usize {
+        self.deferred_ids.len()
+    }
+
+    /// True when the run is fully stalled on rate limits: every active row is
+    /// parked on a cooldown, or all remaining maps have deferred (no active row
+    /// is downloading). Drives the OVERVIEW `rate limited` status.
+    pub fn fully_rate_limited(&self) -> bool {
+        let has_active = self.active_lines().next().is_some();
+        let all_active_parked = self.active_lines().all(|l| l.displayed_rate_limited());
+        (has_active || !self.deferred_ids.is_empty()) && all_active_parked
     }
 
     pub fn any_active_rate_limited(&self) -> bool {
         self.active_lines().any(|l| l.displayed_rate_limited())
+    }
+
+    /// Whether the manual defer (`s`) / drop (`S`) keys apply: some active row is
+    /// parked on a cooldown, or some map is waiting to retry after a defer.
+    pub fn rate_limited_or_deferred(&self) -> bool {
+        self.any_active_rate_limited() || !self.deferred_ids.is_empty()
     }
 
     pub fn update_progress(&mut self, beatmapset_id: u32, downloaded: u64, total: u64) {
@@ -338,6 +372,11 @@ impl CollectionPage {
         rate_limited: bool,
         cooldown_until: Option<Instant>,
     ) {
+        // Any fresh status means a previously-deferred map is re-attempting (or
+        // reaching a terminal state), so it is no longer waiting in the defer
+        // queue — clear it to keep the gating / stalled counters accurate.
+        self.deferred_ids.remove(&beatmapset_id);
+
         // Terminal stages drop the line immediately — only actively-downloading
         // rows belong in the ACTIVE panel, so a finished / failed / skipped slot
         // is freed at once and stops rendering (rows that aren't downloading are

@@ -223,6 +223,70 @@ fn esc_on_confirm_modal_cancels_without_retrying() {
     );
 }
 
+// ── s defers / S drops rate-limited maps ──────────────────────────────────────
+
+/// Park an active row on an inline cooldown so `any_active_rate_limited()` holds.
+fn park_active_row(app: &mut App, beatmapset_id: u32) {
+    app.active_download_page_mut()
+        .unwrap()
+        .update_active_status(
+            beatmapset_id,
+            crate::download::BeatmapStage::Downloading,
+            "rate limited on mirror",
+            true,
+            Some(std::time::Instant::now() + std::time::Duration::from_secs(30)),
+        );
+}
+
+#[test]
+fn s_defers_and_capital_s_drops_when_a_row_is_parked() {
+    let mut app = make_app();
+    let download_id = setup_download_tab_with_failures(&mut app, &[FailureReason::RateLimited]);
+    // An inline-parked row satisfies both key gates.
+    park_active_row(&mut app, 1);
+
+    let cmd = app.handle_key(press(KeyCode::Char('s')));
+    assert!(
+        matches!(cmd, Some(AppCommand::DeferRateLimited { id }) if id == download_id),
+        "s must defer a map parked on an inline cooldown"
+    );
+
+    let cmd = app.handle_key(shift(KeyCode::Char('S')));
+    assert!(
+        matches!(cmd, Some(AppCommand::SkipRateLimited { id }) if id == download_id),
+        "S must hard-drop a map parked on an inline cooldown"
+    );
+}
+
+#[test]
+fn s_is_dead_when_only_deferred_but_capital_s_lives() {
+    let mut app = make_app();
+    let download_id = setup_download_tab_with_failures(&mut app, &[FailureReason::RateLimited]);
+    // Only a queue-deferred map, nothing parked inline. `defer_rate_limited`
+    // reaches only inline waiters, so `s` must be dead; `S` also drains
+    // deferred-pending items, so it still acts.
+    app.active_download_page_mut().unwrap().mark_deferred(1);
+
+    assert!(
+        app.handle_key(press(KeyCode::Char('s'))).is_none(),
+        "s must be inert when nothing is parked inline (only queue-deferred)"
+    );
+    let cmd = app.handle_key(shift(KeyCode::Char('S')));
+    assert!(
+        matches!(cmd, Some(AppCommand::SkipRateLimited { id }) if id == download_id),
+        "S must still drop queue-deferred maps"
+    );
+}
+
+#[test]
+fn s_and_capital_s_inert_without_parked_or_deferred() {
+    let mut app = make_app();
+    setup_download_tab_with_failures(&mut app, &[FailureReason::NetworkError]);
+    // nothing parked on a cooldown and nothing deferred → both keys are dead
+    assert!(app.handle_key(press(KeyCode::Char('s'))).is_none());
+    assert!(app.handle_key(shift(KeyCode::Char('S'))).is_none());
+}
+
 // ── letter suppression ────────────────────────────────────────────────────────
 
 #[test]
