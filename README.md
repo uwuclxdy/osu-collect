@@ -28,7 +28,7 @@ osu!collect is a terminal app (TUI) that **downloads osu! beatmap collections fr
 
 - **Batch downloads** from any osu!collector collection. Paste a URL or ID, press enter.
 - **Mirrors with automatic failover**: osu!direct, Nerinyan, Sayobot, Nekoha, Beatconnect, osu!dl, the Hinamizawa cascade, your own custom mirrors, plus the official osu! servers once you log in.
-- **Rate-limit aware**: throttled mirrors sit out while the rest keep downloading, with per-map cooldown countdowns in the UI. Each map starts on a different mirror (round-robin) and requests to any one mirror are spaced out, so load spreads instead of hammering a single host.
+- **Rate-limit aware**: throttled mirrors sit out while the rest keep downloading, with per-map cooldown countdowns in the UI. Requests to each mirror are spaced out and slow down on their own when a mirror pushes back, so load spreads instead of hammering a single host. A map that hits a limit waits its turn and goes back in the queue rather than getting dropped.
 - **Collections updater**: Re-check a collection later and download only the maps that are missing or newly added.
 - **Ez import with `collection.db`**: Maps arrive as a proper osu! collection, not a loose folder of `.osz` files.
 - **Integrity verification**: MD5 plus archive validation on every download; files already on disk are verified and skipped.
@@ -102,7 +102,8 @@ Paste a collection link, pick a directory, press <kbd>↵</kbd>.
 | <kbd>←</kbd> <kbd>→</kbd> <kbd>tab</kbd> <kbd>shift</kbd>+<kbd>tab</kbd> | Switch tabs (<kbd>tab</kbd> path-completes the directory while editing it) |
 | <kbd>↵</kbd> | Activate, toggle, start a download, or edit a field |
 | <kbd>space</kbd> | Toggle the focused checkbox or switch |
-| <kbd>s</kbd> | Jump to the download button; on a download tab, skip maps stuck on a rate-limit cooldown |
+| <kbd>s</kbd> | Jump to the download button; on a download tab, defer maps stuck on a rate-limit cooldown so they retry later |
+| <kbd>S</kbd> | On a download tab, drop maps stuck on a rate-limit cooldown for the rest of the run |
 | <kbd>+</kbd> <kbd>-</kbd> | Adjust thread count |
 | <kbd>r</kbd> | Retry all failed maps on a download tab |
 | <kbd>x</kbd> | Dismiss an error message |
@@ -197,7 +198,7 @@ No. Logging in is optional and only adds the official osu! servers as an extra s
 Yes. The updates tab diffs your downloaded collections against osu!collector and fetches only what's missing.
 
 **A download failed or got rate limited. What now?**
-Failures save per collection. Press <kbd>r</kbd> on the download tab to retry them all, or accept the retry prompt next time you download that collection. Rate-limited mirrors cool down on their own while the others keep going. A map that stays throttled past the auto-skip delay (60s by default, configurable) is skipped on its own so the run never stalls; press <kbd>s</kbd> any time to skip the currently-stuck maps yourself without waiting.
+Failures save per collection. Press <kbd>r</kbd> on the download tab to retry them all, or accept the retry prompt next time you download that collection. Rate-limited mirrors cool down on their own while the others keep going. A map that stays throttled past the auto-defer delay (60s by default, configurable) goes back in the queue on its own and retries later, so the run never stalls; press <kbd>s</kbd> to defer the currently-stuck maps yourself, or <kbd>S</kbd> to drop them for the rest of the run.
 
 ## Building from source
 
