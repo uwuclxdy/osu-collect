@@ -26,6 +26,7 @@ const SECTION_DISPLAY: &str = "display";
 const SECTION_DOWNLOAD: &str = "download";
 const SECTION_MIRRORS: &str = "mirrors";
 const SECTION_LOGGING: &str = "logging";
+const SECTION_UPDATE: &str = "software update";
 
 const LABEL_THEME: &str = "theme";
 const LABEL_VIM_KEYS: &str = "vim keys";
@@ -39,6 +40,8 @@ const LABEL_SKIP_IMPORTED: &str = "skip already imported";
 const LABEL_LOGGING_ENABLED: &str = "enable logging";
 const LABEL_LOGGING_LEVEL: &str = "log level";
 const LABEL_LOGGING_FORMAT: &str = "log format";
+const LABEL_AUTO_UPDATE: &str = "auto-update";
+const HELP_AUTO_UPDATE: &str = "off: notify only — press u to view changelog & update";
 
 const CHIP_LOGGED_OUT: &str = " signed out";
 const CHIP_LOGGED_IN: &str = " signed in";
@@ -350,6 +353,27 @@ fn build_config_items(
         ),
     );
 
+    if show_chrome {
+        items.push(widgets::spacer());
+        items.push(widgets::section_header(
+            SECTION_UPDATE,
+            active_section == Some(SECTION_UPDATE),
+        ));
+    }
+    items.push_focusable(
+        ConfigField::AutoUpdate,
+        widgets::row_item(
+            LABEL_AUTO_UPDATE,
+            None,
+            form.auto_update,
+            focus == ConfigField::AutoUpdate,
+            0,
+        ),
+    );
+    if show_chrome && focus == ConfigField::AutoUpdate {
+        items.push(widgets::help_item(HELP_AUTO_UPDATE));
+    }
+
     items
 }
 
@@ -371,6 +395,7 @@ fn focus_section(field: ConfigField) -> Option<&'static str> {
         | DownloadRateLimitSkipSecs
         | DownloadSkipAlreadyImported => SECTION_DOWNLOAD,
         LoggingEnabled | LoggingLevel | LoggingFormat | LoggingDirectory => SECTION_LOGGING,
+        AutoUpdate => SECTION_UPDATE,
     })
 }
 

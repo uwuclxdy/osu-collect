@@ -11,6 +11,7 @@ use super::{
     toast::{Toast, Toasts},
     updates::{UpdatesAction, UpdatesField, UpdatesTab, extract_collection_id},
 };
+use crate::auto_update::AvailableUpdate;
 use crate::{
     config::{
         Config, RetryFailedOnDownload,
@@ -93,6 +94,11 @@ pub struct App {
     /// `failed-beatmapsets.json` intersect with the collection the user just
     /// submitted. Surfaces only when the config is `Ask`.
     pub confirm_retry_on_start: Option<RetryOnStartModal>,
+    /// A newer release detected in notify-only mode (auto-update off). Drives
+    /// the header version indicator, the footer `u` hint, and the update modal.
+    pub available_update: Option<AvailableUpdate>,
+    /// The update-changelog modal, opened with `u` when an update is available.
+    pub update_modal: Option<UpdateModal>,
     /// Override for the on-disk failed-maps file, set by tests. Production
     /// callers always pass `None` and the path is resolved at use-site.
     pub(crate) failed_maps_path_override: Option<PathBuf>,
@@ -165,6 +171,8 @@ pub enum AppCommand {
     /// Switch to the home tab and focus the output directory field.
     /// Triggered by the disk-low / disk-full banner action.
     FocusOutputDir,
+    /// Confirm the update modal: download and apply the available update.
+    StartUpdate,
     Quit,
 }
 
@@ -207,6 +215,21 @@ pub const CONFIRM_RETRY_BUTTONS: [&str; 2] = ["cancel", "retry"];
 /// Default-focused button: `retry`.
 pub const CONFIRM_RETRY_DEFAULT_FOCUS: usize = 1;
 
+/// State for the update-changelog modal (`u`). The changelog text lives on
+/// [`App::available_update`]; this carries only the button focus and the scroll
+/// offset (interior-mutable so the renderer can clamp it under `&App`).
+pub struct UpdateModal {
+    /// Selected button index into [`UPDATE_MODAL_BUTTONS`].
+    pub focus: usize,
+    /// Top-row scroll offset for the changelog body.
+    pub scroll: Cell<usize>,
+}
+
+/// Button labels for [`UpdateModal`], left→right.
+pub const UPDATE_MODAL_BUTTONS: [&str; 2] = ["later", "update"];
+/// Default-focused button: `update`.
+pub const UPDATE_MODAL_DEFAULT_FOCUS: usize = 1;
+
 impl App {
     pub fn new(config: Config) -> Self {
         let state_path = collection_state::state_path();
@@ -232,6 +255,8 @@ impl App {
             vim_pending_g: false,
             confirm_retry: None,
             confirm_retry_on_start: None,
+            available_update: None,
+            update_modal: None,
             failed_maps_path_override: None,
             next_download_id: 1,
             disk_cache: Cell::new(None),
@@ -408,6 +433,10 @@ impl App {
             self.confirm_retry = None;
             return true;
         }
+        if self.update_modal.is_some() {
+            self.update_modal = None;
+            return true;
+        }
         if self.help_open {
             self.close_help();
             return true;
@@ -423,7 +452,10 @@ impl App {
 
     /// Whether any modal is currently blocking input.
     pub fn any_modal_open(&self) -> bool {
-        self.help_open || self.confirm_retry.is_some() || self.confirm_retry_on_start.is_some()
+        self.help_open
+            || self.confirm_retry.is_some()
+            || self.confirm_retry_on_start.is_some()
+            || self.update_modal.is_some()
     }
 
     /// Cancel a pending pre-download retry prompt. Drops the queued page that
@@ -1300,6 +1332,68 @@ impl App {
             }
         }
 
+        // Update-changelog modal: ←/→ move [later, update]; ↵ activates; esc/q
+        // close; ↑/↓/PageUp/Down/Home/End scroll the changelog. All other keys
+        // are inert while open.
+        if self.update_modal.is_some() {
+            const UPDATE_PAGE: usize = 8;
+            match key.code {
+                KeyCode::Left => {
+                    if let Some(m) = self.update_modal.as_mut() {
+                        m.focus = m.focus.saturating_sub(1);
+                    }
+                }
+                KeyCode::Right => {
+                    if let Some(m) = self.update_modal.as_mut() {
+                        m.focus = (m.focus + 1).min(UPDATE_MODAL_BUTTONS.len() - 1);
+                    }
+                }
+                KeyCode::Up => {
+                    if let Some(m) = self.update_modal.as_ref() {
+                        m.scroll.set(m.scroll.get().saturating_sub(1));
+                    }
+                }
+                KeyCode::Down => {
+                    if let Some(m) = self.update_modal.as_ref() {
+                        m.scroll.set(m.scroll.get().saturating_add(1));
+                    }
+                }
+                KeyCode::PageUp => {
+                    if let Some(m) = self.update_modal.as_ref() {
+                        m.scroll.set(m.scroll.get().saturating_sub(UPDATE_PAGE));
+                    }
+                }
+                KeyCode::PageDown => {
+                    if let Some(m) = self.update_modal.as_ref() {
+                        m.scroll.set(m.scroll.get().saturating_add(UPDATE_PAGE));
+                    }
+                }
+                KeyCode::Home => {
+                    if let Some(m) = self.update_modal.as_ref() {
+                        m.scroll.set(0);
+                    }
+                }
+                KeyCode::End => {
+                    if let Some(m) = self.update_modal.as_ref() {
+                        m.scroll.set(usize::MAX);
+                    }
+                }
+                KeyCode::Enter => {
+                    let modal = self.update_modal.take()?;
+                    // 0 later, 1 update.
+                    if modal.focus == UPDATE_MODAL_DEFAULT_FOCUS {
+                        self.available_update = None;
+                        return Some(AppCommand::StartUpdate);
+                    }
+                }
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.update_modal = None;
+                }
+                _ => {}
+            }
+            return None;
+        }
+
         // Help overlay owns all input while open: ↑/↓ (and PageUp/Down, Home/End)
         // scroll it; `?`/esc/`q` close it; everything else is inert. Render clamps
         // the offset to the viewport, so over-scrolling is harmless.
@@ -1348,6 +1442,10 @@ impl App {
                 // Help is closed here (the open case is handled by the guard above).
                 self.help_open = true;
                 self.help_scroll.set(0);
+                return None;
+            }
+            KeyCode::Char('u') if !typing && self.available_update.is_some() => {
+                self.open_update_modal();
                 return None;
             }
             KeyCode::Esc | KeyCode::Char('q') if matches!(key.code, KeyCode::Esc) || !typing => {
@@ -1773,6 +1871,22 @@ impl App {
                 None
             }
             _ => None,
+        }
+    }
+
+    /// Record a newer release found in notify-only mode. Surfaces via the header
+    /// version indicator and the footer `u` hint.
+    pub fn set_available_update(&mut self, info: AvailableUpdate) {
+        self.available_update = Some(info);
+    }
+
+    /// Open the update-changelog modal. No-op when no update is available.
+    fn open_update_modal(&mut self) {
+        if self.available_update.is_some() {
+            self.update_modal = Some(UpdateModal {
+                focus: UPDATE_MODAL_DEFAULT_FOCUS,
+                scroll: Cell::new(0),
+            });
         }
     }
 

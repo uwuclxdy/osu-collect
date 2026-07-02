@@ -33,7 +33,7 @@ use auth::{
 use mirror_probe::{handle_mirror_probe_event, schedule_probe};
 use resolve::schedule_resolve;
 use scan::{handle_updates_event, spawn_failed_map_recheck_task, spawn_scan_task};
-use update::{UpdateEvent, handle_update_event, spawn_update_check};
+use update::{UpdateEvent, handle_update_event, spawn_apply_update, spawn_update_check};
 
 /// Render one frame. A focused text field positions the terminal caret via
 /// [`ratatui::Frame::set_cursor_position`] inside the draw closure; ratatui 0.30
@@ -50,6 +50,7 @@ pub async fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting application runtime loop");
     apply_theme(config.display.theme);
+    let auto_update = config.update.auto_update;
     let validation_issue = config.validate().err().map(|e| e.to_string());
     let mut terminal = setup_terminal()?;
     // Guarantees the extra terminal escapes are reversed (+ ratatui restore) on
@@ -107,8 +108,10 @@ pub async fn run(
         }
     }
 
-    // Background self-update check; surfaces as toasts (downloading → restart).
-    spawn_update_check(update_tx);
+    // Background self-update check. Auto mode downloads+applies; notify mode only
+    // surfaces availability (header indicator + `u` modal). `update_tx` is kept
+    // for the user-confirmed apply path.
+    spawn_update_check(update_tx.clone(), auto_update);
 
     while !should_quit {
         render_frame(&mut terminal, &app)?;
@@ -151,6 +154,7 @@ pub async fn run(
                     &download_tx,
                     &updates_tx,
                     &auth_tx,
+                    &update_tx,
                     &mut active_downloads,
                     &mut tasks,
                 );
@@ -207,16 +211,33 @@ fn handle_input(
     download_tx: &mpsc::UnboundedSender<DownloadEvent>,
     updates_tx: &mpsc::UnboundedSender<UpdatesEvent>,
     auth_tx: &mpsc::UnboundedSender<AuthEvent>,
+    update_tx: &mpsc::UnboundedSender<UpdateEvent>,
     downloads: &mut HashMap<DownloadId, DownloadHandle>,
     tasks: &mut BackgroundTasks,
 ) -> bool {
     match input {
-        InputEvent::Key(key) => {
-            handle_key_event(key, app, download_tx, updates_tx, auth_tx, downloads, tasks)
-        }
+        InputEvent::Key(key) => handle_key_event(
+            key,
+            app,
+            download_tx,
+            updates_tx,
+            auth_tx,
+            update_tx,
+            downloads,
+            tasks,
+        ),
         InputEvent::Paste(text) => {
             let cmd = app.handle_paste(text);
-            dispatch_command(cmd, app, download_tx, updates_tx, auth_tx, downloads, tasks)
+            dispatch_command(
+                cmd,
+                app,
+                download_tx,
+                updates_tx,
+                auth_tx,
+                update_tx,
+                downloads,
+                tasks,
+            )
         }
         InputEvent::Resize => false,
         InputEvent::Tick => {
@@ -232,6 +253,7 @@ fn handle_key_event(
     download_tx: &mpsc::UnboundedSender<DownloadEvent>,
     updates_tx: &mpsc::UnboundedSender<UpdatesEvent>,
     auth_tx: &mpsc::UnboundedSender<AuthEvent>,
+    update_tx: &mpsc::UnboundedSender<UpdateEvent>,
     downloads: &mut HashMap<DownloadId, DownloadHandle>,
     tasks: &mut BackgroundTasks,
 ) -> bool {
@@ -243,7 +265,16 @@ fn handle_key_event(
     }
 
     let cmd = app.handle_key(key);
-    dispatch_command(cmd, app, download_tx, updates_tx, auth_tx, downloads, tasks)
+    dispatch_command(
+        cmd,
+        app,
+        download_tx,
+        updates_tx,
+        auth_tx,
+        update_tx,
+        downloads,
+        tasks,
+    )
 }
 
 /// Run the side effects for an [`AppCommand`] produced by a key or paste event,
@@ -255,6 +286,7 @@ fn dispatch_command(
     download_tx: &mpsc::UnboundedSender<DownloadEvent>,
     updates_tx: &mpsc::UnboundedSender<UpdatesEvent>,
     auth_tx: &mpsc::UnboundedSender<AuthEvent>,
+    update_tx: &mpsc::UnboundedSender<UpdateEvent>,
     downloads: &mut HashMap<DownloadId, DownloadHandle>,
     tasks: &mut BackgroundTasks,
 ) -> bool {
@@ -367,6 +399,10 @@ fn dispatch_command(
         }
         Some(AppCommand::FocusOutputDir) => {
             app.focus_output_dir();
+        }
+        Some(AppCommand::StartUpdate) => {
+            info!("User confirmed update; downloading and applying");
+            spawn_apply_update(update_tx.clone());
         }
         Some(AppCommand::Quit) => {
             if downloads.is_empty() {

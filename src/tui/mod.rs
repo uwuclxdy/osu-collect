@@ -232,6 +232,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             tick: app.tick_count,
             downloading: app.is_downloading(),
             brand_ramp: app.brand_ramp(),
+            update_version: app.available_update.as_ref().map(|u| u.version.as_str()),
         },
     );
 
@@ -250,8 +251,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
     // inside the view render fn — but never under an overlay, so suppress the
     // caret by clearing `editing` when a modal/help overlay is open (overlays
     // carry no text caret).
-    let overlay_open =
-        app.confirm_retry_on_start.is_some() || app.confirm_retry.is_some() || app.help_open;
+    let overlay_open = app.confirm_retry_on_start.is_some()
+        || app.confirm_retry.is_some()
+        || app.help_open
+        || app.update_modal.is_some();
     let editing = app.editing && !overlay_open;
     match app.active_tab() {
         HOME_TAB_INDEX => home::render(
@@ -301,6 +304,18 @@ pub fn draw(frame: &mut Frame, app: &App) {
         modal::render_retry_on_start_modal(frame, area, modal.failed_count, modal.focus);
     } else if let Some(modal) = &app.confirm_retry {
         modal::render_confirm_retry_modal(frame, area, modal.retryable_count, modal.focus);
+    } else if let Some(modal) = &app.update_modal {
+        if let Some(info) = app.available_update.as_ref() {
+            let clamped = modal::render_update_modal(
+                frame,
+                area,
+                &info.version,
+                &info.changelog,
+                modal.scroll.get(),
+                modal.focus,
+            );
+            modal.scroll.set(clamped);
+        }
     } else if app.help_open {
         // Clamp the requested scroll to the real viewport and store it back so
         // the next ↑/↓ starts from the on-screen position (no dead presses).

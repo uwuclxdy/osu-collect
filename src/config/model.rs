@@ -19,6 +19,8 @@ pub struct Config {
     pub display: DisplayConfig,
     #[serde(default)]
     pub recent: RecentConfig,
+    #[serde(default)]
+    pub update: UpdateConfig,
 }
 
 /// Last-used home-tab inputs, persisted across runs so the collection field and
@@ -38,6 +40,22 @@ pub struct RecentConfig {
     /// scan rather than silently reverting to auto-detection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub osu_path: Option<String>,
+}
+
+/// Self-update behavior.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct UpdateConfig {
+    /// When true (default), a newer release is downloaded and applied
+    /// automatically at startup. When false, the app only surfaces that an
+    /// update exists (header indicator + `u` modal) and applies it on demand.
+    pub auto_update: bool,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self { auto_update: true }
+    }
 }
 
 /// Theme selection for the TUI.

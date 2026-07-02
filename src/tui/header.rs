@@ -29,6 +29,10 @@ pub struct RenderParams<'a, 't> {
     /// Ease-in ramp (0..1) for the shimmer. Rises from 0 when downloading
     /// begins so the animation fades in instead of cutting in.
     pub brand_ramp: f32,
+    /// Newer release version (semver, no leading `v`) when one is available in
+    /// notify-only mode; renders as an accent `↑ v<version>` on the right,
+    /// replacing the dim current-version label.
+    pub update_version: Option<&'a str>,
 }
 
 pub fn render(frame: &mut Frame, params: RenderParams<'_, '_>) {
@@ -39,13 +43,20 @@ pub fn render(frame: &mut Frame, params: RenderParams<'_, '_>) {
         tick,
         downloading,
         brand_ramp,
+        update_version,
     } = params;
 
     if area.width == 0 || area.height == 0 {
         return;
     }
 
-    let version_width = VERSION.len() as u16;
+    // Borrow the static label when idle (zero alloc, per the version bench); an
+    // available update needs a formatted `↑ v<new>` string.
+    let version_text: Cow<'_, str> = match update_version {
+        Some(v) => format!(" ↑ v{v} ").into(),
+        None => VERSION.into(),
+    };
+    let version_width = version_text.chars().count() as u16;
     let brand_width = BRAND.chars().count() as u16;
 
     let layout = Layout::horizontal([
@@ -79,9 +90,14 @@ pub fn render(frame: &mut Frame, params: RenderParams<'_, '_>) {
         layout[1],
     );
 
+    let version_style = if update_version.is_some() {
+        Style::default().fg(accent()).bold()
+    } else {
+        Style::default().fg(text_dim())
+    };
     frame.render_widget(
-        Paragraph::new(VERSION)
-            .style(Style::default().fg(text_dim()))
+        Paragraph::new(version_text.as_ref())
+            .style(version_style)
             .alignment(Alignment::Right),
         layout[2],
     );

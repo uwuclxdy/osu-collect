@@ -1,6 +1,6 @@
 use super::{
-    AutoUpdateError, DownloadedAsset, apply_update_to, check_release, target_asset_name,
-    verify_checksum,
+    AutoUpdateError, AvailableUpdate, DownloadedAsset, apply_update_to, check_for_update_with,
+    check_release, target_asset_name, verify_checksum,
 };
 use reqwest::Client;
 use sha2::{Digest, Sha256};
@@ -245,6 +245,69 @@ async fn check_and_apply_with_client_skips_when_current() {
     assert!(result.is_none());
     assert!(!callback_ran.load(Ordering::SeqCst));
     assert!(!applier_ran.load(Ordering::SeqCst));
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn check_for_update_returns_metadata_when_newer() {
+    let Some(asset_name) = target_asset_or_skip() else {
+        return;
+    };
+
+    let release_body = serde_json::json!({
+        "name": "v9.9.9",
+        "tag_name": "v9.9.9",
+        "body": "## changes\n- did a thing\n- fixed a bug",
+        "assets": [
+            {"name": asset_name, "browser_download_url": "http://placeholder/asset"}
+        ]
+    })
+    .to_string();
+
+    let (base, handle) =
+        start_mock_release_server(release_body, b"noop".to_vec(), "deadbeef".to_string()).await;
+    let release_url = format!("{}/release", base);
+    let client = Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let info: Option<AvailableUpdate> = check_for_update_with(&client, &release_url).await.unwrap();
+    let info = info.expect("newer release should be reported");
+    assert_eq!(info.version, "9.9.9");
+    assert_eq!(info.name, "v9.9.9");
+    assert!(info.changelog.contains("did a thing"));
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn check_for_update_none_when_current() {
+    let Some(asset_name) = target_asset_or_skip() else {
+        return;
+    };
+
+    let release_body = serde_json::json!({
+        "name": env!("CARGO_PKG_VERSION"),
+        "tag_name": env!("CARGO_PKG_VERSION"),
+        "body": "nothing new",
+        "assets": [
+            {"name": asset_name, "browser_download_url": "http://placeholder/asset"}
+        ]
+    })
+    .to_string();
+
+    let (base, handle) =
+        start_mock_release_server(release_body, b"noop".to_vec(), "deadbeef".to_string()).await;
+    let release_url = format!("{}/release", base);
+    let client = Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let info = check_for_update_with(&client, &release_url).await.unwrap();
+    assert!(info.is_none());
 
     handle.abort();
 }

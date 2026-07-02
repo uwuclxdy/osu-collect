@@ -23,7 +23,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::widgets;
 use super::{accent, accent_alt, bg, text, text_dim};
-use crate::app::state::{CONFIRM_RETRY_BUTTONS, RETRY_ON_START_BUTTONS};
+use crate::app::state::{CONFIRM_RETRY_BUTTONS, RETRY_ON_START_BUTTONS, UPDATE_MODAL_BUTTONS};
 use crate::config::constants::{CONFIG_TAB_INDEX, HOME_TAB_INDEX, UPDATES_TAB_INDEX};
 
 /// Modal sizing cap: a modal never exceeds 60% of the terminal width.
@@ -101,6 +101,7 @@ const GLOBAL: &[HelpRow] = &[
     HelpRow::new("s", "jump to download button"),
     HelpRow::new("esc", "exit edit / back"),
     HelpRow::new("?", "toggle help"),
+    HelpRow::new("u", "update (when available)"),
     HelpRow::new("q", "back / quit"),
 ];
 
@@ -417,4 +418,129 @@ fn help_row(key: &'static str, action: &'static str) -> Line<'static> {
         // primary text, not the dim secondary tier).
         Span::styled(action, Style::default().fg(text())),
     ])
+}
+
+/// Renders the update-changelog modal: a scrollable changelog body with a
+/// right-aligned `[later] [update]` button row pinned to the last inner row.
+///
+/// `scroll` is clamped to the viewport and the clamped value returned (mirrors
+/// [`render_help_overlay`]).
+pub(crate) fn render_update_modal(
+    frame: &mut Frame,
+    area: Rect,
+    version: &str,
+    changelog: &str,
+    scroll: usize,
+    focus: usize,
+) -> usize {
+    let title = " UPDATE AVAILABLE ";
+
+    let mut body: Vec<Line<'static>> = Vec::new();
+    body.push(Line::from(Span::styled(
+        format!("v{version}"),
+        Style::default().fg(accent()).bold(),
+    )));
+    body.push(Line::from(""));
+    if changelog.trim().is_empty() {
+        body.push(Line::from(Span::styled(
+            "no changelog provided",
+            Style::default().fg(text_dim()).italic(),
+        )));
+    } else {
+        for raw in changelog.lines() {
+            body.push(changelog_line(raw));
+        }
+    }
+
+    let content_w = body
+        .iter()
+        .map(line_width)
+        .max()
+        .unwrap_or(0)
+        .max(button_row_width(&UPDATE_MODAL_BUTTONS));
+    let popup_w = modal_width(area.width, content_w, title);
+
+    // Cap height at 80% of the terminal so a long changelog scrolls instead of
+    // filling the screen; floor keeps room for a couple of rows + the buttons.
+    let max_h = ((area.height as usize * 80) / 100).max(MODAL_CHROME_H + 3) as u16;
+    let needed = (body.len() as u16)
+        .saturating_add(MODAL_CHROME_H as u16)
+        .saturating_add(2) // blank separator + button row
+        .min(max_h)
+        .min(area.height);
+
+    let [popup_area] = Layout::vertical([Constraint::Length(needed)])
+        .flex(Flex::Center)
+        .areas(area);
+    let [popup_area] = Layout::horizontal([Constraint::Length(popup_w)])
+        .flex(Flex::Center)
+        .areas(popup_area);
+    frame.render_widget(Clear, popup_area);
+
+    let outer = modal_block(title);
+    let inner = outer.inner(popup_area);
+    frame.render_widget(outer, popup_area);
+    if inner.height == 0 || inner.width == 0 {
+        return 0;
+    }
+
+    // Split inner rows: changelog list (scrolls) · blank separator · button row.
+    let list_h = inner.height.saturating_sub(2);
+    let list_area = Rect {
+        height: list_h,
+        ..inner
+    };
+
+    let total = body.len();
+    let visible = list_h as usize;
+    let max_start = total.saturating_sub(visible);
+    let start = scroll.min(max_start);
+
+    let items: Vec<ListItem<'static>> = body.into_iter().map(ListItem::new).collect();
+    let mut state = ListState::default().with_offset(start);
+    frame.render_stateful_widget(List::new(items), list_area, &mut state);
+    widgets::render_scrollbar(frame, list_area, start, total);
+
+    let button_area = Rect {
+        y: inner.y + inner.height - 1,
+        height: 1,
+        ..inner
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(button_spans(&UPDATE_MODAL_BUTTONS, focus)))
+            .alignment(Alignment::Right),
+        button_area,
+    );
+
+    start
+}
+
+/// Light markdown styling for one changelog line: `#`/`##` headings bold in
+/// TEXT, `-`/`*` bullets get an accent `•`, everything else dim. Long lines are
+/// truncated by the list (no wrap) — acceptable for a changelog viewer.
+fn changelog_line(raw: &str) -> Line<'static> {
+    let trimmed = raw.trim_end();
+    if let Some(rest) = trimmed
+        .strip_prefix("## ")
+        .or_else(|| trimmed.strip_prefix("# "))
+        .or_else(|| trimmed.strip_prefix("### "))
+    {
+        Line::from(Span::styled(
+            rest.to_string(),
+            Style::default().fg(text()).bold(),
+        ))
+    } else if let Some(rest) = trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))
+    {
+        Line::from(vec![
+            Span::styled("• ", Style::default().fg(accent())),
+            Span::styled(rest.to_string(), Style::default().fg(text_dim())),
+        ])
+    } else {
+        Line::from(Span::styled(
+            trimmed.to_string(),
+            Style::default().fg(text_dim()),
+        ))
+    }
 }

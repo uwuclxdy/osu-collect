@@ -1,18 +1,20 @@
-//! Self-update lifecycle surfaced to the UI as toasts.
+//! Self-update lifecycle surfaced to the UI.
 //!
-//! The check runs once at startup as a detached task. When a newer release is
-//! found it raises a sticky "downloading update" toast; on a successful install
-//! that toast is swapped for a "restart to finish" notice that stays until the
-//! user dismisses it. Failures are best-effort — they replace the in-flight
-//! toast (or push a fresh one) and need no action.
+//! At startup a detached task runs once. With auto-update on it downloads and
+//! installs a newer release, reporting progress as toasts (downloading →
+//! restart). With auto-update off it only reports that an update is available
+//! (`Available`); the user then opens the `u` modal and confirms, which spawns
+//! the same download+apply flow.
 
 use super::super::{App, Toast, ToastTag};
-use crate::auto_update::check_and_apply;
+use crate::auto_update::{AvailableUpdate, check_and_apply, check_for_update};
 use tokio::sync::mpsc;
 use tracing::warn;
 
 #[derive(Debug)]
 pub(super) enum UpdateEvent {
+    /// Notify-only mode found a newer release (auto-update disabled).
+    Available(AvailableUpdate),
     /// A newer release was found; the download has started.
     Downloading,
     /// The new binary was installed; the app must be restarted to apply it.
@@ -21,26 +23,50 @@ pub(super) enum UpdateEvent {
     Failed(String),
 }
 
-/// Spawn the one-shot background update check. Detached: it outlives nothing the
-/// runtime awaits, so a mid-run quit simply drops the receiver.
-pub(super) fn spawn_update_check(tx: mpsc::UnboundedSender<UpdateEvent>) {
+/// Spawn the one-shot background update check. `auto` selects the mode: set =
+/// download + apply automatically; clear = only surface availability.
+pub(super) fn spawn_update_check(tx: mpsc::UnboundedSender<UpdateEvent>, auto: bool) {
     tokio::spawn(async move {
-        let found_tx = tx.clone();
-        let result = check_and_apply(move || {
-            let _ = found_tx.send(UpdateEvent::Downloading);
-        })
-        .await;
-        let outcome = match result {
-            Ok(Some(_message)) => UpdateEvent::Installed,
-            Ok(None) => return, // up to date — stay silent
-            Err(err) => UpdateEvent::Failed(err.to_string()),
-        };
-        let _ = tx.send(outcome);
+        if auto {
+            report_apply(&tx).await;
+        } else {
+            match check_for_update().await {
+                Ok(Some(info)) => {
+                    let _ = tx.send(UpdateEvent::Available(info));
+                }
+                Ok(None) => {} // up to date — stay silent
+                Err(err) => warn!(error = %err, "Update check failed"),
+            }
+        }
     });
+}
+
+/// Spawn the download+apply flow the user confirmed from the update modal.
+pub(super) fn spawn_apply_update(tx: mpsc::UnboundedSender<UpdateEvent>) {
+    tokio::spawn(async move {
+        report_apply(&tx).await;
+    });
+}
+
+/// Run `check_and_apply`, reporting the download → install/fail outcome as
+/// `UpdateEvent`s. Silent when nothing newer exists.
+async fn report_apply(tx: &mpsc::UnboundedSender<UpdateEvent>) {
+    let found_tx = tx.clone();
+    let result = check_and_apply(move || {
+        let _ = found_tx.send(UpdateEvent::Downloading);
+    })
+    .await;
+    let outcome = match result {
+        Ok(Some(_message)) => UpdateEvent::Installed,
+        Ok(None) => return,
+        Err(err) => UpdateEvent::Failed(err.to_string()),
+    };
+    let _ = tx.send(outcome);
 }
 
 pub(super) fn handle_update_event(event: UpdateEvent, app: &mut App) {
     match event {
+        UpdateEvent::Available(info) => app.set_available_update(info),
         UpdateEvent::Downloading => {
             app.push_toast(
                 Toast::info("downloading update")

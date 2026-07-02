@@ -23,6 +23,7 @@ fn header_buffer(active: usize, downloading: bool) -> ratatui::buffer::Buffer {
                     tick: 0,
                     downloading,
                     brand_ramp: if downloading { 1.0 } else { 0.0 },
+                    update_version: None,
                 },
             );
         })

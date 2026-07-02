@@ -53,6 +53,7 @@ const HINT_RECHECK: &str = "r recheck";
 const HINT_MARK_INSTALLED: &str = "i installed / I all";
 const HINT_QUIT: &str = "q quit";
 const HINT_HELP: &str = "? help";
+const HINT_UPDATE: &str = "u update";
 /// Close hint for the dynamic, closeable login tab.
 const HINT_LOGIN_CLOSE: &str = "esc/q close";
 
@@ -149,13 +150,22 @@ fn current_message(app: &App) -> Option<&AppMessage> {
 }
 
 fn hint_for(app: &App) -> String {
-    match app.active_tab() {
+    let mut hint = match app.active_tab() {
         HOME_TAB_INDEX => home_hint(&app.home, app.editing),
         UPDATES_TAB_INDEX => updates_hint(&app.updates, app.editing),
         CONFIG_TAB_INDEX => config_hint(app.config.focus, app.editing),
         tab if app.is_login_tab(tab) => login_hint(app, app.editing),
         _ => download_tab_hint(app),
+    };
+    // A pending notify-only update is actionable from any tab via `u`.
+    if app.available_update.is_some() {
+        if hint.is_empty() {
+            hint = HINT_UPDATE.to_string();
+        } else {
+            hint = format!("{hint}{HINT_SEPARATOR}{HINT_UPDATE}");
+        }
     }
+    hint
 }
 
 fn login_hint(app: &App, editing: bool) -> String {

@@ -9,7 +9,7 @@ use super::{
 use crate::{
     config::{
         Config, DisplayConfig, DownloadConfig, LogFormat, LogLevel, LoggingConfig, MirrorConfig,
-        RetryFailedOnDownload, ThemeMode,
+        RetryFailedOnDownload, ThemeMode, UpdateConfig,
         constants::{
             ARCHIVE_VALIDATIONS, LOG_FORMATS, LOG_LEVELS, RETRY_FAILED_ON_DOWNLOAD_MODES,
             THEME_MODES, default_threads,
@@ -54,6 +54,7 @@ pub enum ConfigField {
     LoggingLevel,
     LoggingFormat,
     LoggingDirectory,
+    AutoUpdate,
 }
 
 // Navigation order — must mirror the render order in `tui::config`
@@ -87,6 +88,7 @@ const CONFIG_FIELDS_AFTER_CUSTOM: &[ConfigField] = &[
     ConfigField::LoggingLevel,
     ConfigField::LoggingFormat,
     ConfigField::LoggingDirectory,
+    ConfigField::AutoUpdate,
 ];
 
 impl ConfigField {
@@ -129,6 +131,7 @@ pub struct ConfigTab {
     pub logging_dir: InputField,
     pub theme: ThemeMode,
     pub vim_keys: bool,
+    pub auto_update: bool,
     pub focus: ConfigField,
     pub message: Option<AppMessage>,
     pub default_threads: u8,
@@ -167,6 +170,7 @@ impl ConfigTab {
             // Absent config key → show the default (full) palette in the cycle.
             theme: config.display.theme.unwrap_or_default(),
             vim_keys: config.display.vim_keys,
+            auto_update: config.update.auto_update,
             // Start focus one row below the auth chip so an accidental enter
             // never opens the login tab on entry.
             focus: ConfigField::Theme,
@@ -363,6 +367,7 @@ impl ConfigTab {
             ConfigField::LoggingEnabled => self.logging_enabled = !self.logging_enabled,
             ConfigField::LoggingLevel => self.cycle_logging_level(),
             ConfigField::LoggingFormat => self.cycle_logging_format(),
+            ConfigField::AutoUpdate => self.auto_update = !self.auto_update,
             ConfigField::AuthChip
             | ConfigField::MirrorCustomUrl(_)
             | ConfigField::DownloadThreads
@@ -437,6 +442,9 @@ impl ConfigTab {
             display: DisplayConfig {
                 theme: Some(self.theme),
                 vim_keys: self.vim_keys,
+            },
+            update: UpdateConfig {
+                auto_update: self.auto_update,
             },
             // The config tab does not edit last-used inputs; preserve whatever
             // was loaded so saving the form never wipes the prefill state.

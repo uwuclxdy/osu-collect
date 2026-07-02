@@ -77,6 +77,12 @@ fn legacy_no_video_migrates_and_unknown_keys_are_stripped_on_load() {
 }
 
 #[test]
+fn update_defaults_to_auto_on() {
+    let config: crate::config::Config = toml::from_str("").unwrap();
+    assert!(config.update.auto_update);
+}
+
+#[test]
 fn all_theme_variants_serialize_and_deserialize() {
     let cases = [
         (ThemeMode::Full, "full"),
