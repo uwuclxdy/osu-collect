@@ -26,7 +26,7 @@ const SECTION_DISPLAY: &str = "display";
 const SECTION_DOWNLOAD: &str = "download";
 const SECTION_MIRRORS: &str = "mirrors";
 const SECTION_LOGGING: &str = "logging";
-const SECTION_UPDATE: &str = "software update";
+const SECTION_UPDATE: &str = "updates";
 
 const LABEL_THEME: &str = "theme";
 const LABEL_VIM_KEYS: &str = "vim keys";
@@ -41,7 +41,6 @@ const LABEL_LOGGING_ENABLED: &str = "enable logging";
 const LABEL_LOGGING_LEVEL: &str = "log level";
 const LABEL_LOGGING_FORMAT: &str = "log format";
 const LABEL_AUTO_UPDATE: &str = "auto-update";
-const HELP_AUTO_UPDATE: &str = "off: notify only — press u to view changelog & update";
 
 const CHIP_LOGGED_OUT: &str = " signed out";
 const CHIP_LOGGED_IN: &str = " signed in";
@@ -67,6 +66,16 @@ fn archive_validation_help(mode: ArchiveValidation) -> &'static str {
         ArchiveValidation::Eocd => {
             "also verifies eocd footer; turn off if many maps fail validation"
         }
+    }
+}
+
+/// State-specific hint for the auto-update toggle: each describes what happens
+/// on the next launch in the current state.
+fn auto_update_help(auto: bool) -> &'static str {
+    if auto {
+        "on: download & install newer releases on launch"
+    } else {
+        "off: notify only — press u to view changelog & update"
     }
 }
 
@@ -371,7 +380,7 @@ fn build_config_items(
         ),
     );
     if show_chrome && focus == ConfigField::AutoUpdate {
-        items.push(widgets::help_item(HELP_AUTO_UPDATE));
+        items.push(widgets::help_item(auto_update_help(form.auto_update)));
     }
 
     items
