@@ -441,15 +441,14 @@ pub(crate) fn render_update_modal(
         Style::default().fg(accent()).bold(),
     )));
     body.push(Line::from(""));
-    if changelog.trim().is_empty() {
+    let entries = changelog_body(changelog);
+    if entries.is_empty() {
         body.push(Line::from(Span::styled(
             "no changelog provided",
             Style::default().fg(text_dim()).italic(),
         )));
     } else {
-        for raw in changelog.lines() {
-            body.push(changelog_line(raw));
-        }
+        body.extend(entries);
     }
 
     let content_w = body
@@ -515,32 +514,125 @@ pub(crate) fn render_update_modal(
     start
 }
 
-/// Light markdown styling for one changelog line: `#`/`##` headings bold in
-/// TEXT, `-`/`*` bullets get an accent `•`, everything else dim. Long lines are
-/// truncated by the list (no wrap) — acceptable for a changelog viewer.
+/// Turn a raw GitHub release body into styled changelog lines: strip HTML,
+/// drop the auto-generated `**Full Changelog**: …` footer, trim the blank tail
+/// that leaves behind, then style each remaining line.
+fn changelog_body(changelog: &str) -> Vec<Line<'static>> {
+    let cleaned = strip_html(changelog);
+    let mut lines: Vec<&str> = cleaned
+        .lines()
+        .filter(|line| !is_full_changelog_line(line))
+        .collect();
+    while lines.last().is_some_and(|line| line.trim().is_empty()) {
+        lines.pop();
+    }
+    lines.into_iter().map(changelog_line).collect()
+}
+
+/// The `**Full Changelog**: <url>` line GitHub appends to every auto-generated
+/// release body. Matched with markup removed so `**`, `*`, or none all catch.
+fn is_full_changelog_line(line: &str) -> bool {
+    line.replace('*', "")
+        .trim_start()
+        .to_ascii_lowercase()
+        .starts_with("full changelog")
+}
+
+/// Drop HTML tags (`<img …>`, `<details>`, `<!-- … -->`) from a release body so
+/// they don't render as literal angle-bracket noise. A `<` not starting a
+/// tag-like token (e.g. `a < b`) is kept verbatim.
+fn strip_html(input: &str) -> String {
+    let chars: Vec<char> = input.chars().collect();
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let tag_like = chars[i] == '<'
+            && chars
+                .get(i + 1)
+                .is_some_and(|n| n.is_ascii_alphabetic() || *n == '/' || *n == '!');
+        if tag_like && let Some(close) = (i + 1..chars.len()).find(|&j| chars[j] == '>') {
+            i = close + 1;
+            continue;
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
+/// Light markdown styling for one changelog line: `#`/`##`/`###` headings bold
+/// in TEXT, `-`/`*` bullets get an accent `•`, everything else dim; inline
+/// `` `code` `` and `**bold**` are parsed within each. Long lines are truncated
+/// by the list (no wrap) — acceptable for a changelog viewer.
 fn changelog_line(raw: &str) -> Line<'static> {
     let trimmed = raw.trim_end();
     if let Some(rest) = trimmed
-        .strip_prefix("## ")
+        .strip_prefix("### ")
+        .or_else(|| trimmed.strip_prefix("## "))
         .or_else(|| trimmed.strip_prefix("# "))
-        .or_else(|| trimmed.strip_prefix("### "))
     {
-        Line::from(Span::styled(
-            rest.to_string(),
-            Style::default().fg(text()).bold(),
-        ))
+        Line::from(inline_spans(rest, Style::default().fg(text()).bold()))
     } else if let Some(rest) = trimmed
         .strip_prefix("- ")
         .or_else(|| trimmed.strip_prefix("* "))
     {
-        Line::from(vec![
-            Span::styled("• ", Style::default().fg(accent())),
-            Span::styled(rest.to_string(), Style::default().fg(text_dim())),
-        ])
+        let mut spans = vec![Span::styled("• ", Style::default().fg(accent()))];
+        spans.extend(inline_spans(rest, Style::default().fg(text_dim())));
+        Line::from(spans)
     } else {
-        Line::from(Span::styled(
-            trimmed.to_string(),
-            Style::default().fg(text_dim()),
-        ))
+        Line::from(inline_spans(trimmed, Style::default().fg(text_dim())))
     }
 }
+
+/// Parse inline `` `code` `` (accent) and `**bold**` (base + bold) out of one
+/// line into styled spans; unmatched markers stay literal. Nesting isn't
+/// supported — code and bold are taken as flat, non-overlapping runs.
+fn inline_spans(text: &str, base: Style) -> Vec<Span<'static>> {
+    let code_style = Style::default().fg(accent());
+    let bold_style = base.bold();
+    let chars: Vec<char> = text.chars().collect();
+
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut plain = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '`'
+            && let Some(close) = (i + 1..chars.len()).find(|&j| chars[j] == '`')
+        {
+            if !plain.is_empty() {
+                spans.push(Span::styled(std::mem::take(&mut plain), base));
+            }
+            spans.push(Span::styled(
+                chars[i + 1..close].iter().collect::<String>(),
+                code_style,
+            ));
+            i = close + 1;
+            continue;
+        }
+        if chars[i] == '*'
+            && chars.get(i + 1) == Some(&'*')
+            && let Some(close) = (i + 2..chars.len().saturating_sub(1))
+                .find(|&j| chars[j] == '*' && chars[j + 1] == '*')
+        {
+            if !plain.is_empty() {
+                spans.push(Span::styled(std::mem::take(&mut plain), base));
+            }
+            spans.push(Span::styled(
+                chars[i + 2..close].iter().collect::<String>(),
+                bold_style,
+            ));
+            i = close + 2;
+            continue;
+        }
+        plain.push(chars[i]);
+        i += 1;
+    }
+    if !plain.is_empty() {
+        spans.push(Span::styled(plain, base));
+    }
+    spans
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/modal.rs"]
+mod tests;
