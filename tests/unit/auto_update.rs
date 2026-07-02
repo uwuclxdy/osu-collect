@@ -1,6 +1,6 @@
 use super::{
     AutoUpdateError, AvailableUpdate, DownloadedAsset, apply_update_to, check_for_update_with,
-    check_release, target_asset_name, verify_checksum,
+    check_release, is_cargo_target_path, target_asset_name, verify_checksum,
 };
 use reqwest::Client;
 use sha2::{Digest, Sha256};
@@ -310,4 +310,34 @@ async fn check_for_update_none_when_current() {
     assert!(info.is_none());
 
     handle.abort();
+}
+
+#[test]
+fn cargo_target_paths_are_dev_builds() {
+    assert!(is_cargo_target_path(std::path::Path::new(
+        "/home/dev/proj/target/debug/osu-collect"
+    )));
+    assert!(is_cargo_target_path(std::path::Path::new(
+        "/home/dev/proj/target/release/osu-collect"
+    )));
+    // Shared/custom target dir (workspace target one level up) still matches.
+    assert!(is_cargo_target_path(std::path::Path::new(
+        "/home/dev/repos/rs/target/debug/osu-collect"
+    )));
+}
+
+#[test]
+fn installed_paths_are_not_dev_builds() {
+    // cargo install lands in ~/.cargo/bin — no profile parent.
+    assert!(!is_cargo_target_path(std::path::Path::new(
+        "/home/dev/.cargo/bin/osu-collect"
+    )));
+    // A downloaded release on PATH.
+    assert!(!is_cargo_target_path(std::path::Path::new(
+        "/usr/local/bin/osu-collect"
+    )));
+    // A `debug`/`release` profile dir NOT under `target` doesn't count.
+    assert!(!is_cargo_target_path(std::path::Path::new(
+        "/opt/release/osu-collect"
+    )));
 }

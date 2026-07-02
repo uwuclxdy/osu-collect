@@ -4,10 +4,11 @@
 //! installs a newer release, reporting progress as toasts (downloading →
 //! restart). With auto-update off it only reports that an update is available
 //! (`Available`); the user then opens the `u` modal and confirms, which spawns
-//! the same download+apply flow.
+//! the same download+apply flow. A cargo/dev build is forced into notify-only
+//! regardless of the setting, since self-replacing a `target/` binary is moot.
 
 use super::super::{App, Toast, ToastTag};
-use crate::auto_update::{AvailableUpdate, check_and_apply, check_for_update};
+use crate::auto_update::{AvailableUpdate, check_and_apply, check_for_update, is_cargo_build};
 use tokio::sync::mpsc;
 use tracing::warn;
 
@@ -26,6 +27,10 @@ pub(super) enum UpdateEvent {
 /// Spawn the one-shot background update check. `auto` selects the mode: set =
 /// download + apply automatically; clear = only surface availability.
 pub(super) fn spawn_update_check(tx: mpsc::UnboundedSender<UpdateEvent>, auto: bool) {
+    // A cargo/dev build can't meaningfully self-replace its `target/` binary, so
+    // fall back to notify-only there — the update still surfaces without clobbering
+    // the compiled artifact.
+    let auto = auto && !is_cargo_build();
     tokio::spawn(async move {
         if auto {
             report_apply(&tx).await;

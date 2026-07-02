@@ -335,6 +335,28 @@ pub fn cleanup_stale_artifacts() {
     let _ = std::fs::remove_file(&rollback_path);
 }
 
+/// Whether the running binary lives under a Cargo `target/` output dir
+/// (`cargo run` / `cargo run --release`), i.e. a local dev build. Self-replacing
+/// such a binary is pointless and clobbers the freshly compiled artifact, so the
+/// update flow surfaces availability rather than auto-applying it.
+pub fn is_cargo_build() -> bool {
+    std::env::current_exe()
+        .map(|path| is_cargo_target_path(&path))
+        .unwrap_or(false)
+}
+
+/// A path is a Cargo build artifact when its immediate parent is a `debug` or
+/// `release` profile dir nested somewhere under a `target` dir — the layout
+/// `cargo run` produces. `cargo install` (→ `~/.cargo/bin`) and downloaded
+/// releases don't match, so auto-update stays enabled for them.
+fn is_cargo_target_path(exe_path: &Path) -> bool {
+    let parent_is_profile = exe_path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .is_some_and(|name| name == "debug" || name == "release");
+    parent_is_profile && exe_path.components().any(|c| c.as_os_str() == "target")
+}
+
 async fn set_executable_permissions(path: &Path) -> Result<(), AutoUpdateError> {
     #[cfg(unix)]
     {
