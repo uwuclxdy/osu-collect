@@ -70,6 +70,21 @@ pub enum Event {
         reason: Skip,
     },
 
+    /// A beatmapset was deferred: every candidate mirror was busy for longer than
+    /// the inline-wait threshold (all cooling, or all send-tokens spent), so it
+    /// was returned to the queue tail instead of parking a worker. It will be
+    /// retried after `retry_in`. The active row frees; the caller moves the tally
+    /// back to queued.
+    BeatmapsetDeferred {
+        /// Beatmapset ID.
+        beatmapset_id: u32,
+        /// Rate-limit deferral count so far. A pure request-spacing requeue keeps
+        /// the current count (may be 0); only cooling defers increment it.
+        pass: u32,
+        /// Time until the earliest candidate mirror frees.
+        retry_in: Duration,
+    },
+
     /// Session has finished.
     SessionCompleted {
         /// Aggregate summary.
@@ -95,8 +110,10 @@ pub enum Status {
         /// Mirror that served the archive.
         mirror: MirrorRef,
     },
-    /// Every untried mirror is currently rate-limited; the attempt is paused
-    /// until the shortest cooldown elapses.
+    /// Every candidate mirror is rate-limited and the shortest cooldown is short
+    /// enough to wait out inline (below the defer threshold); the attempt is
+    /// paused for `cooldown`. Longer cooldowns defer the map instead
+    /// ([`Event::BeatmapsetDeferred`]) and do not emit this status.
     RateLimited {
         /// Cooldown before any rate-limited mirror becomes eligible again.
         cooldown: Duration,
@@ -121,8 +138,11 @@ pub enum Skip {
     AlreadyExists,
     /// Not available on any configured mirror.
     UnavailableOnMirrors,
-    /// The caller asked to skip this map while it was waiting on a mirror
-    /// rate-limit cooldown (see [`Session::skip_rate_limited`](crate::Session::skip_rate_limited)).
+    /// The map gave up on rate limits. Either it exhausted the deferral pass
+    /// cap (a map gets up to 3 processing passes: the initial pass plus 2
+    /// requeues; its 3rd deferral is terminal), or the caller hard-dropped it
+    /// while it was rate-limit-blocked (see
+    /// [`Session::skip_rate_limited`](crate::Session::skip_rate_limited)).
     RateLimitSkipped,
 }
 

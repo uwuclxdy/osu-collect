@@ -1,9 +1,10 @@
 use super::{
     BeatmapsetDownloadCallbacks, BeatmapsetDownloadOutcome, DownloadParams, FinalizeResult,
-    RateLimitWait, download_beatmapset, finalize_download, is_archive_content_type,
-    probe_download_size, sanitize_filename, size_from_content_range, sleep_cancelable,
-    wait_rate_limit,
+    InlineWait, download_beatmapset, finalize_download, inline_wait, is_archive_content_type,
+    parse_retry_after, probe_download_size, sanitize_filename, size_from_content_range,
+    sleep_cancelable,
 };
+use crate::config::INLINE_WAIT_MAX;
 use crate::mirrors::pool::MirrorPool;
 use crate::validation::minimal_zip_bytes_for_test;
 use crate::{ArchiveValidation, Mirror, MirrorKind, OnExists, Skip, Status};
@@ -29,8 +30,14 @@ fn default_params<'a>(
         on_exists: OnExists::Skip,
         callbacks: BeatmapsetDownloadCallbacks::default(),
         cancel_rx,
-        skip: Arc::new(tokio::sync::Notify::new()),
+        defer_signal: Arc::new(tokio::sync::Notify::new()),
+        drop_signal: Arc::new(tokio::sync::Notify::new()),
+        inline_wait_max: INLINE_WAIT_MAX,
         rate_limit_skip_after: None,
+        #[cfg(feature = "instrument")]
+        attempt_observer: None,
+        #[cfg(feature = "instrument")]
+        session_start: Instant::now(),
     }
 }
 
@@ -532,7 +539,41 @@ async fn rate_limit_status_emitted_once_when_all_mirrors_throttled() {
 }
 
 #[tokio::test]
-async fn auto_skip_fires_once_cumulative_rate_limit_budget_is_reached() {
+async fn auto_defer_fires_once_cumulative_inline_budget_is_reached() {
+    // A slot pre-cooled below the inline threshold is waited out inline; a tiny
+    // budget crosses during that wait, so the map defers itself (returned to the
+    // queue) instead of being dropped. The mirror is never contacted.
+    let mirror = Mirror::custom("http://127.0.0.1:1/d/{id}").unwrap();
+    let mirror_pool = MirrorPool::new(vec![mirror]);
+    // Cooldown well above the budget so it stays live through the async preamble;
+    // the budget crosses first and defers the map long before the cooldown ends.
+    mirror_pool.mark_rate_limited(0, Some(Duration::from_millis(500)));
+    let dir = tempfile::tempdir().unwrap();
+    let client = reqwest::Client::new();
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+
+    let start = Instant::now();
+    let (outcome, _) = download_beatmapset(DownloadParams {
+        rate_limit_skip_after: Some(Duration::from_millis(5)),
+        // Explicit threshold so the 500 ms cooldown stays inline-waitable no
+        // matter where the global INLINE_WAIT_MAX moves.
+        inline_wait_max: Duration::from_secs(2),
+        ..default_params(555, dir.path(), &client, &mirror_pool, cancel_rx)
+    })
+    .await;
+
+    assert!(
+        matches!(outcome, BeatmapsetDownloadOutcome::Deferred { .. }),
+        "expected auto-defer once the cumulative inline wait crossed the budget, got {outcome:?}"
+    );
+    assert!(
+        start.elapsed() < Duration::from_millis(300),
+        "auto-defer must not wait out the whole cooldown"
+    );
+}
+
+#[tokio::test]
+async fn spacing_waits_never_count_toward_the_auto_defer_budget() {
     use std::{
         io::{Read, Write},
         net::TcpListener,
@@ -541,50 +582,88 @@ async fn auto_skip_fires_once_cumulative_rate_limit_budget_is_reached() {
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    // Both mirrors 429 forever. Pass 1 hits each once (two fresh connections),
-    // then the budget fires after the first fully-elapsed cooldown — so exactly
-    // two requests are served before the map auto-skips.
     let server = thread::spawn(move || {
-        for _ in 0..2 {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut buf = [0u8; 1024];
-            let _ = stream.read(&mut buf).unwrap();
-            stream
-                .write_all(b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\n\r\n")
-                .unwrap();
-        }
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0u8; 1024];
+        let _ = stream.read(&mut request).unwrap();
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=9.osz\r\nContent-Length: 4\r\n\r\ndata").unwrap();
     });
 
-    let mirror_a =
-        Mirror::with_kind_and_template(MirrorKind::Nerinyan, format!("http://{addr}/a/{{id}}"));
-    let mirror_b =
-        Mirror::with_kind_and_template(MirrorKind::OsuDirect, format!("http://{addr}/b/{{id}}"));
-    let mirror_pool = MirrorPool::new(vec![mirror_a, mirror_b]);
+    let mirror = Mirror::custom(format!("http://{addr}/d/{{id}}")).unwrap();
+    let mirror_pool = MirrorPool::new(vec![mirror]);
+    // Spend the slot's send token ~1 s into the future: the map faces a pure
+    // spacing wait (no cooldown) far longer than the zero budget. If spacing
+    // counted toward the budget the map would defer; it must instead sleep the
+    // spacing out and succeed. The window is generous so the async preamble
+    // cannot swallow it under parallel test load.
+    let _ = mirror_pool.acquire_at(&[0], Instant::now() + Duration::from_secs(1));
     let dir = tempfile::tempdir().unwrap();
     let client = reqwest::Client::new();
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
 
     let start = Instant::now();
-    // 5 ms budget against the 10 ms test backoff: the first elapsed cooldown
-    // crosses the budget and the map is skipped with no manual `skip` press.
     let (outcome, _) = download_beatmapset(DownloadParams {
-        rate_limit_skip_after: Some(Duration::from_millis(5)),
-        ..default_params(555, dir.path(), &client, &mirror_pool, cancel_rx)
+        rate_limit_skip_after: Some(Duration::ZERO),
+        inline_wait_max: Duration::from_secs(5),
+        ..default_params(9, dir.path(), &client, &mirror_pool, cancel_rx)
     })
     .await;
 
     assert!(
-        matches!(
-            outcome,
-            BeatmapsetDownloadOutcome::Skipped {
-                reason: Skip::RateLimitSkipped
-            }
-        ),
-        "expected auto-skip once the cumulative cooldown crossed the budget, got {outcome:?}"
+        matches!(outcome, BeatmapsetDownloadOutcome::Success { .. }),
+        "a pure spacing wait must not trip the auto-defer budget, got {outcome:?}"
     );
     assert!(
-        start.elapsed() < Duration::from_secs(2),
-        "auto-skip must not wait out repeated cooldowns"
+        start.elapsed() >= Duration::from_millis(500),
+        "the spacing wait itself must still be honored"
+    );
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn spacing_wait_is_immune_to_defer_and_drop_signals() {
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        thread,
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0u8; 1024];
+        let _ = stream.read(&mut request).unwrap();
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=11.osz\r\nContent-Length: 4\r\n\r\ndata").unwrap();
+    });
+
+    let mirror = Mirror::custom(format!("http://{addr}/d/{{id}}")).unwrap();
+    let mirror_pool = MirrorPool::new(vec![mirror]);
+    // A healthy map waiting out a ~300 ms send-token spacing (no cooldown).
+    let _ = mirror_pool.acquire_at(&[0], Instant::now() + Duration::from_millis(300));
+    let dir = tempfile::tempdir().unwrap();
+    let client = reqwest::Client::new();
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let params = DownloadParams {
+        inline_wait_max: Duration::from_secs(2),
+        ..default_params(11, dir.path(), &client, &mirror_pool, cancel_rx)
+    };
+    let defer = params.defer_signal.clone();
+    let drop_signal = params.drop_signal.clone();
+
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        // Both presses land mid-spacing-wait; a healthy map must ignore them.
+        // A drop here would terminally discard a download that was never
+        // rate-limited.
+        defer.notify_waiters();
+        drop_signal.notify_waiters();
+    });
+
+    let (outcome, _) = download_beatmapset(params).await;
+    assert!(
+        matches!(outcome, BeatmapsetDownloadOutcome::Success { .. }),
+        "defer/drop must not touch a map in a plain spacing wait, got {outcome:?}"
     );
     server.join().unwrap();
 }
@@ -723,36 +802,254 @@ async fn backoff_cancelled_before_expiry() {
     );
 }
 
+#[test]
+fn parse_retry_after_reads_delta_seconds() {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(reqwest::header::RETRY_AFTER, "120".parse().unwrap());
+    assert_eq!(parse_retry_after(&headers), Some(Duration::from_secs(120)));
+}
+
+#[test]
+fn parse_retry_after_reads_http_date() {
+    // An HTTP-date a minute out yields roughly a minute; a past date yields None.
+    let future = httpdate::fmt_http_date(std::time::SystemTime::now() + Duration::from_secs(60));
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(reqwest::header::RETRY_AFTER, future.parse().unwrap());
+    let parsed = parse_retry_after(&headers).expect("future date parses");
+    assert!(
+        parsed <= Duration::from_secs(61) && parsed >= Duration::from_secs(55),
+        "expected ~60s, got {parsed:?}"
+    );
+
+    let past = httpdate::fmt_http_date(std::time::SystemTime::now() - Duration::from_secs(60));
+    let mut past_headers = reqwest::header::HeaderMap::new();
+    past_headers.insert(reqwest::header::RETRY_AFTER, past.parse().unwrap());
+    assert_eq!(parse_retry_after(&past_headers), None);
+}
+
+#[test]
+fn parse_retry_after_absent_is_none() {
+    assert_eq!(parse_retry_after(&reqwest::header::HeaderMap::new()), None);
+}
+
 #[tokio::test]
-async fn wait_rate_limit_skip_wakes_a_cooling_map() {
+async fn inline_wait_drop_wins_over_defer() {
+    use std::future::Future;
+
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-    let skip = Arc::new(tokio::sync::Notify::new());
-    let firer = skip.clone();
+    let defer = Arc::new(tokio::sync::Notify::new());
+    let drop_signal = Arc::new(tokio::sync::Notify::new());
+
+    let fut = inline_wait(Duration::from_secs(60), &cancel_rx, &defer, &drop_signal);
+    tokio::pin!(fut);
+    // Register every select branch with one poll, then fire BOTH signals before
+    // the next poll (defer first, adversarially). The biased order must still
+    // resolve to the drop.
+    std::future::poll_fn(|cx| {
+        assert!(fut.as_mut().poll(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    defer.notify_waiters();
+    drop_signal.notify_waiters();
+
+    assert!(matches!(fut.await, InlineWait::Dropped));
+}
+
+#[tokio::test]
+async fn inline_wait_defer_wakes_a_parked_map() {
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let defer = Arc::new(tokio::sync::Notify::new());
+    let drop_signal = Arc::new(tokio::sync::Notify::new());
+    let d = defer.clone();
     tokio::spawn(async move {
-        // Fires after wait_rate_limit has parked and registered as a waiter.
         tokio::time::sleep(Duration::from_millis(20)).await;
-        firer.notify_waiters();
+        d.notify_waiters();
     });
 
-    let start = Instant::now();
-    let outcome = wait_rate_limit(Duration::from_secs(60), &cancel_rx, &skip).await;
+    let outcome = inline_wait(Duration::from_secs(60), &cancel_rx, &defer, &drop_signal).await;
+    assert!(matches!(outcome, InlineWait::Deferred));
+}
 
-    assert!(matches!(outcome, RateLimitWait::Skipped));
+#[tokio::test]
+async fn inline_wait_cancel_aborts_a_parked_map() {
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let defer = Arc::new(tokio::sync::Notify::new());
+    let drop_signal = Arc::new(tokio::sync::Notify::new());
+    let _ = cancel_tx.send(true);
+
+    let outcome = inline_wait(Duration::from_secs(60), &cancel_rx, &defer, &drop_signal).await;
+    assert!(matches!(outcome, InlineWait::Cancelled));
+}
+
+#[tokio::test]
+async fn defer_signal_requeues_a_parked_map() {
+    // The map parks on a long-but-inline cooldown; the defer signal returns it
+    // to the queue rather than dropping it.
+    let mirror = Mirror::custom("http://127.0.0.1:1/d/{id}").unwrap();
+    let mirror_pool = MirrorPool::new(vec![mirror]);
+    mirror_pool.mark_rate_limited(0, Some(Duration::from_secs(1)));
+    let dir = tempfile::tempdir().unwrap();
+    let client = reqwest::Client::new();
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let params = default_params(1, dir.path(), &client, &mirror_pool, cancel_rx);
+    let defer = params.defer_signal.clone();
+
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        defer.notify_waiters();
+    });
+
+    let (outcome, _) = download_beatmapset(params).await;
+    assert!(matches!(
+        outcome,
+        BeatmapsetDownloadOutcome::Deferred { .. }
+    ));
+}
+
+#[tokio::test]
+async fn drop_signal_discards_a_parked_map() {
+    let mirror = Mirror::custom("http://127.0.0.1:1/d/{id}").unwrap();
+    let mirror_pool = MirrorPool::new(vec![mirror]);
+    mirror_pool.mark_rate_limited(0, Some(Duration::from_secs(1)));
+    let dir = tempfile::tempdir().unwrap();
+    let client = reqwest::Client::new();
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let params = default_params(1, dir.path(), &client, &mirror_pool, cancel_rx);
+    let drop_signal = params.drop_signal.clone();
+
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        drop_signal.notify_waiters();
+    });
+
+    let (outcome, _) = download_beatmapset(params).await;
+    assert!(matches!(
+        outcome,
+        BeatmapsetDownloadOutcome::Skipped {
+            reason: Skip::RateLimitSkipped
+        }
+    ));
+}
+
+#[tokio::test]
+async fn long_cooldown_defers_to_the_batch() {
+    // A cooldown longer than inline_wait_max returns Deferred without waiting.
+    let mirror = Mirror::custom("http://127.0.0.1:1/d/{id}").unwrap();
+    let mirror_pool = MirrorPool::new(vec![mirror]);
+    mirror_pool.mark_rate_limited(0, Some(Duration::from_secs(1)));
+    let dir = tempfile::tempdir().unwrap();
+    let client = reqwest::Client::new();
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+
+    let start = Instant::now();
+    let (outcome, _) = download_beatmapset(DownloadParams {
+        inline_wait_max: Duration::ZERO,
+        ..default_params(1, dir.path(), &client, &mirror_pool, cancel_rx)
+    })
+    .await;
+
+    assert!(matches!(
+        outcome,
+        BeatmapsetDownloadOutcome::Deferred {
+            rate_limited: true,
+            ..
+        }
+    ));
     assert!(
-        start.elapsed() < Duration::from_millis(500),
-        "skip should cut the cooldown short, not wait out 60s"
+        start.elapsed() < Duration::from_millis(200),
+        "a deferred map must not park on the cooldown"
     );
 }
 
 #[tokio::test]
-async fn wait_rate_limit_cancel_aborts_a_cooling_map() {
-    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-    let skip = Arc::new(tokio::sync::Notify::new());
-    let _ = cancel_tx.send(true);
+async fn long_spacing_wait_defers_without_a_rate_limit_flag() {
+    // A grown send-token spacing longer than inline_wait_max defers the map, but
+    // as a healthy (never-429'd) map: `rate_limited` must be false so the batch
+    // never advances its drop-eligibility pass counter for it.
+    let mirror = Mirror::custom("http://127.0.0.1:1/d/{id}").unwrap();
+    let mirror_pool = MirrorPool::new(vec![mirror]);
+    // Spend the send token ~1 s out with no cooldown: a pure spacing wait.
+    let _ = mirror_pool.acquire_at(&[0], Instant::now() + Duration::from_secs(1));
+    let dir = tempfile::tempdir().unwrap();
+    let client = reqwest::Client::new();
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
 
-    // Cancel set before the wait: the biased select must abort, never wait out
-    // the 60s cooldown.
-    let outcome = wait_rate_limit(Duration::from_secs(60), &cancel_rx, &skip).await;
+    let start = Instant::now();
+    let (outcome, _) = download_beatmapset(DownloadParams {
+        inline_wait_max: Duration::from_millis(100),
+        ..default_params(1, dir.path(), &client, &mirror_pool, cancel_rx)
+    })
+    .await;
 
-    assert!(matches!(outcome, RateLimitWait::Cancelled));
+    assert!(
+        matches!(
+            outcome,
+            BeatmapsetDownloadOutcome::Deferred {
+                rate_limited: false,
+                ..
+            }
+        ),
+        "a pure spacing defer must not be flagged rate-limited, got {outcome:?}"
+    );
+    assert!(
+        start.elapsed() < Duration::from_millis(300),
+        "a spacing defer past the inline max must not park on the wait"
+    );
+}
+
+#[cfg(feature = "instrument")]
+#[tokio::test]
+async fn validation_failure_records_definitive_not_success() {
+    use crate::instrument::{AttemptObserver, AttemptOutcome, AttemptRecord};
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        thread,
+    };
+
+    // 200 OK carrying a non-archive body: it clears the HTTP check but fails ZIP
+    // validation, so the attempt must be recorded Definitive, never Success.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0u8; 1024];
+        let _ = stream.read(&mut request).unwrap();
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=1.osz\r\nContent-Length: 8\r\n\r\nnotazip!").unwrap();
+    });
+
+    let mirror = Mirror::custom(format!("http://{addr}/d/{{id}}")).unwrap();
+    let mirror_pool = MirrorPool::new(vec![mirror]);
+    let dir = tempfile::tempdir().unwrap();
+    let client = reqwest::Client::new();
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+
+    let outcomes: Arc<Mutex<Vec<AttemptOutcome>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = outcomes.clone();
+    let observer = AttemptObserver::new(move |record: AttemptRecord| {
+        sink.lock().unwrap().push(record.outcome);
+    });
+
+    let (outcome, _) = download_beatmapset(DownloadParams {
+        archive_validation: ArchiveValidation::Magic,
+        attempt_observer: Some(observer),
+        ..default_params(1, dir.path(), &client, &mirror_pool, cancel_rx)
+    })
+    .await;
+
+    assert!(
+        matches!(outcome, BeatmapsetDownloadOutcome::Failed { .. }),
+        "a validation failure is a definitive failure, got {outcome:?}"
+    );
+    let recorded = outcomes.lock().unwrap();
+    assert!(
+        recorded.contains(&AttemptOutcome::Definitive),
+        "the 2xx-then-invalid attempt must record Definitive, got {recorded:?}"
+    );
+    assert!(
+        !recorded.contains(&AttemptOutcome::Success),
+        "a validation failure must not record Success, got {recorded:?}"
+    );
+    server.join().unwrap();
 }

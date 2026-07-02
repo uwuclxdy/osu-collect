@@ -7,7 +7,7 @@ use crate::{
     config::{TRANSIENT_RETRY_ATTEMPTS, TRANSIENT_RETRY_BASE_DELAY},
     downloader::OnExists,
     event::{Skip, Status},
-    mirrors::{Mirror, MirrorKind, MirrorPool, MirrorRef},
+    mirrors::{Acquire, Mirror, MirrorKind, MirrorPool, MirrorRef},
     output_entry::parse_beatmapset_filename,
     validation::{self, ArchiveValidation},
     worker::stream_download,
@@ -55,6 +55,16 @@ pub(crate) enum BeatmapsetDownloadOutcome {
     NetworkError {
         reason: String,
     },
+    /// The map was handed back to the batch queue for a later pass; nothing
+    /// terminal yet. `rate_limited` is `true` when a cooldown drove the defer (a
+    /// long cooldown, a caller defer, or the auto-defer budget) and `false` for a
+    /// pure request-spacing defer. Only rate-limit-sourced defers advance the
+    /// batch pass counter and become drop-eligible; a spacing defer requeues at
+    /// the same pass so a healthy map that never 429'd is never dropped.
+    Deferred {
+        retry_in: Duration,
+        rate_limited: bool,
+    },
     Aborted,
 }
 
@@ -69,13 +79,30 @@ pub(crate) struct DownloadParams<'a> {
     pub(crate) on_exists: OnExists,
     pub(crate) callbacks: BeatmapsetDownloadCallbacks,
     pub(crate) cancel_rx: tokio::sync::watch::Receiver<bool>,
-    /// Edge signal to abandon a map currently parked on a rate-limit cooldown.
-    /// Shared across the whole session; `notify_waiters` wakes only the maps
-    /// waiting at that instant (see [`download_beatmapset`]'s cooldown race).
-    pub(crate) skip: Arc<tokio::sync::Notify>,
-    /// Auto-skip budget: once this map's summed cooldown wait reaches it, the
-    /// map is skipped without the manual `skip` signal. `None` waits forever.
+    /// Edge signal to defer a map currently parked on an inline cooldown wait:
+    /// it returns [`BeatmapsetDownloadOutcome::Deferred`] and the batch requeues
+    /// it. `notify_waiters` wakes only the maps parked at that instant.
+    pub(crate) defer_signal: Arc<tokio::sync::Notify>,
+    /// Edge signal to hard-drop a map currently parked on an inline cooldown
+    /// wait: it returns [`Skip::RateLimitSkipped`] immediately. Deferred items
+    /// already back in the batch queue are drained separately by the batch
+    /// loop on the same signal.
+    pub(crate) drop_signal: Arc<tokio::sync::Notify>,
+    /// Cooldowns at or below this defer inline; longer ones return
+    /// [`BeatmapsetDownloadOutcome::Deferred`] to the batch.
+    pub(crate) inline_wait_max: Duration,
+    /// Auto-defer budget applied PER PROCESSING PASS: once this map's summed
+    /// inline cooldown wait within one `download_beatmapset` call reaches it, the
+    /// map defers itself. `cumulative_rate_limit` is call-local, so across the
+    /// deferral pass cap this permits up to ~3x the budget of total inline waiting
+    /// before termination. `None` waits forever.
     pub(crate) rate_limit_skip_after: Option<Duration>,
+    /// Per-attempt observer for the tuning harness.
+    #[cfg(feature = "instrument")]
+    pub(crate) attempt_observer: Option<crate::instrument::AttemptObserver>,
+    /// Session start, for the observer's `elapsed`.
+    #[cfg(feature = "instrument")]
+    pub(crate) session_start: Instant,
 }
 
 /// Sanitize a raw filename to be safe for use as an `.osz` archive name.
@@ -274,112 +301,119 @@ pub(crate) async fn download_beatmapset(
     let mut not_found = HashSet::new();
     let mut all_transient = true;
     let mut last_transient_reason = String::new();
-    // Time this map has actually spent parked on rate-limit cooldowns, summed
-    // across mirror passes. Drives the auto-skip budget below.
+    // Time this map has spent on inline cooldown waits within this call. Drives
+    // the auto-defer budget below.
     let mut cumulative_rate_limit = Duration::ZERO;
 
     let mirrors = params.mirror_pool.mirrors();
     let mirror_count = mirrors.len();
-    // Round-robin the initial mirror per map: each download starts at a rotating
-    // slot and wraps, so concurrent maps spread across mirrors instead of all
-    // hammering slot 0 first.
-    let start = if mirror_count == 0 {
-        0
-    } else {
-        params.mirror_pool.next_round_robin_start() % mirror_count
-    };
-    let mut pending: Vec<usize> = (0..mirror_count)
-        .map(|offset| (start + offset) % mirror_count)
-        .collect();
+    // Candidate slots in the caller's configured order; a slot is removed only on
+    // a definitive miss (404 / transient-exhausted / definitive). A rate-limited
+    // slot stays — it recovers — so the acquire loop keeps offering it.
+    let mut candidates: Vec<usize> = (0..mirror_count).collect();
 
-    while !pending.is_empty() {
+    loop {
         if *cancel_rx.borrow_and_update() {
             return (BeatmapsetDownloadOutcome::Aborted, total_attempts);
         }
-
-        let mut deferred_rate_limited = Vec::new();
-        for idx in &pending {
-            let mirror = &mirrors[*idx];
-            if *cancel_rx.borrow_and_update() {
-                return (BeatmapsetDownloadOutcome::Aborted, total_attempts);
-            }
-
-            match try_mirror_retry(mirror, *idx, &params, &mut total_attempts).await {
-                MirrorAttempt::Done(outcome) => return (outcome, total_attempts),
-                MirrorAttempt::NotFound => {
-                    all_transient = false;
-                    // Key the "tried and missing" set by slot, not kind: two
-                    // custom mirrors share `Custom`, so kind-keying would let a
-                    // collection that 404s on every mirror escape the
-                    // all-missing → skip detection below.
-                    not_found.insert(*idx);
-                    last_error = Some(failed(Some(mirror.kind()), "not found (404)"));
-                }
-                MirrorAttempt::RateLimited => {
-                    all_transient = false;
-                    deferred_rate_limited.push(*idx);
-                    params.mirror_pool.mark_rate_limited(*idx);
-                    last_error = Some(failed(Some(mirror.kind()), "rate limited"));
-                }
-                MirrorAttempt::Transient(reason) => {
-                    last_transient_reason = reason.clone();
-                    last_error = Some(failed(Some(mirror.kind()), reason));
-                }
-                MirrorAttempt::Definitive(reason) => {
-                    all_transient = false;
-                    last_error = Some(failed(Some(mirror.kind()), reason));
-                }
-            }
-        }
-
-        if deferred_rate_limited.is_empty() {
+        if candidates.is_empty() {
             break;
         }
 
-        let wait_duration = deferred_rate_limited
-            .iter()
-            .filter_map(|&idx| params.mirror_pool.penalty_remaining(idx))
-            .min()
-            .unwrap_or(Duration::ZERO);
-
-        emit_status(
-            &params.callbacks,
-            Status::RateLimited {
-                cooldown: wait_duration,
-            },
-        );
-
-        if !wait_duration.is_zero() {
-            // Cap the sleep at the remaining auto-skip budget so a budget
-            // smaller than a mirror's cooldown is honored to the second instead
-            // of overshooting to a full cooldown. `None` budget never caps, and
-            // a budget larger than the cooldown behaves exactly as before.
-            let (sleep_for, budget_exhausted) = match params
-                .rate_limit_skip_after
-                .map(|budget| budget.saturating_sub(cumulative_rate_limit))
-            {
-                Some(remaining) if remaining <= wait_duration => (remaining, true),
-                _ => (wait_duration, false),
-            };
-            match wait_rate_limit(sleep_for, &cancel_rx, &params.skip).await {
-                RateLimitWait::Cancelled => {
-                    return (BeatmapsetDownloadOutcome::Aborted, total_attempts);
+        match params.mirror_pool.acquire(&candidates) {
+            Acquire::Granted(idx) => {
+                let mirror = &mirrors[idx];
+                match try_mirror_retry(mirror, idx, &params, &mut total_attempts).await {
+                    MirrorAttempt::Done(outcome) => {
+                        if matches!(outcome, BeatmapsetDownloadOutcome::Success { .. }) {
+                            params.mirror_pool.on_success(idx);
+                        }
+                        return (outcome, total_attempts);
+                    }
+                    MirrorAttempt::NotFound => {
+                        all_transient = false;
+                        // Key the "tried and missing" set by slot, not kind: two
+                        // custom mirrors share `Custom`, so kind-keying would let
+                        // a set that 404s on every mirror escape the all-missing
+                        // → skip detection below.
+                        not_found.insert(idx);
+                        last_error = Some(failed(Some(mirror.kind()), "not found (404)"));
+                        candidates.retain(|&c| c != idx);
+                    }
+                    MirrorAttempt::RateLimited { retry_after } => {
+                        all_transient = false;
+                        params.mirror_pool.mark_rate_limited(idx, retry_after);
+                        last_error = Some(failed(Some(mirror.kind()), "rate limited"));
+                        // Slot stays in `candidates`; it recovers after its cooldown.
+                    }
+                    MirrorAttempt::Transient(reason) => {
+                        last_transient_reason = reason.clone();
+                        last_error = Some(failed(Some(mirror.kind()), reason));
+                        candidates.retain(|&c| c != idx);
+                    }
+                    MirrorAttempt::Definitive(reason) => {
+                        all_transient = false;
+                        last_error = Some(failed(Some(mirror.kind()), reason));
+                        candidates.retain(|&c| c != idx);
+                    }
                 }
-                RateLimitWait::Skipped => {
+            }
+            Acquire::Wait { until, cooling } => {
+                let now = Instant::now();
+                let wait = until.saturating_duration_since(now);
+                if wait > params.inline_wait_max {
+                    // A cooldown-bound wait is rate-limit-sourced; a spacing-bound
+                    // one is a healthy map waiting for a send token and must not
+                    // count toward the drop-eligibility pass counter.
                     return (
-                        BeatmapsetDownloadOutcome::Skipped {
-                            reason: Skip::RateLimitSkipped,
+                        BeatmapsetDownloadOutcome::Deferred {
+                            retry_in: wait,
+                            rate_limited: cooling,
                         },
                         total_attempts,
                     );
                 }
-                RateLimitWait::Elapsed => {
-                    // A cancel/skip returns above without counting; only a slept
-                    // slice accrues. When that slice was the budget remainder the
-                    // map has waited out its budget — auto-skip exactly as the
-                    // manual `s` press does.
-                    cumulative_rate_limit += sleep_for;
-                    if budget_exhausted {
+
+                if !cooling {
+                    // Plain request spacing: the map is healthy, so the
+                    // rate-limit defer/drop signals must not touch it and the
+                    // wait never counts toward the auto-defer budget. Only
+                    // cancel interrupts.
+                    if sleep_cancelable(wait, &cancel_rx).await {
+                        return (BeatmapsetDownloadOutcome::Aborted, total_attempts);
+                    }
+                    continue;
+                }
+
+                // A cooldown gates this map, so it is no longer purely
+                // transient — this keeps the accumulator off the
+                // `all_transient` NetworkError path and its debug_assert.
+                all_transient = false;
+                emit_status(&params.callbacks, Status::RateLimited { cooldown: wait });
+
+                // The auto-defer budget counts only these cooldown waits; a
+                // budget smaller than the cooldown caps the sleep so it is
+                // honored to the second.
+                let (sleep_for, budget_exhausted) = match params
+                    .rate_limit_skip_after
+                    .map(|budget| budget.saturating_sub(cumulative_rate_limit))
+                {
+                    Some(remaining) if remaining <= wait => (remaining, true),
+                    _ => (wait, false),
+                };
+
+                match inline_wait(
+                    sleep_for,
+                    &cancel_rx,
+                    &params.defer_signal,
+                    &params.drop_signal,
+                )
+                .await
+                {
+                    InlineWait::Cancelled => {
+                        return (BeatmapsetDownloadOutcome::Aborted, total_attempts);
+                    }
+                    InlineWait::Dropped => {
                         return (
                             BeatmapsetDownloadOutcome::Skipped {
                                 reason: Skip::RateLimitSkipped,
@@ -387,11 +421,33 @@ pub(crate) async fn download_beatmapset(
                             total_attempts,
                         );
                     }
+                    InlineWait::Deferred => {
+                        return (
+                            BeatmapsetDownloadOutcome::Deferred {
+                                retry_in: wait,
+                                rate_limited: true,
+                            },
+                            total_attempts,
+                        );
+                    }
+                    InlineWait::Elapsed => {
+                        cumulative_rate_limit += sleep_for;
+                        if budget_exhausted {
+                            debug_assert!(!all_transient);
+                            // The sleep fully elapsed, so the remaining
+                            // cooldown is `wait` minus what we already slept.
+                            return (
+                                BeatmapsetDownloadOutcome::Deferred {
+                                    retry_in: wait.saturating_sub(sleep_for),
+                                    rate_limited: true,
+                                },
+                                total_attempts,
+                            );
+                        }
+                    }
                 }
             }
         }
-
-        pending = deferred_rate_limited;
     }
 
     if not_found.len() == mirror_count && mirror_count > 0 {
@@ -404,10 +460,9 @@ pub(crate) async fn download_beatmapset(
     }
 
     if all_transient && !last_transient_reason.is_empty() {
-        // A map that ever parked on a rate-limit set `all_transient = false`, so
-        // reaching here means no cooldown was waited and the local budget
-        // accumulator is zero — it never leaks across `process_one`'s
-        // network-retry re-entry of this function.
+        // Any inline cooldown wait set `all_transient = false`, so reaching here
+        // means no cooldown was waited and the local budget accumulator is zero;
+        // it never leaks across `process_one`'s network-retry re-entry.
         debug_assert!(cumulative_rate_limit.is_zero());
         return (
             BeatmapsetDownloadOutcome::NetworkError {
@@ -427,7 +482,7 @@ pub(crate) async fn download_beatmapset(
 enum MirrorAttempt {
     Done(BeatmapsetDownloadOutcome),
     NotFound,
-    RateLimited,
+    RateLimited { retry_after: Option<Duration> },
     Transient(String),
     Definitive(String),
 }
@@ -518,6 +573,48 @@ async fn try_mirror_retry(
     }
 }
 
+/// Parse a `Retry-After` header into a cooldown. Accepts both the delta-seconds
+/// form (`Retry-After: 120`) and the HTTP-date form (`Retry-After: <date>`);
+/// a date in the past yields `None`. The pool clamps the result to a sane range.
+fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let value = headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim();
+    if let Ok(secs) = value.parse::<u64>() {
+        return Some(Duration::from_secs(secs));
+    }
+    let when = httpdate::parse_http_date(value).ok()?;
+    when.duration_since(std::time::SystemTime::now()).ok()
+}
+
+#[cfg(feature = "instrument")]
+#[allow(clippy::too_many_arguments)]
+fn record_attempt(
+    params: &DownloadParams<'_>,
+    mirror: &Mirror,
+    idx: usize,
+    outcome: crate::instrument::AttemptOutcome,
+    http_status: Option<u16>,
+    retry_after: Option<Duration>,
+    latency: Duration,
+) {
+    if let Some(observer) = &params.attempt_observer {
+        observer.emit(crate::instrument::AttemptRecord {
+            host: mirror.host().into(),
+            kind: mirror.kind(),
+            elapsed: params.session_start.elapsed(),
+            outcome,
+            http_status,
+            retry_after,
+            interval: params.mirror_pool.interval(idx),
+            latency,
+        });
+    }
+}
+
+#[cfg_attr(not(feature = "instrument"), allow(unused_variables))]
 async fn try_mirror_once(
     mirror: &Mirror,
     idx: usize,
@@ -530,22 +627,16 @@ async fn try_mirror_once(
         },
     );
 
-    // Proactive client-side spacing: gate every attempt to this mirror slot so
-    // concurrent workers (and retries) can't burst past its per-kind minimum
-    // interval — 100 ms for most mirrors, 1 s for the osu! official API. The
-    // sleep is cancelable so a pending throttle never blocks a cancel.
-    if run_cancelable(params.mirror_pool.throttle(idx), &params.cancel_rx)
-        .await
-        .is_none()
-    {
-        return MirrorAttempt::Done(BeatmapsetDownloadOutcome::Aborted);
-    }
-
+    // The scheduler already spaced this send by granting a token, so no
+    // client-side throttle is needed here.
     let url = mirror.url_for(params.beatmapset_id);
     let mut request = params.client.get(&url);
     if let Some(headers) = mirror.headers() {
         request = request.headers(headers.clone());
     }
+
+    #[cfg(feature = "instrument")]
+    let sent = Instant::now();
 
     let Some(response) = run_cancelable(request.send(), &params.cancel_rx).await else {
         return MirrorAttempt::Done(BeatmapsetDownloadOutcome::Aborted);
@@ -553,44 +644,146 @@ async fn try_mirror_once(
     let response = match response {
         Ok(response) => response,
         Err(err) if err.is_timeout() => {
+            #[cfg(feature = "instrument")]
+            record_attempt(
+                params,
+                mirror,
+                idx,
+                crate::instrument::AttemptOutcome::Transient,
+                None,
+                None,
+                sent.elapsed(),
+            );
             return MirrorAttempt::Transient("connection timeout".to_string());
         }
         Err(err) if err.is_connect() => {
+            #[cfg(feature = "instrument")]
+            record_attempt(
+                params,
+                mirror,
+                idx,
+                crate::instrument::AttemptOutcome::Transient,
+                None,
+                None,
+                sent.elapsed(),
+            );
             return MirrorAttempt::Transient("connection failed".to_string());
         }
         Err(err) => {
+            #[cfg(feature = "instrument")]
+            record_attempt(
+                params,
+                mirror,
+                idx,
+                crate::instrument::AttemptOutcome::Transient,
+                None,
+                None,
+                sent.elapsed(),
+            );
             return MirrorAttempt::Transient(format!(
                 "request failed on {}: {err}",
                 mirror.kind().label()
             ));
         }
     };
+
+    #[cfg(feature = "instrument")]
+    let latency = sent.elapsed();
+
+    let status = response.status();
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        let retry_after = parse_retry_after(response.headers());
+        #[cfg(feature = "instrument")]
+        record_attempt(
+            params,
+            mirror,
+            idx,
+            crate::instrument::AttemptOutcome::RateLimited,
+            Some(status.as_u16()),
+            retry_after,
+            latency,
+        );
+        return MirrorAttempt::RateLimited { retry_after };
+    }
+
+    if status == reqwest::StatusCode::NOT_FOUND {
+        #[cfg(feature = "instrument")]
+        record_attempt(
+            params,
+            mirror,
+            idx,
+            crate::instrument::AttemptOutcome::NotFound,
+            Some(status.as_u16()),
+            None,
+            latency,
+        );
+        return MirrorAttempt::NotFound;
+    }
+
+    if status.is_server_error() {
+        #[cfg(feature = "instrument")]
+        record_attempt(
+            params,
+            mirror,
+            idx,
+            crate::instrument::AttemptOutcome::Transient,
+            Some(status.as_u16()),
+            None,
+            latency,
+        );
+        return MirrorAttempt::Transient(format!("HTTP {status}"));
+    }
+
+    if !status.is_success() {
+        #[cfg(feature = "instrument")]
+        record_attempt(
+            params,
+            mirror,
+            idx,
+            crate::instrument::AttemptOutcome::Definitive,
+            Some(status.as_u16()),
+            None,
+            latency,
+        );
+        return MirrorAttempt::Definitive(format!("HTTP {status}"));
+    }
+
     let probed_size = if response.content_length().is_none() {
         probe_download_size(mirror, params).await
     } else {
         None
     };
 
-    let status = response.status();
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return MirrorAttempt::RateLimited;
-    }
-
-    if status == reqwest::StatusCode::NOT_FOUND {
-        return MirrorAttempt::NotFound;
-    }
-
-    if status.is_server_error() {
-        return MirrorAttempt::Transient(format!("HTTP {status}"));
-    }
-
-    if !status.is_success() {
-        return MirrorAttempt::Definitive(format!("HTTP {status}"));
-    }
-
+    // Record only after the body is fully resolved: a 2xx that then fails ZIP
+    // validation is a garbage response, not a success, so it must not bias the
+    // tuning fit toward the mirror that served it.
     match process_mirror_response(mirror, response, params, probed_size).await {
-        Ok(outcome) => MirrorAttempt::Done(outcome),
-        Err(reason) => MirrorAttempt::Definitive(reason),
+        Ok(outcome) => {
+            #[cfg(feature = "instrument")]
+            record_attempt(
+                params,
+                mirror,
+                idx,
+                crate::instrument::AttemptOutcome::Success,
+                Some(status.as_u16()),
+                None,
+                latency,
+            );
+            MirrorAttempt::Done(outcome)
+        }
+        Err(reason) => {
+            #[cfg(feature = "instrument")]
+            record_attempt(
+                params,
+                mirror,
+                idx,
+                crate::instrument::AttemptOutcome::Definitive,
+                Some(status.as_u16()),
+                None,
+                latency,
+            );
+            MirrorAttempt::Definitive(reason)
+        }
     }
 }
 
@@ -608,9 +801,7 @@ async fn probe_download_size(mirror: &Mirror, params: &DownloadParams<'_>) -> Op
             request = request.headers(headers.clone());
         }
 
-        let Some(result) = run_cancelable(request.send(), &params.cancel_rx).await else {
-            return None;
-        };
+        let result = run_cancelable(request.send(), &params.cancel_rx).await?;
         let response = match result {
             Ok(response) => response,
             Err(err) => {
@@ -620,14 +811,11 @@ async fn probe_download_size(mirror: &Mirror, params: &DownloadParams<'_>) -> Op
         };
 
         if response.status().is_redirection() {
-            let Some(location) = response
+            let location = response
                 .headers()
                 .get(reqwest::header::LOCATION)
                 .and_then(|value| value.to_str().ok())
-                .and_then(|location| response.url().join(location).ok())
-            else {
-                return None;
-            };
+                .and_then(|location| response.url().join(location).ok())?;
             url = location.to_string();
             continue;
         }
@@ -978,27 +1166,33 @@ async fn sleep_cancelable(
     run_cancelable(sleep(duration), cancel_rx).await.is_none()
 }
 
-enum RateLimitWait {
+enum InlineWait {
     Elapsed,
     Cancelled,
-    Skipped,
+    Deferred,
+    Dropped,
 }
 
-/// Wait out a rate-limit cooldown, racing it against session cancellation and a
-/// caller skip request. `notify_waiters` wakes only the maps parked here at the
-/// instant of the press, so one skip drops exactly the currently-cooling maps
-/// and leaves later rate-limits untouched. Cancel wins over skip (biased).
-async fn wait_rate_limit(
+/// Wait out a short *cooldown* inline, racing it against session cancellation,
+/// a caller defer request, and a caller hard-drop request. Only cooling waits
+/// enter here; plain request-spacing waits use [`sleep_cancelable`] and are
+/// immune to both signals. `notify_waiters` wakes only the maps parked here at
+/// the instant of the press, so one press acts on exactly the currently-parked
+/// maps. Priority (biased): cancel, then drop, then defer, then the cooldown
+/// elapsing.
+async fn inline_wait(
     duration: Duration,
     cancel_rx: &tokio::sync::watch::Receiver<bool>,
-    skip: &tokio::sync::Notify,
-) -> RateLimitWait {
+    defer_signal: &tokio::sync::Notify,
+    drop_signal: &tokio::sync::Notify,
+) -> InlineWait {
     let mut cancel_rx = cancel_rx.clone();
     tokio::select! {
         biased;
-        _ = wait_until_cancelled(&mut cancel_rx) => RateLimitWait::Cancelled,
-        _ = skip.notified() => RateLimitWait::Skipped,
-        _ = sleep(duration) => RateLimitWait::Elapsed,
+        _ = wait_until_cancelled(&mut cancel_rx) => InlineWait::Cancelled,
+        _ = drop_signal.notified() => InlineWait::Dropped,
+        _ = defer_signal.notified() => InlineWait::Deferred,
+        _ = sleep(duration) => InlineWait::Elapsed,
     }
 }
 

@@ -6,7 +6,7 @@
 use crate::{
     Error, Event, Result, Summary,
     batch::{self, BatchConfig},
-    config::DownloadConfig,
+    config::{DownloadConfig, INLINE_WAIT_MAX},
     http,
     mirrors::{Mirror, MirrorPool},
     validation::ArchiveValidation,
@@ -40,6 +40,8 @@ pub struct DownloaderBuilder {
     sanitize_filenames: bool,
     on_exists: OnExists,
     rate_limit_skip_after: Option<Duration>,
+    #[cfg(feature = "instrument")]
+    attempt_observer: Option<crate::instrument::AttemptObserver>,
     #[cfg(any(test, feature = "test-helpers"))]
     http_client_override: Option<reqwest::Client>,
 }
@@ -57,6 +59,8 @@ impl DownloaderBuilder {
             sanitize_filenames: true,
             on_exists: OnExists::Skip,
             rate_limit_skip_after: None,
+            #[cfg(feature = "instrument")]
+            attempt_observer: None,
             #[cfg(any(test, feature = "test-helpers"))]
             http_client_override: None,
         }
@@ -143,14 +147,26 @@ impl DownloaderBuilder {
         self
     }
 
-    /// Auto-skip a beatmapset once the time it has spent parked on rate-limit
-    /// cooldowns (summed across mirror passes) reaches `budget`. The map is
-    /// emitted as a [`Skip::RateLimitSkipped`](crate::Skip::RateLimitSkipped)
-    /// outcome — identical to a manual [`Session::skip_rate_limited`] press.
-    /// `None` (default) waits indefinitely.
+    /// Auto-defer a beatmapset once the time it has spent on inline rate-limit
+    /// cooldown waits reaches `budget`. The budget is PER PROCESSING PASS, not per
+    /// map lifetime: the accumulator resets each pass, so across the deferral pass
+    /// cap a map may wait up to ~3x `budget` inline in total before it terminates.
+    /// The map is returned to the queue for a later pass rather than dropped, so it
+    /// is not lost; it is dropped only after the deferral pass cap is reached.
+    /// `None` (default) waits each cooldown out inline indefinitely.
     #[must_use]
     pub fn rate_limit_skip_after(mut self, budget: Option<Duration>) -> Self {
         self.rate_limit_skip_after = budget;
+        self
+    }
+
+    /// Attach a per-attempt observer (`instrument` feature). It receives one
+    /// [`AttemptRecord`](crate::instrument::AttemptRecord) per HTTP attempt,
+    /// for fitting the scheduler's timing constants.
+    #[cfg(feature = "instrument")]
+    #[must_use]
+    pub fn attempt_observer(mut self, observer: crate::instrument::AttemptObserver) -> Self {
+        self.attempt_observer = Some(observer);
         self
     }
 
@@ -188,6 +204,8 @@ impl DownloaderBuilder {
             sanitize_filenames: self.sanitize_filenames,
             on_exists: self.on_exists,
             rate_limit_skip_after: self.rate_limit_skip_after,
+            #[cfg(feature = "instrument")]
+            attempt_observer: self.attempt_observer,
         };
 
         #[cfg(any(test, feature = "test-helpers"))]
@@ -242,12 +260,14 @@ impl Downloader {
         let output_dir = output_dir.as_ref().to_path_buf();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (cancel_tx, cancel_rx) = watch::channel(false);
-        let skip = Arc::new(Notify::new());
+        let defer = Arc::new(Notify::new());
+        let drop_signal = Arc::new(Notify::new());
 
         let client = self.http_client.clone();
         let mirror_pool = self.mirror_pool.clone();
         let config = self.config.clone();
-        let batch_skip = skip.clone();
+        let batch_defer = defer.clone();
+        let batch_drop = drop_signal.clone();
 
         let task = tokio::spawn(async move {
             let batch_config = BatchConfig {
@@ -258,6 +278,11 @@ impl Downloader {
                 sanitize_filenames: config.sanitize_filenames,
                 on_exists: config.on_exists,
                 rate_limit_skip_after: config.rate_limit_skip_after,
+                inline_wait_max: INLINE_WAIT_MAX,
+                #[cfg(feature = "instrument")]
+                attempt_observer: config.attempt_observer.clone(),
+                #[cfg(feature = "instrument")]
+                session_start: std::time::Instant::now(),
             };
             batch::download_batch(
                 ids,
@@ -267,7 +292,8 @@ impl Downloader {
                 batch_config,
                 event_tx,
                 cancel_rx,
-                batch_skip,
+                batch_defer,
+                batch_drop,
             )
             .await
         });
@@ -275,7 +301,8 @@ impl Downloader {
         Session {
             events: Some(event_rx),
             cancel: cancel_tx,
-            skip,
+            defer,
+            drop_signal,
             task,
         }
     }
@@ -285,7 +312,8 @@ impl Downloader {
 pub struct Session {
     events: Option<mpsc::UnboundedReceiver<Event>>,
     cancel: watch::Sender<bool>,
-    skip: Arc<Notify>,
+    defer: Arc<Notify>,
+    drop_signal: Arc<Notify>,
     task: tokio::task::JoinHandle<Summary>,
 }
 
@@ -300,12 +328,27 @@ impl Session {
         let _ = self.cancel.send(true);
     }
 
-    /// Skip every map that is *currently* waiting on a mirror rate-limit
-    /// cooldown. Each such map ends as
-    /// [`Skip::RateLimitSkipped`](crate::Skip::RateLimitSkipped); maps that hit
-    /// a rate-limit later are unaffected. A no-op when nothing is cooling down.
+    /// Defer every map *currently* parked on an inline rate-limit **cooldown**
+    /// wait (inline-cooling waiters only). Each such map is returned to the
+    /// queue tail (its pass counter incremented) and retried once a mirror
+    /// frees, rather than dropped. Items already deferred to the queue are
+    /// untouched (they are already deferred), as are maps in plain
+    /// request-spacing waits and maps that hit a rate limit later. A no-op
+    /// when nothing is parked.
+    pub fn defer_rate_limited(&self) {
+        self.defer.notify_waiters();
+    }
+
+    /// Hard-drop every map rate-limit-blocked at the instant of the call:
+    /// inline-cooling waiters **and** deferred-pending items sitting in the
+    /// batch queue. Each ends as
+    /// [`Skip::RateLimitSkipped`](crate::Skip::RateLimitSkipped) immediately,
+    /// even while every worker is busy streaming other maps. Untouched: fresh
+    /// queue items that merely have not started yet, maps in plain
+    /// request-spacing waits, and maps that hit a rate limit later. Unlike
+    /// [`defer_rate_limited`](Self::defer_rate_limited) this discards the maps.
     pub fn skip_rate_limited(&self) {
-        self.skip.notify_waiters();
+        self.drop_signal.notify_waiters();
     }
 
     /// Wait for the task to finish and return the [`Summary`]. Drops any remaining events.

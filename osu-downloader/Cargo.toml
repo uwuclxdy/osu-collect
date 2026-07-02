@@ -1,6 +1,6 @@
 [package]
 name = "osu-downloader"
-version = "0.15.0"
+version = "0.16.0"
 edition = "2024"
 autotests = false
 authors = ["uwuclxdy"]
@@ -14,7 +14,6 @@ categories = ["api-bindings", "network-programming"]
 reqwest = { version = "0.13.3", default-features = false, features = ["json", "stream", "default-tls"] }
 tokio = { version = "1.52.3", features = ["rt", "fs", "io-util", "sync", "time", "macros"] }
 tokio-stream = "0.1.18"
-async-channel = "2.5.0"
 futures-util = { version = "0.3.32", default-features = false, features = ["alloc"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
@@ -25,13 +24,20 @@ thiserror = "2.0.18"
 urlencoding = "2.1.3"
 tracing = "0.1.44"
 memchr = "2.7.6"
+httpdate = "1.0.3"
 
 [[bench]]
 name = "downloader"
 harness = false
 
+[[example]]
+name = "tune"
+required-features = ["instrument", "collection"]
+
 [dev-dependencies]
-tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros"] }
+# "signal" is only needed by examples/tune.rs (ctrl-c handling); everything
+# else in dev-dependencies predates that need.
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "signal"] }
 tokio-test = "0.4.5"
 tempfile = "3.27.0"
 criterion = { version = "0.8.2", features = ["html_reports"] }
@@ -47,3 +53,6 @@ size-fetch = []
 
 # Expose test helpers (e.g. Downloader::with_client) for integration tests in dependent crates
 test-helpers = []
+
+# Per-attempt observer callback for the scheduler-tuning harness. Off by default.
+instrument = []

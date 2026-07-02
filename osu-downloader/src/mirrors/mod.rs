@@ -1,35 +1,36 @@
 pub(crate) mod pool;
 
-pub(crate) use pool::MirrorPool;
+pub(crate) use pool::{Acquire, MirrorPool};
 
 use crate::error::{Error, Result};
 use reqwest::header::HeaderMap;
 use std::fmt::Write as _;
 use std::time::Duration;
 
-/// Minimum spacing between requests to the osu! official API ([`MirrorKind::OsuApi`]),
-/// enforced process-wide across all concurrent download workers.
+/// Starting request spacing for the osu! official API ([`MirrorKind::OsuApi`]).
 ///
 /// osu!'s API v2 guidance is roughly 60 requests/minute, so one request per
-/// second keeps bursts inside that envelope no matter how many threads are
-/// downloading. This is a *proactive* limiter that only gates `OsuApi`; every
-/// other mirror is untouched, and it is independent of the *reactive* per-mirror
-/// [`MirrorKind::rate_limit_backoff`] applied after a 429.
+/// second is the floor the scheduler's AIMD spacing decays back toward for this
+/// mirror; a 429 only ever widens it. Independent of the *reactive* per-mirror
+/// [`MirrorKind::rate_limit_backoff`] cooldown applied after a 429.
 ///
 /// Note: this does **not** keep downloads under osu!'s separate hourly download
-/// quota (~10–20/hour). Once that cap is hit osu! returns 429 and the reactive
-/// backoff takes over.
-pub(crate) const OSU_API_MIN_REQUEST_INTERVAL: Duration = Duration::from_secs(1);
+/// quota (~10–20/hour). Once that cap is hit osu! returns 429 and the cooldown
+/// takes over.
+#[cfg(not(test))]
+pub(crate) const OSU_API_BASE_INTERVAL: Duration = Duration::from_secs(1);
+#[cfg(test)]
+pub(crate) const OSU_API_BASE_INTERVAL: Duration = Duration::from_millis(1);
 
-/// Minimum spacing between consecutive requests to the **same** mirror slot,
-/// enforced per slot across all concurrent download workers.
+/// Starting request spacing for every mirror except [`MirrorKind::OsuApi`].
 ///
-/// A politeness limiter so a pool that keeps falling back to one mirror — or a
-/// burst of concurrent maps landing on the same slot — can't hammer it. Applies
-/// to every mirror except [`MirrorKind::OsuApi`], which uses the stricter
-/// [`OSU_API_MIN_REQUEST_INTERVAL`]. Independent of the *reactive* post-429
-/// [`MirrorKind::rate_limit_backoff`].
-pub(crate) const MIN_REQUEST_INTERVAL: Duration = Duration::from_millis(100);
+/// The per-slot AIMD floor the scheduler decays back toward after a run of
+/// successes; a 429 doubles the live spacing up to the ceiling. Keyed per slot,
+/// so two custom mirrors sharing [`MirrorKind::Custom`] pace independently.
+#[cfg(not(test))]
+pub(crate) const BASE_INTERVAL: Duration = Duration::from_millis(250);
+#[cfg(test)]
+pub(crate) const BASE_INTERVAL: Duration = Duration::from_millis(1);
 
 /// Mirror type identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -189,24 +190,21 @@ impl MirrorKind {
         }
     }
 
-    /// Minimum spacing between consecutive requests to a single mirror of this
-    /// kind. [`MirrorKind::OsuApi`] uses [`OSU_API_MIN_REQUEST_INTERVAL`]; every
-    /// other kind uses [`MIN_REQUEST_INTERVAL`].
+    /// Per-slot base request spacing for the scheduler's AIMD limiter: the floor
+    /// a slot's interval decays back toward. [`MirrorKind::OsuApi`] uses
+    /// [`OSU_API_BASE_INTERVAL`]; every other kind uses [`BASE_INTERVAL`].
     #[inline]
-    pub(crate) fn min_request_interval(&self) -> Duration {
+    pub(crate) fn base_request_interval(&self) -> Duration {
         match self {
-            MirrorKind::OsuApi => OSU_API_MIN_REQUEST_INTERVAL,
-            _ => MIN_REQUEST_INTERVAL,
+            MirrorKind::OsuApi => OSU_API_BASE_INTERVAL,
+            _ => BASE_INTERVAL,
         }
     }
 
     pub(crate) fn rate_limit_backoff(&self) -> Duration {
-        #[cfg(test)]
-        {
+        if cfg!(test) {
             return Duration::from_millis(10);
         }
-
-        #[cfg(not(test))]
         match self {
             MirrorKind::Custom => Duration::from_secs(60),
             other => {

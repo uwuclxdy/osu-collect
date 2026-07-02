@@ -36,6 +36,7 @@
 //!
 //! - `collection` — osucollector.com client and `collection.db` writer
 //! - `size-fetch` — Nekoha-backed beatmapset size and availability probes
+//! - `instrument` — per-attempt observer callback for scheduler tuning
 #![deny(missing_docs)]
 
 pub(crate) mod batch;
@@ -45,6 +46,8 @@ mod downloader;
 mod error;
 mod event;
 pub(crate) mod http;
+#[cfg(feature = "instrument")]
+pub mod instrument;
 mod mirrors;
 mod output_entry;
 pub(crate) mod validation;
