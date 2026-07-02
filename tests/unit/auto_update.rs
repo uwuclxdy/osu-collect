@@ -1,6 +1,7 @@
 use super::{
-    AutoUpdateError, AvailableUpdate, DownloadedAsset, apply_update_to, check_for_update_with,
-    check_release, is_cargo_target_path, target_asset_name, verify_checksum,
+    AutoUpdateError, AvailableUpdate, DownloadedAsset, ReleaseResponse, apply_update_to,
+    check_for_update_with, check_release, is_cargo_target_path, newest_release, target_asset_name,
+    verify_checksum,
 };
 use reqwest::Client;
 use sha2::{Digest, Sha256};
@@ -187,6 +188,7 @@ async fn check_and_apply_with_client_runs_hooks_on_update() {
                 Ok(())
             }
         },
+        false,
     )
     .await
     .unwrap();
@@ -238,6 +240,7 @@ async fn check_and_apply_with_client_skips_when_current() {
                 Ok(())
             }
         },
+        false,
     )
     .await
     .unwrap();
@@ -273,7 +276,9 @@ async fn check_for_update_returns_metadata_when_newer() {
         .build()
         .unwrap();
 
-    let info: Option<AvailableUpdate> = check_for_update_with(&client, &release_url).await.unwrap();
+    let info: Option<AvailableUpdate> = check_for_update_with(&client, &release_url, false)
+        .await
+        .unwrap();
     let info = info.expect("newer release should be reported");
     assert_eq!(info.version, "9.9.9");
     assert_eq!(info.name, "v9.9.9");
@@ -306,7 +311,9 @@ async fn check_for_update_none_when_current() {
         .build()
         .unwrap();
 
-    let info = check_for_update_with(&client, &release_url).await.unwrap();
+    let info = check_for_update_with(&client, &release_url, false)
+        .await
+        .unwrap();
     assert!(info.is_none());
 
     handle.abort();
@@ -340,4 +347,39 @@ fn installed_paths_are_not_dev_builds() {
     assert!(!is_cargo_target_path(std::path::Path::new(
         "/opt/release/osu-collect"
     )));
+}
+
+#[test]
+fn newest_release_picks_highest_semver_including_prereleases() {
+    let mk = |tag: &str, draft: bool| ReleaseResponse {
+        name: tag.to_string(),
+        tag_name: tag.to_string(),
+        body: None,
+        draft,
+        assets: vec![],
+    };
+    let releases = vec![
+        mk("v0.4.0", false),
+        mk("v0.4.1-pre", false), // prerelease, highest publishable
+        mk("v0.3.1", false),
+        mk("v9.9.9", true), // draft — must be ignored despite being highest
+        mk("not-a-version", false),
+    ];
+
+    let (release, version) = newest_release(releases).expect("a publishable release");
+    assert_eq!(release.tag_name, "v0.4.1-pre");
+    assert_eq!(version, semver::Version::parse("0.4.1-pre").unwrap());
+}
+
+#[test]
+fn newest_release_empty_when_all_drafts_or_unparseable() {
+    let mk = |tag: &str, draft: bool| ReleaseResponse {
+        name: tag.to_string(),
+        tag_name: tag.to_string(),
+        body: None,
+        draft,
+        assets: vec![],
+    };
+    let releases = vec![mk("v1.0.0", true), mk("nightly", false)];
+    assert!(newest_release(releases).is_none());
 }

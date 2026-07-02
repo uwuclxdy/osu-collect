@@ -41,6 +41,8 @@ const LABEL_LOGGING_ENABLED: &str = "enable logging";
 const LABEL_LOGGING_LEVEL: &str = "log level";
 const LABEL_LOGGING_FORMAT: &str = "log format";
 const LABEL_AUTO_UPDATE: &str = "auto-update";
+const LABEL_PRERELEASES: &str = "prerelease channel";
+const HELP_PRERELEASES: &str = "off: stable only · on: also offer prerelease builds";
 
 const CHIP_LOGGED_OUT: &str = " signed out";
 const CHIP_LOGGED_IN: &str = " signed in";
@@ -382,6 +384,19 @@ fn build_config_items(
     if show_chrome && focus == ConfigField::AutoUpdate {
         items.push(widgets::help_item(auto_update_help(form.auto_update)));
     }
+    items.push_focusable(
+        ConfigField::Prereleases,
+        widgets::row_item(
+            LABEL_PRERELEASES,
+            None,
+            form.prereleases,
+            focus == ConfigField::Prereleases,
+            0,
+        ),
+    );
+    if show_chrome && focus == ConfigField::Prereleases {
+        items.push(widgets::help_item(HELP_PRERELEASES));
+    }
 
     items
 }
@@ -404,7 +419,7 @@ fn focus_section(field: ConfigField) -> Option<&'static str> {
         | DownloadRateLimitSkipSecs
         | DownloadSkipAlreadyImported => SECTION_DOWNLOAD,
         LoggingEnabled | LoggingLevel | LoggingFormat | LoggingDirectory => SECTION_LOGGING,
-        AutoUpdate => SECTION_UPDATE,
+        AutoUpdate | Prereleases => SECTION_UPDATE,
     })
 }
 

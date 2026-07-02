@@ -671,7 +671,7 @@ fn vim_gg_and_capital_g_jump_to_ends() {
     app.handle_key(press(KeyCode::Char('G')));
     assert_eq!(
         app.config.focus,
-        ConfigField::AutoUpdate,
+        ConfigField::Prereleases,
         "G jumps to the last field"
     );
 }

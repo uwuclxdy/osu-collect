@@ -11,7 +11,7 @@ use tracing::{debug, info, warn};
 
 use sha2::{Digest, Sha256};
 
-use crate::config::constants::{AUTO_UPDATE_TIMEOUT, RELEASES_URL};
+use crate::config::constants::{AUTO_UPDATE_TIMEOUT, RELEASES_LIST_URL, RELEASES_URL};
 
 fn build_client() -> Result<Client, AutoUpdateError> {
     Ok(Client::builder()
@@ -20,15 +20,32 @@ fn build_client() -> Result<Client, AutoUpdateError> {
         .build()?)
 }
 
-pub async fn check_and_apply<F>(on_update_found: F) -> Result<Option<String>, AutoUpdateError>
+/// The release endpoint for the requested channel: the full list when
+/// prereleases are opted in (so they aren't filtered out), else `latest`.
+fn releases_url(allow_prerelease: bool) -> &'static str {
+    if allow_prerelease {
+        RELEASES_LIST_URL
+    } else {
+        RELEASES_URL
+    }
+}
+
+pub async fn check_and_apply<F>(
+    on_update_found: F,
+    allow_prerelease: bool,
+) -> Result<Option<String>, AutoUpdateError>
 where
     F: FnOnce() + Send,
 {
     let client = build_client()?;
 
-    check_release(&client, RELEASES_URL, on_update_found, |asset| async move {
-        apply_update(&asset).await
-    })
+    check_release(
+        &client,
+        releases_url(allow_prerelease),
+        on_update_found,
+        |asset| async move { apply_update(&asset).await },
+        allow_prerelease,
+    )
     .await
 }
 
@@ -45,15 +62,18 @@ pub struct AvailableUpdate {
 
 /// Check for a newer release WITHOUT downloading or applying it. `Ok(None)` =
 /// up to date (or an unsupported platform). Used when auto-update is disabled.
-pub async fn check_for_update() -> Result<Option<AvailableUpdate>, AutoUpdateError> {
+pub async fn check_for_update(
+    allow_prerelease: bool,
+) -> Result<Option<AvailableUpdate>, AutoUpdateError> {
     let client = build_client()?;
-    check_for_update_with(&client, RELEASES_URL).await
+    check_for_update_with(&client, releases_url(allow_prerelease), allow_prerelease).await
 }
 
 #[doc(hidden)]
 pub async fn check_for_update_with(
     client: &Client,
     releases_url: &str,
+    allow_prerelease: bool,
 ) -> Result<Option<AvailableUpdate>, AutoUpdateError> {
     // An unsupported platform can't self-replace, so notifying is pointless.
     if target_asset_name().is_none() {
@@ -61,7 +81,9 @@ pub async fn check_for_update_with(
         return Ok(None);
     }
 
-    let Some((release, latest)) = fetch_newer_release(client, releases_url).await? else {
+    let Some((release, latest)) =
+        fetch_newer_release(client, releases_url, allow_prerelease).await?
+    else {
         return Ok(None);
     };
 
@@ -72,24 +94,42 @@ pub async fn check_for_update_with(
     }))
 }
 
-/// Fetch the latest release and return it with its parsed version only when it
-/// is newer than the running binary. `Ok(None)` = up to date.
+/// Fetch the newest release for the requested channel and return it with its
+/// parsed version only when it is newer than the running binary. `Ok(None)` =
+/// up to date. With `allow_prerelease` the full `/releases` list is queried and
+/// the highest semver (prereleases included) wins; otherwise the single
+/// `/releases/latest` object (stable only) is used.
 async fn fetch_newer_release(
     client: &Client,
     releases_url: &str,
+    allow_prerelease: bool,
 ) -> Result<Option<(ReleaseResponse, Version)>, AutoUpdateError> {
-    let release: ReleaseResponse = client
-        .get(releases_url)
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    let (release, latest_version) = if allow_prerelease {
+        let releases: Vec<ReleaseResponse> = client
+            .get(releases_url)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let Some(newest) = newest_release(releases) else {
+            return Ok(None);
+        };
+        newest
+    } else {
+        let release: ReleaseResponse = client
+            .get(releases_url)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let latest_version = parse_release_version(&release)
+            .ok_or_else(|| AutoUpdateError::UnparseableVersion(release.tag_name.clone()))?;
+        (release, latest_version)
+    };
 
     let current_version = Version::parse(env!("CARGO_PKG_VERSION"))?;
-    let latest_version = parse_release_version(&release)
-        .ok_or_else(|| AutoUpdateError::UnparseableVersion(release.tag_name.clone()))?;
-
     if latest_version <= current_version {
         debug!(?latest_version, ?current_version, "no updates available");
         return Ok(None);
@@ -98,12 +138,24 @@ async fn fetch_newer_release(
     Ok(Some((release, latest_version)))
 }
 
+/// Pick the highest-semver release from a `/releases` list, skipping drafts and
+/// any release whose tag/name isn't parseable semver. Prereleases are kept — the
+/// caller only reaches this path when the prerelease channel is opted in.
+fn newest_release(releases: Vec<ReleaseResponse>) -> Option<(ReleaseResponse, Version)> {
+    releases
+        .into_iter()
+        .filter(|release| !release.draft)
+        .filter_map(|release| parse_release_version(&release).map(|version| (release, version)))
+        .max_by(|a, b| a.1.cmp(&b.1))
+}
+
 #[doc(hidden)]
 pub async fn check_release<F, A, Fut>(
     client: &Client,
     releases_url: &str,
     on_update_found: F,
     applier: A,
+    allow_prerelease: bool,
 ) -> Result<Option<String>, AutoUpdateError>
 where
     F: FnOnce() + Send,
@@ -115,7 +167,9 @@ where
         return Ok(None);
     };
 
-    let Some((release, _latest_version)) = fetch_newer_release(client, releases_url).await? else {
+    let Some((release, _latest_version)) =
+        fetch_newer_release(client, releases_url, allow_prerelease).await?
+    else {
         return Ok(None);
     };
 
@@ -147,7 +201,7 @@ where
 }
 
 pub fn spawn_background_update() {
-    let handle = spawn_update_task(|| check_and_apply(print_update_banner));
+    let handle = spawn_update_task(|| check_and_apply(print_update_banner, false));
     drop(handle);
 }
 
@@ -401,6 +455,10 @@ struct ReleaseResponse {
     pub tag_name: String,
     #[serde(default)]
     pub body: Option<String>,
+    /// Drafts are unpublished; the list endpoint returns them but they carry no
+    /// downloadable assets, so they're filtered out of channel selection.
+    #[serde(default)]
+    pub draft: bool,
     pub assets: Vec<ReleaseAsset>,
 }
 

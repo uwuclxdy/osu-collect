@@ -39,6 +39,9 @@ pub const CONFIG_FILE: &str = "config.toml";
 pub const CONFIG_ENV_PATH: &str = "OSU_COLLECT_CONFIG";
 
 pub const RELEASES_URL: &str = "https://api.github.com/repos/uwuclxdy/osu-collect/releases/latest";
+/// Full release list (newest first); used when the prerelease channel is opted
+/// in, since `/releases/latest` excludes prereleases and drafts.
+pub const RELEASES_LIST_URL: &str = "https://api.github.com/repos/uwuclxdy/osu-collect/releases";
 pub const AUTO_UPDATE_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub const SPEED_UPDATE_INTERVAL: Duration = Duration::from_millis(250);

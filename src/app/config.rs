@@ -55,6 +55,7 @@ pub enum ConfigField {
     LoggingFormat,
     LoggingDirectory,
     AutoUpdate,
+    Prereleases,
 }
 
 // Navigation order — must mirror the render order in `tui::config`
@@ -89,6 +90,7 @@ const CONFIG_FIELDS_AFTER_CUSTOM: &[ConfigField] = &[
     ConfigField::LoggingFormat,
     ConfigField::LoggingDirectory,
     ConfigField::AutoUpdate,
+    ConfigField::Prereleases,
 ];
 
 impl ConfigField {
@@ -132,6 +134,7 @@ pub struct ConfigTab {
     pub theme: ThemeMode,
     pub vim_keys: bool,
     pub auto_update: bool,
+    pub prereleases: bool,
     pub focus: ConfigField,
     pub message: Option<AppMessage>,
     pub default_threads: u8,
@@ -171,6 +174,7 @@ impl ConfigTab {
             theme: config.display.theme.unwrap_or_default(),
             vim_keys: config.display.vim_keys,
             auto_update: config.update.auto_update,
+            prereleases: config.update.prereleases,
             // Start focus one row below the auth chip so an accidental enter
             // never opens the login tab on entry.
             focus: ConfigField::Theme,
@@ -368,6 +372,7 @@ impl ConfigTab {
             ConfigField::LoggingLevel => self.cycle_logging_level(),
             ConfigField::LoggingFormat => self.cycle_logging_format(),
             ConfigField::AutoUpdate => self.auto_update = !self.auto_update,
+            ConfigField::Prereleases => self.prereleases = !self.prereleases,
             ConfigField::AuthChip
             | ConfigField::MirrorCustomUrl(_)
             | ConfigField::DownloadThreads
@@ -445,6 +450,7 @@ impl ConfigTab {
             },
             update: UpdateConfig {
                 auto_update: self.auto_update,
+                prereleases: self.prereleases,
             },
             // The config tab does not edit last-used inputs; preserve whatever
             // was loaded so saving the form never wipes the prefill state.

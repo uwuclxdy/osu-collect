@@ -73,7 +73,7 @@ fn logout_sets_loading_message() {
 #[test]
 fn next_field_cycles_through_auth_chip() {
     let mut tab = tab_logged_in();
-    tab.focus = ConfigField::AutoUpdate;
+    tab.focus = ConfigField::Prereleases;
     tab.next_field();
     assert_eq!(tab.focus, ConfigField::AuthChip);
     tab.next_field();
@@ -95,7 +95,7 @@ fn prev_field_cycles_through_auth_chip() {
     tab.prev_field();
     assert_eq!(tab.focus, ConfigField::AuthChip);
     tab.prev_field();
-    assert_eq!(tab.focus, ConfigField::AutoUpdate);
+    assert_eq!(tab.focus, ConfigField::Prereleases);
 }
 
 #[test]

@@ -26,16 +26,21 @@ pub(super) enum UpdateEvent {
 
 /// Spawn the one-shot background update check. `auto` selects the mode: set =
 /// download + apply automatically; clear = only surface availability.
-pub(super) fn spawn_update_check(tx: mpsc::UnboundedSender<UpdateEvent>, auto: bool) {
+/// `prereleases` opts the check into the prerelease channel.
+pub(super) fn spawn_update_check(
+    tx: mpsc::UnboundedSender<UpdateEvent>,
+    auto: bool,
+    prereleases: bool,
+) {
     // A cargo/dev build can't meaningfully self-replace its `target/` binary, so
     // fall back to notify-only there — the update still surfaces without clobbering
     // the compiled artifact.
     let auto = auto && !is_cargo_build();
     tokio::spawn(async move {
         if auto {
-            report_apply(&tx).await;
+            report_apply(&tx, prereleases).await;
         } else {
-            match check_for_update().await {
+            match check_for_update(prereleases).await {
                 Ok(Some(info)) => {
                     let _ = tx.send(UpdateEvent::Available(info));
                 }
@@ -47,19 +52,24 @@ pub(super) fn spawn_update_check(tx: mpsc::UnboundedSender<UpdateEvent>, auto: b
 }
 
 /// Spawn the download+apply flow the user confirmed from the update modal.
-pub(super) fn spawn_apply_update(tx: mpsc::UnboundedSender<UpdateEvent>) {
+/// `prereleases` must match the channel that surfaced the update so the apply
+/// re-finds the same release.
+pub(super) fn spawn_apply_update(tx: mpsc::UnboundedSender<UpdateEvent>, prereleases: bool) {
     tokio::spawn(async move {
-        report_apply(&tx).await;
+        report_apply(&tx, prereleases).await;
     });
 }
 
 /// Run `check_and_apply`, reporting the download → install/fail outcome as
 /// `UpdateEvent`s. Silent when nothing newer exists.
-async fn report_apply(tx: &mpsc::UnboundedSender<UpdateEvent>) {
+async fn report_apply(tx: &mpsc::UnboundedSender<UpdateEvent>, prereleases: bool) {
     let found_tx = tx.clone();
-    let result = check_and_apply(move || {
-        let _ = found_tx.send(UpdateEvent::Downloading);
-    })
+    let result = check_and_apply(
+        move || {
+            let _ = found_tx.send(UpdateEvent::Downloading);
+        },
+        prereleases,
+    )
     .await;
     let outcome = match result {
         Ok(Some(_message)) => UpdateEvent::Installed,

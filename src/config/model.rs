@@ -50,11 +50,17 @@ pub struct UpdateConfig {
     /// automatically at startup. When false, the app only surfaces that an
     /// update exists (header indicator + `u` modal) and applies it on demand.
     pub auto_update: bool,
+    /// Opt-in prerelease channel. When true the update check also considers
+    /// GitHub prereleases (highest semver wins); default false = stable only.
+    pub prereleases: bool,
 }
 
 impl Default for UpdateConfig {
     fn default() -> Self {
-        Self { auto_update: true }
+        Self {
+            auto_update: true,
+            prereleases: false,
+        }
     }
 }
 

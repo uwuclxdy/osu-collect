@@ -51,6 +51,7 @@ pub async fn run(
     info!("Starting application runtime loop");
     apply_theme(config.display.theme);
     let auto_update = config.update.auto_update;
+    let update_prereleases = config.update.prereleases;
     let validation_issue = config.validate().err().map(|e| e.to_string());
     let mut terminal = setup_terminal()?;
     // Guarantees the extra terminal escapes are reversed (+ ratatui restore) on
@@ -111,7 +112,7 @@ pub async fn run(
     // Background self-update check. Auto mode downloads+applies; notify mode only
     // surfaces availability (header indicator + `u` modal). `update_tx` is kept
     // for the user-confirmed apply path.
-    spawn_update_check(update_tx.clone(), auto_update);
+    spawn_update_check(update_tx.clone(), auto_update, update_prereleases);
 
     while !should_quit {
         render_frame(&mut terminal, &app)?;
@@ -402,7 +403,7 @@ fn dispatch_command(
         }
         Some(AppCommand::StartUpdate) => {
             info!("User confirmed update; downloading and applying");
-            spawn_apply_update(update_tx.clone());
+            spawn_apply_update(update_tx.clone(), app.config.prereleases);
         }
         Some(AppCommand::Quit) => {
             if downloads.is_empty() {
