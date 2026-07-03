@@ -42,6 +42,9 @@ jobs:
       - name: test
         run: cargo test --release --all-targets --all-features --target x86_64-unknown-linux-gnu
 
+      - name: test osu-downloader lib
+        run: cargo test --manifest-path osu-downloader/Cargo.toml --all-features
+
       - name: Build for Linux
         run: cargo build --release --target x86_64-unknown-linux-gnu
 
