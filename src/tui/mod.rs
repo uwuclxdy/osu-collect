@@ -232,7 +232,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             tick: app.tick_count,
             downloading: app.is_downloading(),
             brand_ramp: app.brand_ramp(),
-            update_version: app.available_update.as_ref().map(|u| u.version.as_str()),
+            update_phase: app.update_phase,
         },
     );
 

@@ -24,7 +24,7 @@ pub use custom_mirrors::CustomMirrorList;
 pub use home::{HomeField, HomeTab, InputField, ResolveState};
 pub use login::{LoginField, LoginPhase, LoginTab};
 pub use runtime::run as run_app;
-pub use state::{App, AppCommand};
+pub use state::{App, AppCommand, UpdateIndicator};
 pub use toast::{Toast, ToastLevel, ToastTag, Toasts};
 pub use updates::{UpdatesField, UpdatesTab};
 

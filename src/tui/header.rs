@@ -8,11 +8,16 @@ use ratatui::{
     widgets::Paragraph,
 };
 
+use crate::app::UpdateIndicator;
+
 use super::theme::blend;
-use super::{accent, accent_alt, text_dim};
+use super::{accent, accent_alt, spinner_str, text_dim, warning};
 
 const BRAND: &str = " osu!collect";
 const VERSION: &str = concat!(" v", env!("CARGO_PKG_VERSION"), " ");
+/// Running version, no leading `v` / padding — the base of the update cue.
+const CUR_VERSION: &str = env!("CARGO_PKG_VERSION");
+const WHITE: Color = Color::Rgb(255, 255, 255);
 
 /// Header inputs other than the frame. Grouped into a struct so the brand
 /// animation inputs (`tick`, `downloading`) ride along without a long argument
@@ -29,10 +34,11 @@ pub struct RenderParams<'a, 't> {
     /// Ease-in ramp (0..1) for the shimmer. Rises from 0 when downloading
     /// begins so the animation fades in instead of cutting in.
     pub brand_ramp: f32,
-    /// Newer release version (semver, no leading `v`) when one is available in
-    /// notify-only mode; renders as an accent `↑ v<version>` on the right,
-    /// replacing the dim current-version label.
-    pub update_version: Option<&'a str>,
+    /// Self-update indicator phase; when set, the right-side version label gains
+    /// a trailing glyph after the current version (shimmering `↑` available,
+    /// spinner downloading, static `↻` restart-pending). `None` renders the plain
+    /// dim version.
+    pub update_phase: Option<UpdateIndicator>,
 }
 
 pub fn render(frame: &mut Frame, params: RenderParams<'_, '_>) {
@@ -43,20 +49,14 @@ pub fn render(frame: &mut Frame, params: RenderParams<'_, '_>) {
         tick,
         downloading,
         brand_ramp,
-        update_version,
+        update_phase,
     } = params;
 
     if area.width == 0 || area.height == 0 {
         return;
     }
 
-    // Borrow the static label when idle (zero alloc, per the version bench); an
-    // available update needs a formatted `↑ v<new>` string.
-    let version_text: Cow<'_, str> = match update_version {
-        Some(v) => format!(" ↑ v{v} ").into(),
-        None => VERSION.into(),
-    };
-    let version_width = version_text.chars().count() as u16;
+    let (version_line, version_width) = version_indicator(update_phase, tick);
     let brand_width = BRAND.chars().count() as u16;
 
     let layout = Layout::horizontal([
@@ -90,17 +90,70 @@ pub fn render(frame: &mut Frame, params: RenderParams<'_, '_>) {
         layout[1],
     );
 
-    let version_style = if update_version.is_some() {
-        Style::default().fg(accent()).bold()
-    } else {
-        Style::default().fg(text_dim())
-    };
     frame.render_widget(
-        Paragraph::new(version_text.as_ref())
-            .style(version_style)
-            .alignment(Alignment::Right),
+        Paragraph::new(Line::from(version_line)).alignment(Alignment::Right),
         layout[2],
     );
+}
+
+/// Right-side version label + its rendered width. Idle (`None`): the static dim
+/// version. With an update phase, the current version keeps a trailing cue: a
+/// white shimmer `↑` when available (same motion as the downloading brand), an
+/// accent spinner while the update downloads, and a static warning `↻` once it's
+/// installed and waiting on a restart.
+fn version_indicator(phase: Option<UpdateIndicator>, tick: u64) -> (Vec<Span<'static>>, u16) {
+    let width = |s: &str| s.chars().count() as u16;
+    match phase {
+        None => (
+            vec![Span::styled(VERSION, Style::default().fg(text_dim()))],
+            width(VERSION),
+        ),
+        Some(UpdateIndicator::Available) => {
+            // A white pulse sweeps across the cue, then it rests at plain accent
+            // for `UPDATE_REST_TICKS` before the next one — a periodic nudge, not
+            // a continuous shimmer. A half-sine envelope fades each pulse in and
+            // out (crest only tints ~0.55 toward white) so it never pops or
+            // saturates.
+            let text = format!(" v{CUR_VERSION} ↑ ");
+            let cycle = UPDATE_SWEEP_TICKS + UPDATE_REST_TICKS;
+            let t = tick % cycle;
+            let depth = if t < UPDATE_SWEEP_TICKS {
+                let progress = t as f32 / UPDATE_SWEEP_TICKS as f32;
+                0.55 * (std::f32::consts::PI * progress).sin()
+            } else {
+                0.0
+            };
+            let spans = wave_spans(
+                &text,
+                t,
+                UPDATE_SWEEP_TICKS as f32,
+                accent(),
+                WHITE,
+                depth,
+                WHITE,
+                0.0,
+            );
+            (spans, width(&text))
+        }
+        Some(UpdateIndicator::Downloading) => {
+            // Spinner replaces the arrow; the spin is the motion, so no shimmer.
+            let text = format!(" v{CUR_VERSION} {} ", spinner_str(tick).trim());
+            let w = width(&text);
+            (
+                vec![Span::styled(text, Style::default().fg(accent()).bold())],
+                w,
+            )
+        }
+        Some(UpdateIndicator::RestartPending) => {
+            // Static reload glyph in warning-amber, nudging the restart.
+            let text = format!(" v{CUR_VERSION} ↻ ");
+            let w = width(&text);
+            (
+                vec![Span::styled(text, Style::default().fg(warning()).bold())],
+                w,
+            )
+        }
+    }
 }
 
 /// Build the brand line. Idle: a static bold `accent_alt` wordmark. Downloading:
@@ -118,24 +171,53 @@ fn brand_spans(tick: u64, downloading: bool, ramp: f32) -> Vec<Span<'static>> {
         return vec![Span::styled(BRAND, Style::default().fg(base).bold())];
     }
 
-    // A cosine wave crest travels across the brand. `WAVE_PERIOD` is the tick
-    // count for one full left-to-right sweep; `MAX_MIX` caps how far each letter
-    // leans toward the accent so it pulses instead of strobing; `MAX_WHITE` caps
-    // the white sparkle riding the crest tip. `ramp` eases the whole effect in
-    // and out so it materializes and dissolves gently rather than snapping.
+    // `WAVE_PERIOD` is the tick count for one full left-to-right sweep; `MAX_MIX`
+    // caps how far each letter leans toward the accent so it pulses instead of
+    // strobing; `MAX_WHITE` caps the white sparkle riding the crest tip. `ramp`
+    // eases the whole effect in and out so it materializes and dissolves gently
+    // rather than snapping.
     const WAVE_PERIOD: f32 = 16.0;
     const MAX_MIX: f32 = 0.65;
     const MAX_WHITE: f32 = 0.4;
-    let depth = MAX_MIX * ramp;
-    let highlight = accent();
-    let white = Color::Rgb(255, 255, 255);
+    wave_spans(
+        BRAND,
+        tick,
+        WAVE_PERIOD,
+        base,
+        accent(),
+        MAX_MIX * ramp,
+        WHITE,
+        MAX_WHITE * ramp,
+    )
+}
 
-    // Constant-velocity crest: a looping phase fed straight to `cos`, so the
-    // sweep wraps seamlessly with no velocity break. (The old ease-out stalled
-    // the crest at each pass end then snapped it back to full speed, which read
-    // as the wave resetting.)
-    let crest = (tick as f32 / WAVE_PERIOD).fract() * std::f32::consts::TAU;
-    let chars: Vec<char> = BRAND.chars().collect();
+/// Ticks for one white pulse to travel across the update-available cue.
+const UPDATE_SWEEP_TICKS: u64 = 18;
+/// Flat-accent ticks between pulses — the gap that keeps it a periodic nudge
+/// (~1.7s at the 50ms tick) rather than a continuous shimmer.
+const UPDATE_REST_TICKS: u64 = 34;
+
+/// One left-to-right shimmer sweep across `text`, per-char. A cosine crest
+/// travels over the string at `period` ticks/sweep: each column leans `base`
+/// toward `crest` by up to `depth` (0..1), with a sharp `glint` (crest^6) riding
+/// only the tip up to `glint_max`. Shared by the brand wordmark and the
+/// update-available version cue so both animate with the same motion.
+///
+/// Constant-velocity crest: a looping phase fed straight to `cos`, so the sweep
+/// wraps seamlessly with no velocity break.
+#[allow(clippy::too_many_arguments)]
+fn wave_spans(
+    text: &str,
+    tick: u64,
+    period: f32,
+    base: Color,
+    crest: Color,
+    depth: f32,
+    glint: Color,
+    glint_max: f32,
+) -> Vec<Span<'static>> {
+    let head = (tick as f32 / period).fract() * std::f32::consts::TAU;
+    let chars: Vec<char> = text.chars().collect();
     let len = chars.len().max(1) as f32;
 
     chars
@@ -143,16 +225,13 @@ fn brand_spans(tick: u64, downloading: bool, ramp: f32) -> Vec<Span<'static>> {
         .enumerate()
         .map(|(i, ch)| {
             // Distance of this column from the moving crest, wrapped over the
-            // wordmark width so the sweep loops seamlessly.
-            let phase = (i as f32 / len) * std::f32::consts::TAU;
+            // string width so the sweep loops seamlessly.
+            let col = (i as f32 / len) * std::f32::consts::TAU;
             // 0..1 brightness: 1 at the crest, easing to 0 between sweeps.
-            let crest_factor = (phase - crest).cos() * 0.5 + 0.5;
-            let lit = blend(highlight, base, crest_factor * depth);
-            // A sharp white glint sits only on the very tip of the crest — the
-            // high power keeps it to the leading letter or two, not the whole
-            // sweep. Scaled by `ramp` so it fades with the rest.
-            let white_amt = crest_factor.powi(6) * MAX_WHITE * ramp;
-            let fg = blend(white, lit, white_amt);
+            let crest_factor = (col - head).cos() * 0.5 + 0.5;
+            let lit = blend(crest, base, crest_factor * depth);
+            let glint_amt = crest_factor.powi(6) * glint_max;
+            let fg = blend(glint, lit, glint_amt);
             Span::styled(ch.to_string(), Style::default().fg(fg).bold())
         })
         .collect()

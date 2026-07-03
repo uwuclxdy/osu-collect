@@ -7,7 +7,7 @@
 //! the same download+apply flow. A cargo/dev build is forced into notify-only
 //! regardless of the setting, since self-replacing a `target/` binary is moot.
 
-use super::super::{App, Toast, ToastTag};
+use super::super::{App, Toast, ToastTag, UpdateIndicator};
 use crate::auto_update::{AvailableUpdate, check_and_apply, check_for_update, is_cargo_build};
 use tokio::sync::mpsc;
 use tracing::warn;
@@ -83,6 +83,7 @@ pub(super) fn handle_update_event(event: UpdateEvent, app: &mut App) {
     match event {
         UpdateEvent::Available(info) => app.set_available_update(info),
         UpdateEvent::Downloading => {
+            app.update_phase = Some(UpdateIndicator::Downloading);
             app.push_toast(
                 Toast::info("downloading update")
                     .until_resolved()
@@ -90,6 +91,7 @@ pub(super) fn handle_update_event(event: UpdateEvent, app: &mut App) {
             );
         }
         UpdateEvent::Installed => {
+            app.update_phase = Some(UpdateIndicator::RestartPending);
             app.toasts.replace_tagged(
                 ToastTag::Update,
                 Toast::success("update installed")
@@ -98,6 +100,12 @@ pub(super) fn handle_update_event(event: UpdateEvent, app: &mut App) {
             );
         }
         UpdateEvent::Failed(err) => {
+            // Apply failed: fall the header cue back to `Available` if a release
+            // is still known, else drop it — the toast carries the reason.
+            app.update_phase = app
+                .available_update
+                .is_some()
+                .then_some(UpdateIndicator::Available);
             warn!(error = %err, "Auto-update failed; a new version may be available");
             app.toasts.replace_tagged(
                 ToastTag::Update,

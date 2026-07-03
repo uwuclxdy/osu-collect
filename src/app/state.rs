@@ -95,8 +95,14 @@ pub struct App {
     /// submitted. Surfaces only when the config is `Ask`.
     pub confirm_retry_on_start: Option<RetryOnStartModal>,
     /// A newer release detected in notify-only mode (auto-update off). Drives
-    /// the header version indicator, the footer `u` hint, and the update modal.
+    /// the footer `u` hint and the update modal; cleared once the user confirms
+    /// the apply.
     pub available_update: Option<AvailableUpdate>,
+    /// Header self-update indicator phase. Independent of `available_update`
+    /// (which is cleared on confirm): this rides the whole apply flow so the
+    /// header keeps a live cue through download and the restart-pending wait,
+    /// including auto-update, which never populates `available_update`.
+    pub update_phase: Option<UpdateIndicator>,
     /// The update-changelog modal, opened with `u` when an update is available.
     pub update_modal: Option<UpdateModal>,
     /// Override for the on-disk failed-maps file, set by tests. Production
@@ -117,6 +123,19 @@ pub struct App {
     /// immutable borrow during `draw()` (interior mutability mirrors
     /// `disk_cache`).
     pub(crate) banner_recency: BannerRecency,
+}
+
+/// Header self-update indicator phase (see [`App::update_phase`]). Each variant
+/// swaps the trailing glyph after the current version: `Available` shimmers an
+/// `↑`, `Downloading` spins in its place, `RestartPending` shows a static `↻`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateIndicator {
+    /// A newer release exists; nothing applied yet (notify-only).
+    Available,
+    /// The new binary is downloading / installing.
+    Downloading,
+    /// Installed; a restart applies it.
+    RestartPending,
 }
 
 #[derive(Debug)]
@@ -256,6 +275,7 @@ impl App {
             confirm_retry: None,
             confirm_retry_on_start: None,
             available_update: None,
+            update_phase: None,
             update_modal: None,
             failed_maps_path_override: None,
             next_download_id: 1,
@@ -1878,6 +1898,7 @@ impl App {
     /// version indicator and the footer `u` hint.
     pub fn set_available_update(&mut self, info: AvailableUpdate) {
         self.available_update = Some(info);
+        self.update_phase = Some(UpdateIndicator::Available);
     }
 
     /// Open the update-changelog modal. No-op when no update is available.
