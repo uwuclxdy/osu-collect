@@ -75,9 +75,9 @@ fn archive_validation_help(mode: ArchiveValidation) -> &'static str {
 /// on the next launch in the current state.
 fn auto_update_help(auto: bool) -> &'static str {
     if auto {
-        "on: download & install newer releases on launch"
+        "download & install update on launch"
     } else {
-        "off: notify only — press u to view changelog & update"
+        "notify only; press u for changelog & update"
     }
 }
 
