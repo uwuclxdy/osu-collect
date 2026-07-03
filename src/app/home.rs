@@ -262,6 +262,9 @@ pub struct HomeTab {
     pub quit_prompt: bool,
     pub default_threads: u8,
     default_directory: String,
+    /// Persisted list scroll offset so the focused row isn't re-pinned to the
+    /// panel's bottom edge every frame (see [`widgets::render_list`]).
+    pub list_offset: std::cell::Cell<usize>,
 }
 
 impl HomeTab {
@@ -330,6 +333,7 @@ impl HomeTab {
             quit_prompt: false,
             default_threads,
             default_directory,
+            list_offset: std::cell::Cell::new(0),
         }
     }
 

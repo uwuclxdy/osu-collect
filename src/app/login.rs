@@ -63,6 +63,9 @@ pub struct LoginTab {
     /// `logged_in`), so the "you can close this tab now" hint shows only after an
     /// actual sign-in.
     pub just_logged_in: bool,
+    /// Persisted list scroll offset so the focused row isn't re-pinned to the
+    /// panel's bottom edge every frame (see [`widgets::render_list`]).
+    pub list_offset: std::cell::Cell<usize>,
 }
 
 impl LoginTab {
@@ -86,6 +89,7 @@ impl LoginTab {
             focus,
             phase,
             just_logged_in: false,
+            list_offset: std::cell::Cell::new(0),
         }
     }
 

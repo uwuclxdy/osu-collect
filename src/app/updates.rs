@@ -262,6 +262,9 @@ pub struct UpdatesTab {
     pub scan: ScanState,
     pub selection: SelectionState,
     pub message: Option<AppMessage>,
+    /// Persisted list scroll offset so the focused row isn't re-pinned to the
+    /// panel's bottom edge every frame (see [`widgets::render_list`]).
+    pub list_offset: std::cell::Cell<usize>,
 }
 
 impl UpdatesTab {
@@ -288,6 +291,7 @@ impl UpdatesTab {
             scan: ScanState::new(),
             selection: SelectionState::new(),
             message: None,
+            list_offset: std::cell::Cell::new(0),
         }
     }
 

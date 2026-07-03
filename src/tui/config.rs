@@ -118,6 +118,7 @@ pub fn render(
         cursor_col,
         true,
         true,
+        &form.list_offset,
     )
 }
 

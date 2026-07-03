@@ -235,7 +235,14 @@ fn focused_row_promotes_only_label_keeps_value_color_and_full_bg() {
     let inner = Rect::new(0, 0, 40, 4);
     terminal
         .draw(|frame| {
-            let _ = render_list(frame, inner, vec![focused, blurred], Some(0), true);
+            let _ = render_list(
+                frame,
+                inner,
+                vec![focused, blurred],
+                Some(0),
+                true,
+                &std::cell::Cell::new(0),
+            );
         })
         .expect("frame renders");
     let buf = terminal.backend().buffer();

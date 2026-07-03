@@ -142,6 +142,9 @@ pub struct ConfigTab {
     /// `recent` last-used inputs, so [`build_config`](Self::build_config) reads
     /// them back from here to avoid wiping the prefill state on save.
     pub loaded_config: Config,
+    /// Persisted list scroll offset so the focused row isn't re-pinned to the
+    /// panel's bottom edge every frame (see [`widgets::render_list`]).
+    pub list_offset: std::cell::Cell<usize>,
 }
 
 impl ConfigTab {
@@ -181,6 +184,7 @@ impl ConfigTab {
             message: None,
             default_threads: default_threads(),
             loaded_config: config.clone(),
+            list_offset: std::cell::Cell::new(0),
         }
     }
 

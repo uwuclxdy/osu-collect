@@ -106,6 +106,7 @@ fn render_compact(frame: &mut Frame, area: Rect, form: &HomeTab, unlocked: bool,
         cursor_col,
         true,
         true,
+        &form.list_offset,
     )
 }
 
@@ -219,6 +220,7 @@ fn render_content(frame: &mut Frame, area: Rect, form: &HomeTab, unlocked: bool,
         cursor_col,
         true,
         true,
+        &form.list_offset,
     )
 }
 

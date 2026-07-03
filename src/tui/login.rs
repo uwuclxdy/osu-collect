@@ -54,6 +54,7 @@ pub fn render(
         cursor_col,
         true,
         true,
+        &login.list_offset,
     );
 }
 

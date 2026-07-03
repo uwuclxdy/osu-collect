@@ -12,6 +12,7 @@ use ratatui::{
         ScrollbarState,
     },
 };
+use std::cell::Cell;
 use std::sync::OnceLock;
 use std::time::Instant;
 
@@ -117,9 +118,16 @@ pub(crate) fn render_list(
     items: Vec<ListItem<'static>>,
     focused: Option<usize>,
     highlight: bool,
+    offset: &Cell<usize>,
 ) -> usize {
     let total = items.len();
-    let mut state = ListState::default();
+    // Persist the scroll offset across frames: seed the list with the previous
+    // offset so ratatui only scrolls when the focused row falls outside the
+    // viewport. A fresh `ListState::default()` each frame re-pins the selection
+    // to the panel's bottom edge on every redraw (offset resets to 0, then
+    // `select` scrolls the minimum to reveal it — always the bottom once past
+    // the first page).
+    let mut state = ListState::default().with_offset(offset.get());
     // Always scroll the focused row into view; only the highlight bar is gated.
     state.select(focused);
     // A self-styling focused row (CTA / auth chip) keeps its own styling by
@@ -134,9 +142,10 @@ pub(crate) fn render_list(
         .highlight_symbol("")
         .highlight_style(row_style);
     frame.render_stateful_widget(list, inner, &mut state);
-    let offset = state.offset();
-    render_scrollbar(frame, inner, offset, total);
-    offset
+    let resolved = state.offset();
+    offset.set(resolved);
+    render_scrollbar(frame, inner, resolved, total);
+    resolved
 }
 
 /// Draw a scrollbar in a padded panel's right padding column.
@@ -205,13 +214,14 @@ pub fn render_scrollable_panel(
     cursor_col: Option<u16>,
     focused: bool,
     first_panel: bool,
+    offset: &Cell<usize>,
 ) {
     let block = panel_block(title, focused, first_panel);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     let total = items.len();
-    let start = render_list(frame, inner, items, Some(focused_index), highlight);
+    let start = render_list(frame, inner, items, Some(focused_index), highlight, offset);
     let end = (start + inner.height as usize).min(total);
 
     set_panel_cursor(frame, inner, focused_index, start, end, cursor_col);

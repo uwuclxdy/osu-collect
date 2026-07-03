@@ -68,7 +68,14 @@ pub fn render(frame: &mut Frame, area: Rect, form: &UpdatesTab, editing: bool) {
     // The download button styles its own focus (KEEP per pending exception), so
     // it is excluded from the row highlight — but it must still scroll into view.
     let highlight = form.selection.focus != UpdatesField::Download;
-    let start = widgets::render_list(frame, inner, items, Some(focused_index), highlight);
+    let start = widgets::render_list(
+        frame,
+        inner,
+        items,
+        Some(focused_index),
+        highlight,
+        &form.list_offset,
+    );
     let end = (start + inner.height as usize).min(total);
 
     // Caret only when the osu! path field is the focused, editable row AND in
@@ -116,6 +123,7 @@ fn render_compact(frame: &mut Frame, area: Rect, form: &UpdatesTab) {
         items,
         focused,
         form.selection.in_collection_list,
+        &form.list_offset,
     );
 }
 
