@@ -90,10 +90,51 @@ fn sanitize_collection_name(name: &str) -> String {
 
     let trimmed = out.trim();
     if trimmed.is_empty() {
-        "collection".to_string()
+        return "collection".to_string();
+    }
+
+    // Windows resolves a path component to a DOS device when the component's
+    // stem (text before the first dot, trailing spaces ignored, case-insensitive)
+    // matches a reserved name such as CON, PRN, AUX, NUL, COM1-9 or LPT1-9,
+    // extension included: `CON.txt` is the console. Prefixing `_` breaks that
+    // resolution on Windows and is inert everywhere else.
+    let stem = trimmed
+        .split_once('.')
+        .map_or(trimmed, |(stem, _)| stem)
+        .trim_end();
+    if is_reserved_device_name(stem) {
+        format!("_{trimmed}")
     } else {
         trimmed.to_string()
     }
+}
+
+fn is_reserved_device_name(stem: &str) -> bool {
+    matches!(
+        stem.to_ascii_lowercase().as_str(),
+        "con"
+            | "prn"
+            | "aux"
+            | "nul"
+            | "com1"
+            | "com2"
+            | "com3"
+            | "com4"
+            | "com5"
+            | "com6"
+            | "com7"
+            | "com8"
+            | "com9"
+            | "lpt1"
+            | "lpt2"
+            | "lpt3"
+            | "lpt4"
+            | "lpt5"
+            | "lpt6"
+            | "lpt7"
+            | "lpt8"
+            | "lpt9"
+    )
 }
 
 /// Client for fetching collections from osucollector.com.
