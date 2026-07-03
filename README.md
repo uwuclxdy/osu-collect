@@ -225,4 +225,4 @@ Powered by [osu-downloader](osu-downloader/) (the bundled Rust library handling 
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at your option. Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this work shall be dual licensed as above, without any additional terms or conditions.
