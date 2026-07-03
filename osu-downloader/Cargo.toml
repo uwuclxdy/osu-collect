@@ -3,6 +3,7 @@ name = "osu-downloader"
 version = "0.16.0"
 edition = "2024"
 autotests = false
+publish = false
 authors = ["uwuclxdy"]
 description = "Library for downloading osu! beatmaps from multiple mirrors"
 license = "MIT"
