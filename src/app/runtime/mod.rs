@@ -206,6 +206,7 @@ pub async fn run(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_input(
     input: InputEvent,
     app: &mut App,
@@ -248,6 +249,7 @@ fn handle_input(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_key_event(
     key: KeyEvent,
     app: &mut App,
@@ -281,6 +283,7 @@ fn handle_key_event(
 /// Run the side effects for an [`AppCommand`] produced by a key or paste event,
 /// returning `true` only when the app should quit. Shared by the key and paste
 /// input paths so both dispatch identically.
+#[allow(clippy::too_many_arguments)]
 fn dispatch_command(
     cmd: Option<AppCommand>,
     app: &mut App,

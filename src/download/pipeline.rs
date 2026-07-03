@@ -387,6 +387,7 @@ async fn persist_snapshots(
 }
 
 /// Drives the [`Downloader`] for the prepared session. Returns `None` if cancelled.
+#[allow(clippy::too_many_arguments)]
 async fn run_pipeline_core(
     id: DownloadId,
     session: &DownloadSession,
