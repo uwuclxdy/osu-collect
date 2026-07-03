@@ -4,7 +4,7 @@ version = "0.4.1"
 edition = "2024"
 authors = ["uwuclxdy"]
 description = "Download and update installed collections from osu!collector (TUI)"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 autotests = false
 
 [[bin]]
