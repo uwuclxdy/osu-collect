@@ -73,50 +73,58 @@ fetch_latest_release() {
   curl -fsSL --retry 3 "$API_URL"
 }
 
-# Emits three lines on stdout: tag, download URL, sha256 URL.
+# Emits three lines on stdout: tag, download URL, sha256 hex.
 # Returns values via stdout rather than globals — a command-substitution
 # subshell cannot write back to the caller's variables.
 parse_release() {
   local json="$1"
   local asset_name="$2"
 
-  local tag download_url sha256_url
+  local tag download_url digest
   if command -v jq &>/dev/null; then
     tag="$(printf '%s' "$json" | jq -r '.tag_name')"
     download_url="$(printf '%s' "$json" \
       | jq -r --arg n "$asset_name" '.assets[] | select(.name == $n) | .browser_download_url')"
-    sha256_url="$(printf '%s' "$json" \
-      | jq -r --arg n "${asset_name}.sha256" '.assets[] | select(.name == $n) | .browser_download_url')"
+    digest="$(printf '%s' "$json" \
+      | jq -r --arg n "$asset_name" '.assets[] | select(.name == $n) | .digest // empty')"
   else
     tag="$(parse_field "$json" "tag_name")"
-    # extract browser_download_url for asset_name
-    # GitHub API asset blocks span ~30 lines; -A5 is too short
+    # GitHub's per-asset block spans ~30 lines and carries both the download URL
+    # and the `digest` GitHub computed ("sha256:<hex>"); -A5 is too short.
     download_url="$(printf '%s' "$json" \
       | grep -A30 "\"name\":.*\"${asset_name}\"" \
       | grep "browser_download_url" | head -1 \
       | sed 's/.*"browser_download_url":[[:space:]]*"\([^"]*\)".*/\1/')"
-    sha256_url="$(printf '%s' "$json" \
-      | grep -A30 "\"name\":.*\"${asset_name}\.sha256\"" \
-      | grep "browser_download_url" | head -1 \
-      | sed 's/.*"browser_download_url":[[:space:]]*"\([^"]*\)".*/\1/')"
+    digest="$(printf '%s' "$json" \
+      | grep -A30 "\"name\":.*\"${asset_name}\"" \
+      | grep '"digest"' | head -1 \
+      | sed 's/.*"digest":[[:space:]]*"\([^"]*\)".*/\1/')"
   fi
 
   [[ -n "$tag" ]]          || { error "could not parse tag_name from release JSON"; exit 1; }
   [[ -n "$download_url" ]] || { error "asset '${asset_name}' not found in release ${tag}"; exit 1; }
-  [[ -n "$sha256_url" ]]   || { error "checksum file '${asset_name}.sha256' not found in release ${tag}"; exit 1; }
+  [[ -n "$digest" ]]       || { error "asset '${asset_name}' has no digest in release ${tag}"; exit 1; }
 
-  printf '%s\n%s\n%s\n' "$tag" "$download_url" "$sha256_url"
+  # GitHub only emits sha256 today; refuse anything else rather than trust a
+  # digest algorithm we don't verify against.
+  case "$digest" in
+    sha256:*) digest="${digest#sha256:}" ;;
+    *) error "unexpected digest for '${asset_name}': ${digest}"; exit 1 ;;
+  esac
+
+  # the hash is compared as a plain hex string; make sure the jq-free parse
+  # didn't hand us a stray JSON fragment instead of a real digest.
+  [[ "$digest" =~ ^[0-9a-fA-F]{64}$ ]] \
+    || { error "malformed digest for '${asset_name}': ${digest}"; exit 1; }
+
+  printf '%s\n%s\n%s\n' "$tag" "$download_url" "$digest"
 }
 
 # ── sha256 verification ──────────────────────────────────────────────────────
 
 verify_sha256() {
   local file="$1"
-  local sha256_file="$2"
-
-  # expected format: "<hex>  <filename>" — grab only the hex part
-  local expected
-  expected="$(awk '{print $1}' "$sha256_file")"
+  local expected="$2"
 
   local actual
   if command -v sha256sum &>/dev/null; then
@@ -127,6 +135,10 @@ verify_sha256() {
     error "no sha256sum or shasum found — cannot verify download"
     exit 1
   fi
+
+  # GitHub's digest is lowercase hex; normalize both sides before comparing
+  expected="$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')"
+  actual="$(printf '%s' "$actual" | tr '[:upper:]' '[:lower:]')"
 
   if [[ "$actual" != "$expected" ]]; then
     error "sha256 mismatch"
@@ -175,14 +187,14 @@ main() {
   local json
   json="$(fetch_latest_release)"
 
-  # parse_release prints tag / download URL / sha256 URL on three lines and
+  # parse_release prints tag / download URL / sha256 hex on three lines and
   # exits non-zero on failure; command substitution propagates that exit
   # under `set -e`, so a parse failure still aborts the installer.
   local release_info
   release_info="$(parse_release "$json" "$asset_name")"
 
-  local tag DOWNLOAD_URL SHA256_URL
-  { read -r tag; read -r DOWNLOAD_URL; read -r SHA256_URL; } <<< "$release_info"
+  local tag DOWNLOAD_URL REMOTE_HASH
+  { read -r tag; read -r DOWNLOAD_URL; read -r REMOTE_HASH; } <<< "$release_info"
 
   info "latest release: $tag"
 
@@ -192,19 +204,13 @@ main() {
   trap 'cleanup "$tmpdir"' EXIT
 
   local tmp_bin="${tmpdir}/${asset_name}"
-  local tmp_sha="${tmpdir}/${asset_name}.sha256"
 
-  info "downloading checksum..."
-  curl -fsSL --retry 3 -o "$tmp_sha" "$SHA256_URL"
-
-  local remote_hash
-  remote_hash="$(awk '{print $1}' "$tmp_sha")"
-
-  # idempotency check: same hash already installed?
+  # idempotency check: same hash already installed? GitHub's digest is lowercase,
+  # as is installed_hash, so compare directly.
   local current_hash
   current_hash="$(installed_hash)"
 
-  if [[ -n "$current_hash" && "$current_hash" == "$remote_hash" ]]; then
+  if [[ -n "$current_hash" && "$current_hash" == "$REMOTE_HASH" ]]; then
     info "already up to date ($tag)"
     exit 0
   fi
@@ -213,7 +219,7 @@ main() {
   curl -fsSL --retry 3 -o "$tmp_bin" "$DOWNLOAD_URL"
 
   info "verifying checksum..."
-  if ! verify_sha256 "$tmp_bin" "$tmp_sha"; then
+  if ! verify_sha256 "$tmp_bin" "$REMOTE_HASH"; then
     rm -f -- "$tmp_bin"
     error "download aborted due to checksum failure"
     exit 1

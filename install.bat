@@ -26,16 +26,18 @@ if errorlevel 1 (
 )
 
 :: NULL sentinels keep all three fields non-empty so for /f does not collapse the
-:: "|" delimiters when an asset is missing
+:: "|" delimiters when an asset is missing. The sha256 comes from GitHub's inline
+:: per-asset "digest" ("sha256:<hex>"), so no separate checksum request is needed.
 for /f "tokens=1,2,3 delims=|" %%a in ('powershell -NoProfile -Command ^
   "$r = Get-Content -LiteralPath '%RELJSON%' -Raw | ConvertFrom-Json; " ^
   "$t = $r.tag_name; if (-not $t) { $t = 'NULL' }; " ^
-  "$d = ($r.assets | Where-Object { $_.name -eq '%ASSET_NAME%' }).browser_download_url; if (-not $d) { $d = 'NULL' }; " ^
-  "$s = ($r.assets | Where-Object { $_.name -eq '%ASSET_NAME%.sha256' }).browser_download_url; if (-not $s) { $s = 'NULL' }; " ^
-  "Write-Output ($t + '|' + $d + '|' + $s)"') do (
+  "$a = $r.assets | Where-Object { $_.name -eq '%ASSET_NAME%' }; " ^
+  "$d = $a.browser_download_url; if (-not $d) { $d = 'NULL' }; " ^
+  "$h = $a.digest; if ($h -match '^sha256:[0-9a-fA-F]{64}$') { $h = $h.Substring(7).ToLower() } else { $h = 'NULL' }; " ^
+  "Write-Output ($t + '|' + $d + '|' + $h)"') do (
   set "LATEST_TAG=%%a"
   set "DOWNLOAD_URL=%%b"
-  set "SHA256_URL=%%c"
+  set "REMOTE_HASH=%%c"
 )
 del /f /q "%RELJSON%" 2>nul
 
@@ -51,8 +53,8 @@ if "%DOWNLOAD_URL%"=="NULL" (
   echo error: asset '%ASSET_NAME%' not found in release %LATEST_TAG%
   exit /b 1
 )
-if "%SHA256_URL%"=="NULL" (
-  echo error: checksum file '%ASSET_NAME%.sha256' not found in release %LATEST_TAG%
+if "%REMOTE_HASH%"=="NULL" (
+  echo error: asset '%ASSET_NAME%' has no sha256 digest in release %LATEST_TAG%
   exit /b 1
 )
 
@@ -67,29 +69,8 @@ if errorlevel 1 (
 )
 
 set "TMP_BIN=%TMPDIR%\%ASSET_NAME%"
-set "TMP_SHA=%TMPDIR%\%ASSET_NAME%.sha256"
 
-:: -- download checksum first --------------------------------------------------
-
-echo ==^> downloading checksum...
-curl.exe -fsSL --retry 3 -o "%TMP_SHA%" "%SHA256_URL%"
-if errorlevel 1 (
-  echo error: failed to download checksum file
-  rmdir /s /q "%TMPDIR%" 2>nul
-  exit /b 1
-)
-
-:: extract remote hash (first token on first line)
-for /f "usebackq tokens=1" %%H in ("!TMP_SHA!") do (
-  set "REMOTE_HASH=%%H"
-  goto :got_remote_hash
-)
-:got_remote_hash
-if "%REMOTE_HASH%"=="" (
-  echo error: could not read hash from checksum file
-  rmdir /s /q "%TMPDIR%" 2>nul
-  exit /b 1
-)
+:: REMOTE_HASH already came from the release JSON's per-asset digest above.
 
 :: -- idempotency check --------------------------------------------------------
 
