@@ -389,7 +389,7 @@ fn hint_count(footer: &str) -> usize {
 }
 
 #[test]
-fn home_footer_toggle_focus_has_quit_hint_ending_with_help() {
+fn home_footer_toggle_focus_ends_with_help_then_quit() {
     use osu_collect::app::HomeField;
 
     let mut app = make_app();
@@ -403,10 +403,15 @@ fn home_footer_toggle_focus_has_quit_hint_ending_with_help() {
         footer.contains("switch client"),
         "must show c switch client"
     );
+    // cloudy-tui order: `? help` then the back/quit key trail the bar.
+    assert!(
+        footer.find("? help") < footer.find("q quit"),
+        "help must precede quit: {footer:?}"
+    );
     assert_eq!(
         hint_count(&footer),
         5,
-        "toggle focus must show move, toggle, quit, help, switch-client"
+        "toggle focus must show move, toggle, switch-client, help, quit"
     );
 }
 

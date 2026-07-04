@@ -1,5 +1,5 @@
 use crate::app::{
-    App, ConfigField, HomeField, HomeTab, LoginField, UpdatesField, UpdatesTab,
+    App, ConfigField, ConfigTab, HomeField, HomeTab, LoginField, UpdatesField, UpdatesTab,
     messages::AppMessage,
 };
 use crate::config::constants::{CONFIG_TAB_INDEX, HOME_TAB_INDEX, UPDATES_TAB_INDEX};
@@ -27,10 +27,11 @@ const VIM_CHIP: &str = " vim ";
 const QUIT_PROMPT_TEXT: &str = "press q again to quit";
 const QUIT_PROMPT_TEXT_DOWNLOADS: &str = "press q again to quit · active downloads will stop";
 
-const DOWNLOAD_TAB_HINT_RUNNING: &str = "↑↓ scroll  ·  q abort  ·  ? help";
-// `esc`/`q` both close a settled page. `x` is toast-only (a notification key,
-// not a download-page action) so it isn't advertised here.
-const DOWNLOAD_TAB_HINT_SETTLED: &str = "↑↓ scroll  ·  esc/q close  ·  ? help";
+/// Download-page back key while running: `q` aborts the in-flight download.
+const HINT_ABORT: &str = "q abort";
+/// `esc`/`q` close key — a settled download page or the dynamic login tab. `x`
+/// stays toast-only (a notification key, not a page action) so it isn't a back key.
+const HINT_CLOSE: &str = "esc/q close";
 const HINT_RETRY: &str = "r retry failed";
 const HINT_DEFER_DROP: &str = "s defer · S drop";
 /// Drop-only variant: shown when maps are queue-deferred but none are parked
@@ -39,6 +40,8 @@ const HINT_DROP: &str = "S drop";
 
 const HINT_MOVE: &str = "↑↓ move";
 const HINT_SCROLL: &str = "↑↓ scroll";
+/// ⇧↑↓ reorders the focused built-in mirror row in the Config try-order.
+const HINT_REORDER: &str = "⇧↑↓ reorder";
 const HINT_ENTER_TOGGLE: &str = "↵ toggle";
 const HINT_ENTER_OPEN: &str = "↵ open";
 const HINT_ENTER_CONFIRM: &str = "↵ confirm";
@@ -58,8 +61,6 @@ const HINT_UPDATE: &str = "u update";
 const HINT_SWITCH_CLIENT: &str = "c switch client";
 /// `x` dismisses the top toast; advertised only while one is visible.
 const HINT_DISMISS: &str = "x dismiss";
-/// Close hint for the dynamic, closeable login tab.
-const HINT_LOGIN_CLOSE: &str = "esc/q close";
 
 /// Footer hint shown while a modal is open — discoverability lives in the
 /// context-aware footer hint bar, not a per-modal hint row.
@@ -159,47 +160,44 @@ fn current_message(app: &App) -> Option<&AppMessage> {
 }
 
 fn hint_for(app: &App) -> String {
-    let mut hint = match app.active_tab() {
-        HOME_TAB_INDEX => home_hint(&app.home, app.editing),
-        UPDATES_TAB_INDEX => updates_hint(&app.updates, app.editing),
-        CONFIG_TAB_INDEX => config_hint(app.config.focus, app.editing),
-        tab if app.is_login_tab(tab) => login_hint(app, app.editing),
-        _ => download_tab_hint(app),
-    };
-    // `c` switches the osu! client from any tab; advertise it globally except
-    // while editing a text field, where `c` types a literal char.
-    if !app.editing {
-        hint = if hint.is_empty() {
-            HINT_SWITCH_CLIENT.to_string()
-        } else {
-            format!("{hint}{HINT_SEPARATOR}{HINT_SWITCH_CLIENT}")
-        };
+    // Editing collapses the bar to the single exit affordance — no globals,
+    // no universal help/back tail (the field owns every other key).
+    if app.editing {
+        return HINT_EDIT_DONE.to_string();
     }
-    // A pending notify-only update is actionable from any tab via `u`.
+    let (mut segments, back) = tab_hints(app);
+    // App-global hints sit in the middle, ahead of the universal tail: `c`
+    // (any tab), `u` (an update is pending), `x` (a toast is visible).
+    segments.push(HINT_SWITCH_CLIENT);
     if app.available_update.is_some() {
-        if hint.is_empty() {
-            hint = HINT_UPDATE.to_string();
-        } else {
-            hint = format!("{hint}{HINT_SEPARATOR}{HINT_UPDATE}");
-        }
+        segments.push(HINT_UPDATE);
     }
-    // `x` dismisses the top toast, but only while one is visible and we're not
-    // editing (where `x` types a literal char). Kept last so the transient
-    // group appears/vanishes at the tail without shifting the stable keys.
-    if !app.editing && !app.toasts.is_empty() {
-        hint = if hint.is_empty() {
-            HINT_DISMISS.to_string()
-        } else {
-            format!("{hint}{HINT_SEPARATOR}{HINT_DISMISS}")
-        };
+    if !app.toasts.is_empty() {
+        segments.push(HINT_DISMISS);
     }
-    hint
+    // Universal trailing pair (cloudy-tui hint-bar order): `? help`, then the
+    // context-aware back/quit key last.
+    segments.push(HINT_HELP);
+    if let Some(back) = back {
+        segments.push(back);
+    }
+    join(&segments)
 }
 
-fn login_hint(app: &App, editing: bool) -> String {
-    if editing {
-        return join(&[HINT_EDIT_DONE]);
+/// Per-tab middle hints plus the context-aware trailing back/quit key. `? help`
+/// and the global hints are layered on by [`hint_for`]; this returns only the
+/// tab-specific action segments and which back/quit key (if any) trails the bar.
+fn tab_hints(app: &App) -> (Vec<&'static str>, Option<&'static str>) {
+    match app.active_tab() {
+        HOME_TAB_INDEX => (home_hints(&app.home), Some(HINT_QUIT)),
+        UPDATES_TAB_INDEX => updates_hints(&app.updates),
+        CONFIG_TAB_INDEX => (config_hints(&app.config), Some(HINT_QUIT)),
+        tab if app.is_login_tab(tab) => (login_hints(app), Some(HINT_CLOSE)),
+        _ => download_hints(app),
     }
+}
+
+fn login_hints(app: &App) -> Vec<&'static str> {
     let mut segments = vec![HINT_MOVE];
     if let Some(login) = app.login.as_ref() {
         match login.focus {
@@ -208,29 +206,21 @@ fn login_hint(app: &App, editing: bool) -> String {
             _ => {}
         }
     }
-    segments.push(HINT_LOGIN_CLOSE);
-    segments.push(HINT_HELP);
-    join(&segments)
+    segments
 }
 
-/// `esc/q close` appears only when the active download page is settled
-/// (`Completed` or `Failed`). In-progress pages keep the `q abort` hint.
-/// A retry segment is appended whenever the active page has failed maps.
-fn download_tab_hint(app: &App) -> String {
+/// Download-page middle hints + trailing back key. `s defer` acts only on a row
+/// parked on an inline cooldown now (`defer_rate_limited` wakes inline waiters);
+/// `S drop` also drains deferred-pending queue items, so it shows under the
+/// broader parked-or-deferred gate — matching `handle_download_tab_key` so
+/// neither hint advertises a dead key. `r retry failed` shows only when the page
+/// has a retryable failure (404s never are). The back key is `q abort` while
+/// running, `esc/q close` once settled (`Completed`/`Failed`).
+fn download_hints(app: &App) -> (Vec<&'static str>, Option<&'static str>) {
     let page = app.download_for_tab(app.active_tab());
     let settled = page
         .is_some_and(|page| matches!(page.stage, DownloadStage::Completed | DownloadStage::Failed));
-    let base = if settled {
-        DOWNLOAD_TAB_HINT_SETTLED
-    } else {
-        DOWNLOAD_TAB_HINT_RUNNING
-    };
-    let mut segments = vec![base];
-    // `s defer` can act only on a row parked on an inline cooldown right now
-    // (`defer_rate_limited` wakes inline waiters); `S drop` also drains
-    // deferred-pending queue items, so it shows under the broader parked-or-
-    // deferred gate. Matches the key gates in `handle_download_tab_key` so
-    // neither hint advertises a dead key.
+    let mut segments = vec![HINT_SCROLL];
     if let Some(page) = page.filter(|page| matches!(page.stage, DownloadStage::Downloading)) {
         if page.any_active_rate_limited() {
             segments.push(HINT_DEFER_DROP);
@@ -238,24 +228,18 @@ fn download_tab_hint(app: &App) -> String {
             segments.push(HINT_DROP);
         }
     }
-    // Advertise `r retry failed` only when something is actually retryable —
-    // 404 (NotFound) failures are never retryable, so a page of pure 404s must
-    // not show a hint whose key does nothing.
-    let has_retryable = page.is_some_and(|page| !page.retryable_ids(None).is_empty());
-    if has_retryable {
+    if page.is_some_and(|page| !page.retryable_ids(None).is_empty()) {
         segments.push(HINT_RETRY);
     }
-    join(&segments)
+    let back = if settled { HINT_CLOSE } else { HINT_ABORT };
+    (segments, Some(back))
 }
 
 fn join(segments: &[&str]) -> String {
     segments.join(HINT_SEPARATOR)
 }
 
-fn home_hint(form: &HomeTab, editing: bool) -> String {
-    if editing {
-        return join(&[HINT_EDIT_DONE]);
-    }
+fn home_hints(form: &HomeTab) -> Vec<&'static str> {
     let mut segments = vec![HINT_MOVE];
     match form.focus {
         HomeField::Download => segments.push(HINT_ENTER_DOWNLOAD),
@@ -265,20 +249,13 @@ fn home_hint(form: &HomeTab, editing: bool) -> String {
         f if f.is_text_input() => segments.push(HINT_EDIT),
         _ => {}
     }
-    // Outside edit mode `q` quits (it is not captured by the field).
-    segments.push(HINT_QUIT);
-    segments.push(HINT_HELP);
-    join(&segments)
+    segments
 }
 
-fn updates_hint(form: &UpdatesTab, editing: bool) -> String {
-    if editing {
-        return join(&[HINT_EDIT_DONE]);
-    }
+fn updates_hints(form: &UpdatesTab) -> (Vec<&'static str>, Option<&'static str>) {
     // `r` rechecks known-bad maps from any non-editing focus (list or settled).
     let can_recheck = form.can_recheck_failed_maps();
-    let in_list = form.selection.in_collection_list || form.selection.in_beatmap_list;
-    if in_list {
+    if form.selection.in_collection_list || form.selection.in_beatmap_list {
         let mut segments = vec![HINT_SCROLL, HINT_ENTER_TOGGLE, HINT_ALL_NONE];
         if form.selection.in_beatmap_list {
             segments.push(HINT_MARK_INSTALLED);
@@ -286,8 +263,9 @@ fn updates_hint(form: &UpdatesTab, editing: bool) -> String {
         if can_recheck {
             segments.push(HINT_RECHECK);
         }
-        segments.push(HINT_HELP);
-        return join(&segments);
+        // An open list ascends on esc/q rather than quitting; that back step is
+        // left unadvertised (esc-to-go-back is universal), so no trailing key.
+        return (segments, None);
     }
 
     let mut segments = vec![HINT_MOVE];
@@ -299,26 +277,22 @@ fn updates_hint(form: &UpdatesTab, editing: bool) -> String {
     if can_recheck {
         segments.push(HINT_RECHECK);
     }
-    segments.push(HINT_QUIT);
-    segments.push(HINT_HELP);
-    join(&segments)
+    (segments, Some(HINT_QUIT))
 }
 
-fn config_hint(focus: ConfigField, editing: bool) -> String {
-    if editing {
-        return join(&[HINT_EDIT_DONE]);
-    }
+fn config_hints(config: &ConfigTab) -> Vec<&'static str> {
     let mut segments = vec![HINT_MOVE];
-    match focus {
+    match config.focus {
         ConfigField::AuthChip => segments.push(HINT_ENTER_CONFIRM),
         field if field.is_stepper() => segments.push(HINT_PLUS_MINUS),
         field if field.is_text_input() => segments.push(HINT_EDIT),
         _ => segments.push(HINT_ENTER_TOGGLE),
     }
-    // Config edits apply immediately (no save step); `q` quits outside edit mode.
-    segments.push(HINT_QUIT);
-    segments.push(HINT_HELP);
-    join(&segments)
+    // ⇧↑↓ reorders the focused built-in mirror row in the try-order.
+    if config.focus_is_builtin_mirror() {
+        segments.push(HINT_REORDER);
+    }
+    segments
 }
 
 fn quit_prompt_paragraph(has_downloads: bool) -> Paragraph<'static> {

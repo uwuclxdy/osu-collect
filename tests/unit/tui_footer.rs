@@ -1,7 +1,12 @@
 use super::super::{SPINNER_FRAMES_PADDED, spinner_str};
 use super::{hint_for, hint_line};
-use crate::app::{App, HomeField, collection::CollectionPage, collection::FailureReason};
-use crate::config::{Config, constants::STATIC_TABS};
+use crate::app::{
+    App, ConfigField, HomeField, collection::CollectionPage, collection::FailureReason,
+};
+use crate::config::{
+    Config,
+    constants::{CONFIG_TAB_INDEX, STATIC_TABS},
+};
 use crate::download::{DownloadId, DownloadStage, FailedMap};
 
 #[test]
@@ -211,5 +216,42 @@ fn home_hint_shows_edit_then_done_on_text_input_row() {
     assert!(
         hint.contains("esc done"),
         "editing must advertise `esc done`, got: {hint}"
+    );
+}
+
+#[test]
+fn footer_hint_trails_help_then_quit_after_the_global_hints() {
+    // cloudy-tui order: middle hints → globals → `? help` → back/quit last.
+    let mut app = App::new(Config::default());
+    app.home.focus = HomeField::AutoOverwrite;
+
+    let hint = hint_for(&app);
+    let client = hint.find("c switch client").expect("c switch client shows");
+    let help = hint.find("? help").expect("? help shows");
+    let quit = hint.find("q quit").expect("q quit shows");
+    assert!(
+        client < help && help < quit,
+        "order must be globals · ? help · q quit, got: {hint}"
+    );
+}
+
+#[test]
+fn config_footer_advertises_reorder_only_on_a_builtin_mirror_row() {
+    let mut app = App::new(Config::default());
+    app.active_tab = CONFIG_TAB_INDEX;
+
+    app.config.focus = ConfigField::MirrorNerinyan;
+    assert!(
+        hint_for(&app).contains("⇧↑↓ reorder"),
+        "a built-in mirror row must advertise ⇧↑↓ reorder, got: {}",
+        hint_for(&app)
+    );
+
+    // A non-mirror config row cannot reorder, so the hint must be absent.
+    app.config.focus = ConfigField::DownloadVideo;
+    assert!(
+        !hint_for(&app).contains("reorder"),
+        "a non-mirror row must not advertise reorder, got: {}",
+        hint_for(&app)
     );
 }
