@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     app::runtime::ProbeResult,
-    config::Config,
+    config::{Config, MirrorConfig},
     download::{ArchiveValidation, DownloadConfig, DownloadRequest},
     mirrors::{Mirror, MirrorKind},
     osu_db::OsuClient,
@@ -155,19 +155,10 @@ fn char_to_byte(s: &str, idx: usize) -> usize {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HomeField {
     Collection,
+    /// Read-only count of enabled mirrors; `enter` jumps to the Config tab's
+    /// mirrors section, which owns all mirror editing (toggle / custom / order).
+    Mirrors,
     Directory,
-    /// One custom-mirror URL row, indexed into [`CustomMirrorList`]. The last
-    /// index is always the empty "add new" entry slot.
-    CustomMirror(usize),
-    MirrorNerinyan,
-    MirrorOsuDirect,
-    MirrorSayobot,
-    MirrorNekoha,
-    MirrorBeatconnect,
-    MirrorOsudl,
-    MirrorCatboy,
-    MirrorHinamizawa,
-    MirrorOsuOfficial,
     Threads,
     AutoOverwrite,
     Video,
@@ -175,12 +166,12 @@ pub enum HomeField {
     Download,
 }
 
-// The download-section fields, in render order, that trail the mirror rows —
-// collection · (custom mirrors) · builtin mirrors · these. The built-in mirror
-// rows sit just above, in the configured try-order (`ordered_mirror_rows`), so
-// they are not listed here. The download directory is at the top of this tail
-// (just below the last mirror), the start button at the bottom.
-const HOME_FIELDS_TAIL: &[HomeField] = &[
+/// Focus order on the Get Maps tab. The mirrors summary sits between the
+/// collection field and the download section; mirror editing itself lives on the
+/// Config tab, so no per-mirror rows appear here.
+const HOME_FIELDS: &[HomeField] = &[
+    HomeField::Collection,
+    HomeField::Mirrors,
     HomeField::Directory,
     HomeField::Threads,
     HomeField::AutoOverwrite,
@@ -190,32 +181,16 @@ const HOME_FIELDS_TAIL: &[HomeField] = &[
 
 impl HomeField {
     pub fn is_text_input(self) -> bool {
-        matches!(
-            self,
-            HomeField::Collection | HomeField::Directory | HomeField::CustomMirror(_)
-        )
+        matches!(self, HomeField::Collection | HomeField::Directory)
     }
 
     pub fn is_stepper(self) -> bool {
         self == HomeField::Threads
     }
 
-    /// Whether `enter` toggles this field (mirror/option checkboxes).
+    /// Whether `enter` toggles this field (the boolean option checkboxes).
     pub fn is_toggle(self) -> bool {
-        matches!(
-            self,
-            HomeField::MirrorNerinyan
-                | HomeField::MirrorOsuDirect
-                | HomeField::MirrorSayobot
-                | HomeField::MirrorNekoha
-                | HomeField::MirrorBeatconnect
-                | HomeField::MirrorOsudl
-                | HomeField::MirrorCatboy
-                | HomeField::MirrorHinamizawa
-                | HomeField::MirrorOsuOfficial
-                | HomeField::AutoOverwrite
-                | HomeField::Video
-        )
+        matches!(self, HomeField::AutoOverwrite | HomeField::Video)
     }
 }
 
@@ -236,8 +211,9 @@ pub struct HomeTab {
     pub osu_official: bool,
     /// Built-in mirror try-order, seeded from
     /// [`MirrorConfig::ordered_builtins`](crate::config::MirrorConfig::ordered_builtins)
-    /// and kept in sync with the Config tab via [`set_mirror_order`](Self::set_mirror_order).
-    /// Drives the mirror-row render, the nav order, and the pipeline try-order.
+    /// and kept in sync with the Config tab via
+    /// [`sync_mirrors_from_config`](Self::sync_mirrors_from_config).
+    /// Drives the enabled-mirror count and the pipeline try-order.
     pub mirror_order: Vec<MirrorKind>,
     pub video: bool,
     pub focus: HomeField,
@@ -390,70 +366,38 @@ impl HomeTab {
         }
     }
 
-    /// Full focus order with one [`HomeField::CustomMirror`] row per custom
-    /// entry (including the trailing empty slot), built fresh each call so the
-    /// dynamic custom-mirror count is always reflected.
-    fn fields(&self) -> Vec<HomeField> {
-        let mirror_rows = self.ordered_mirror_rows();
-        let mut fields = Vec::with_capacity(
-            1 + self.custom_mirrors.row_count() + mirror_rows.len() + HOME_FIELDS_TAIL.len(),
-        );
-        fields.push(HomeField::Collection);
-        for idx in 0..self.custom_mirrors.row_count() {
-            fields.push(HomeField::CustomMirror(idx));
-        }
-        fields.extend(mirror_rows.iter().map(|&(_, field, _)| field));
-        fields.extend_from_slice(HOME_FIELDS_TAIL);
-        fields
-    }
-
-    /// Built-in mirror rows in the configured try-order: `(kind, nav field,
-    /// enabled)`. Single source for the nav order ([`fields`](Self::fields)) and
-    /// the Get Maps mirror render, so the two never drift.
-    pub(crate) fn ordered_mirror_rows(&self) -> Vec<(MirrorKind, HomeField, bool)> {
-        self.mirror_order
-            .iter()
-            .filter_map(|&kind| Some((kind, mirror_home_field(kind)?, self.mirror_enabled(kind))))
-            .collect()
-    }
-
-    /// Adopt a new built-in try-order (e.g. after the Config tab reorders it) so
-    /// the Get Maps rows and the pipeline follow the same order without a
-    /// relaunch. Enable state is untouched.
-    pub fn set_mirror_order(&mut self, order: Vec<MirrorKind>) {
-        self.mirror_order = order;
-    }
-
-    /// Drop emptied custom rows once focus leaves the custom-mirror section, so a
-    /// cleared row disappears without shifting focus mid-edit.
-    fn settle_custom_on_leave(&mut self, old: HomeField, new: HomeField) {
-        if matches!(old, HomeField::CustomMirror(_)) && !matches!(new, HomeField::CustomMirror(_)) {
-            self.custom_mirrors.compact();
-        }
+    /// Adopt the Config tab's mirror settings (enable flags, try-order, custom
+    /// URLs) so the Get Maps count and the download list track the sole mirror
+    /// editor. Called after any Config change persists; keeps this tab from
+    /// drifting now that it no longer edits mirrors itself.
+    pub fn sync_mirrors_from_config(&mut self, mirror: &MirrorConfig) {
+        self.nerinyan = mirror.nerinyan;
+        self.osu_direct = mirror.osu_direct;
+        self.sayobot = mirror.sayobot;
+        self.nekoha = mirror.nekoha;
+        self.beatconnect = mirror.beatconnect;
+        self.osudl = mirror.osudl;
+        self.catboy = mirror.catboy;
+        self.hinamizawa = mirror.hinamizawa;
+        self.osu_official = mirror.osu_official;
+        self.mirror_order = mirror.ordered_builtins();
+        self.custom_mirrors = CustomMirrorList::from_templates(&mirror.custom_templates());
     }
 
     pub fn next_field(&mut self) {
-        let next = next_field(&self.fields(), self.focus);
-        self.settle_custom_on_leave(self.focus, next);
-        self.focus = next;
+        self.focus = next_field(HOME_FIELDS, self.focus);
     }
 
     pub fn prev_field(&mut self) {
-        let prev = prev_field(&self.fields(), self.focus);
-        self.settle_custom_on_leave(self.focus, prev);
-        self.focus = prev;
+        self.focus = prev_field(HOME_FIELDS, self.focus);
     }
 
     pub fn first_field(&mut self) {
-        let first = first_field(&self.fields(), self.focus);
-        self.settle_custom_on_leave(self.focus, first);
-        self.focus = first;
+        self.focus = first_field(HOME_FIELDS, self.focus);
     }
 
     pub fn last_field(&mut self) {
-        let last = last_field(&self.fields(), self.focus);
-        self.settle_custom_on_leave(self.focus, last);
-        self.focus = last;
+        self.focus = last_field(HOME_FIELDS, self.focus);
     }
 
     /// Run tab-completion on the directory input field.
@@ -511,7 +455,6 @@ impl HomeTab {
         if let Some(field) = self.focused_input_mut() {
             field.insert_char(ch);
         }
-        self.grow_custom_rows();
     }
 
     /// Insert a bracketed-paste payload into the focused text field. No-op when
@@ -519,15 +462,6 @@ impl HomeTab {
     pub fn handle_paste(&mut self, text: &str) {
         if let Some(field) = self.focused_input_mut() {
             field.insert_str(text);
-        }
-        self.grow_custom_rows();
-    }
-
-    /// After editing a custom-mirror row, keep a trailing empty entry slot so
-    /// there is always a row to type the next URL into.
-    fn grow_custom_rows(&mut self) {
-        if matches!(self.focus, HomeField::CustomMirror(_)) {
-            self.custom_mirrors.ensure_trailing_empty();
         }
     }
 
@@ -584,7 +518,6 @@ impl HomeTab {
         match self.focus {
             HomeField::Collection => Some(&self.collection),
             HomeField::Directory => Some(&self.directory),
-            HomeField::CustomMirror(idx) => self.custom_mirrors.row(idx),
             _ => None,
         }
     }
@@ -593,40 +526,12 @@ impl HomeTab {
         match self.focus {
             HomeField::Collection => Some(&mut self.collection),
             HomeField::Directory => Some(&mut self.directory),
-            HomeField::CustomMirror(idx) => self.custom_mirrors.row_mut(idx),
             _ => None,
         }
     }
 
     pub fn toggle_current(&mut self) {
         match self.focus {
-            HomeField::MirrorNerinyan => {
-                self.nerinyan = !self.nerinyan;
-            }
-            HomeField::MirrorOsuDirect => {
-                self.osu_direct = !self.osu_direct;
-            }
-            HomeField::MirrorSayobot => {
-                self.sayobot = !self.sayobot;
-            }
-            HomeField::MirrorNekoha => {
-                self.nekoha = !self.nekoha;
-            }
-            HomeField::MirrorBeatconnect => {
-                self.beatconnect = !self.beatconnect;
-            }
-            HomeField::MirrorOsudl => {
-                self.osudl = !self.osudl;
-            }
-            HomeField::MirrorCatboy => {
-                self.catboy = !self.catboy;
-            }
-            HomeField::MirrorHinamizawa => {
-                self.hinamizawa = !self.hinamizawa;
-            }
-            HomeField::MirrorOsuOfficial => {
-                self.osu_official = !self.osu_official;
-            }
             HomeField::AutoOverwrite => {
                 self.auto_overwrite = !self.auto_overwrite;
             }
@@ -648,6 +553,26 @@ impl HomeTab {
             .filter(|&&kind| self.mirror_enabled(kind))
             .count();
         builtin_count + self.custom_mirrors.valid_count()
+    }
+
+    /// Min/max numeric (`Ms`) latency across the *enabled* built-in mirrors, for
+    /// the Get Maps summary range. `None` when no enabled mirror has a numeric
+    /// ping yet — in-flight / timeout / error probes don't contribute. A lone
+    /// value yields `(n, n)`, which the renderer collapses to a single readout.
+    pub fn mirror_latency_range(&self) -> Option<(u32, u32)> {
+        self.mirror_order
+            .iter()
+            .filter(|&&kind| self.mirror_enabled(kind))
+            .filter_map(|&kind| match self.mirror_latency.get(&kind).copied() {
+                Some(Some(ProbeResult::Ms(ms))) => Some(ms),
+                _ => None,
+            })
+            .fold(None, |range, ms| {
+                Some(match range {
+                    Some((min, max)) => (min.min(ms), max.max(ms)),
+                    None => (ms, ms),
+                })
+            })
     }
 
     /// Whether the built-in mirror of `kind` is toggled on. Maps each
@@ -761,23 +686,6 @@ impl HomeTab {
 
 fn parse_thread_count(value: &str) -> Result<u8, String> {
     u8::from_str(value.trim()).map_err(|_| "Thread count must be between 1 and 100".to_string())
-}
-
-/// The nav/render field for a built-in mirror kind, or `None` for
-/// [`MirrorKind::Custom`] (custom mirrors live in their own rows).
-fn mirror_home_field(kind: MirrorKind) -> Option<HomeField> {
-    Some(match kind {
-        MirrorKind::Nerinyan => HomeField::MirrorNerinyan,
-        MirrorKind::OsuDirect => HomeField::MirrorOsuDirect,
-        MirrorKind::Sayobot => HomeField::MirrorSayobot,
-        MirrorKind::Nekoha => HomeField::MirrorNekoha,
-        MirrorKind::Beatconnect => HomeField::MirrorBeatconnect,
-        MirrorKind::Osudl => HomeField::MirrorOsudl,
-        MirrorKind::Catboy => HomeField::MirrorCatboy,
-        MirrorKind::Hinamizawa => HomeField::MirrorHinamizawa,
-        MirrorKind::OsuApi => HomeField::MirrorOsuOfficial,
-        MirrorKind::Custom => return None,
-    })
 }
 
 #[cfg(test)]

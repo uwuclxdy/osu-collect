@@ -157,7 +157,7 @@ fn r_on_home_tab_emits_probe_mirrors() {
     let mut app = App::new(Config::default());
     app.active_tab = HOME_TAB_INDEX;
     // Default focus is Collection (text input) — move to a toggle field.
-    app.home.focus = crate::app::HomeField::MirrorNerinyan;
+    app.home.focus = crate::app::HomeField::Video;
 
     let cmd = app.handle_key(char_key('r'));
 

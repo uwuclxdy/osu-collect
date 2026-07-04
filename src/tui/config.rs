@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use crate::{
+    app::runtime::ProbeResult,
     app::{AuthLoginState, ConfigField, ConfigTab},
     config::{LogFormat, LogLevel, RetryFailedOnDownload, ThemeMode},
     download::ArchiveValidation,
@@ -12,11 +13,12 @@ use ratatui::{
     text::{Line, Span},
     widgets::ListItem,
 };
+use std::collections::HashMap;
 
 use super::widgets;
 use super::{
-    HELP_CUSTOM_MIRROR, HELP_OSU_OFFICIAL_LOCKED, bg_hover, bg_raised, mirror_label, success, text,
-    text_dim, warning,
+    HELP_CUSTOM_MIRROR, HELP_OSU_OFFICIAL_LOCKED, bg_hover, bg_raised, danger, mirror_label,
+    success, text, text_dim, warning,
 };
 use osu_downloader::MirrorKind;
 
@@ -97,9 +99,10 @@ pub fn render(
     form: &ConfigTab,
     editing: bool,
     library_db_hint: &str,
+    mirror_latency: &HashMap<MirrorKind, Option<ProbeResult>>,
 ) {
     let show_chrome = area.height >= super::COMPACT_HEIGHT;
-    let items = build_config_items(form, show_chrome, editing, library_db_hint);
+    let items = build_config_items(form, show_chrome, editing, library_db_hint, mirror_latency);
 
     let cursor_col = editing
         .then(|| {
@@ -122,6 +125,27 @@ pub fn render(
     )
 }
 
+/// Latency suffix appended to a built-in mirror row, mirroring
+/// [`HomeTab::mirror_latency`](crate::app::HomeTab) semantics: outer `None` =
+/// never probed (no suffix), `Some(None)` = probe in flight (`…`),
+/// `Some(Some(_))` = a result.
+fn latency_span(latency: Option<Option<ProbeResult>>) -> Option<Span<'static>> {
+    match latency? {
+        None => Some(Span::styled("  …", Style::default().fg(text_dim()))),
+        Some(ProbeResult::Ms(ms)) => {
+            let mut s = String::with_capacity(10);
+            s.push_str("  ");
+            s.push_str(&ms.to_string());
+            s.push_str("ms");
+            Some(Span::styled(s, Style::default().fg(success())))
+        }
+        Some(ProbeResult::Timeout) => {
+            Some(Span::styled("  timeout", Style::default().fg(danger())))
+        }
+        Some(ProbeResult::Error) => Some(Span::styled("  N/A", Style::default().fg(danger()))),
+    }
+}
+
 /// Builds the config form item list. `show_chrome` gates the decorative section
 /// headers, spacers, and focus-conditional help lines; the focusable field rows
 /// are identical in both modes so the field list lives here once.
@@ -133,6 +157,7 @@ fn build_config_items(
     show_chrome: bool,
     editing: bool,
     library_db_hint: &str,
+    mirror_latency: &HashMap<MirrorKind, Option<ProbeResult>>,
 ) -> widgets::FormItems<ConfigField> {
     let focus = form.focus;
     let active_section = focus_section(focus);
@@ -197,7 +222,15 @@ fn build_config_items(
                 0,
             )
         } else {
-            widgets::row_item(mirror_label(kind), Some(kind.host()), on, focus == field, 0)
+            let latency = mirror_latency.get(&kind).copied();
+            widgets::row_item_with_suffix(
+                mirror_label(kind),
+                Some(kind.host()),
+                on,
+                focus == field,
+                latency_span(latency),
+                0,
+            )
         };
         items.push_focusable(field, item);
     }

@@ -300,11 +300,8 @@ impl App {
     /// logged out, surface a "log in first" toast and return `true` so the caller
     /// skips the toggle. The mirror cannot be enabled without a `*` token.
     fn block_osu_official_if_logged_out(&mut self) -> bool {
-        let focused_osu_official = match self.active_tab() {
-            HOME_TAB_INDEX => self.home.focus == HomeField::MirrorOsuOfficial,
-            CONFIG_TAB_INDEX => self.config.focus == ConfigField::MirrorOsuOfficial,
-            _ => false,
-        };
+        let focused_osu_official = self.active_tab() == CONFIG_TAB_INDEX
+            && self.config.focus == ConfigField::MirrorOsuOfficial;
         if focused_osu_official && !self.osu_official_unlocked() {
             self.push_toast(
                 Toast::info("log in to enable the osu! official mirror")
@@ -313,14 +310,6 @@ impl App {
             return true;
         }
         false
-    }
-
-    /// Toggle the focused home field, unless it's the logged-out osu! official
-    /// mirror (then it stays off and the user is notified).
-    fn toggle_home_current_gated(&mut self) {
-        if !self.block_osu_official_if_logged_out() {
-            self.home.toggle_current();
-        }
     }
 
     /// Whether any download page is in a non-terminal stage (preparing,
@@ -434,6 +423,14 @@ impl App {
         } else {
             None
         }
+    }
+
+    /// Jump from the Get Maps mirrors summary to the Config tab's mirrors
+    /// section (the sole mirror editor), focusing the first built-in mirror row.
+    fn open_config_mirrors(&mut self) {
+        self.active_tab = CONFIG_TAB_INDEX;
+        self.config.focus_mirrors();
+        self.editing = false;
     }
 
     fn updates_list_open(&self) -> bool {
@@ -654,6 +651,10 @@ impl App {
                 // Theme is the only setting with a visible-now effect; swap the
                 // live palette so the change shows without a relaunch.
                 crate::tui::apply_theme(new_config.display.theme);
+                // The Config tab is the sole mirror editor; push its saved mirror
+                // settings into the Get Maps tab so the enabled-count and the
+                // download list track the change without a relaunch.
+                self.home.sync_mirrors_from_config(&new_config.mirror);
                 self.config.loaded_config = new_config;
             }
             Err(err) => self.toast_err(err.to_string()),
@@ -1548,9 +1549,10 @@ impl App {
                 }
             }
             // ⇧↑ / ⇧↓ reorder the focused built-in mirror row in the Config tab's
-            // try-order; the new order persists and the Get Maps rows + pipeline
-            // follow it. Only fires on a mirror row, so shift+arrow elsewhere
-            // falls through to plain focus movement.
+            // try-order; the new order persists and the Get Maps count + pipeline
+            // follow it (`apply_config_change` syncs it into the Get Maps tab).
+            // Only fires on a mirror row, so shift+arrow elsewhere falls through
+            // to plain focus movement.
             KeyCode::Up | KeyCode::Down
                 if key.modifiers.contains(KeyModifiers::SHIFT)
                     && self.active_tab() == CONFIG_TAB_INDEX
@@ -1558,7 +1560,6 @@ impl App {
             {
                 if self.config.reorder_focused_mirror(key.code == KeyCode::Up) {
                     self.apply_config_change();
-                    self.home.set_mirror_order(self.config.mirror_order.clone());
                 }
             }
             KeyCode::Up => {
@@ -1618,7 +1619,10 @@ impl App {
                                     return Some(AppCommand::StartDownload { id, request });
                                 }
                             }
-                            field if field.is_toggle() => self.toggle_home_current_gated(),
+                            // The mirrors row is read-only here; hand off to the
+                            // Config tab, which owns all mirror editing.
+                            HomeField::Mirrors => self.open_config_mirrors(),
+                            field if field.is_toggle() => self.home.toggle_current(),
                             // Text inputs and the threads stepper have nothing to activate.
                             _ => {}
                         }
@@ -1704,7 +1708,7 @@ impl App {
                             return Some(cmd);
                         }
                     } else if self.home.focus.is_toggle() {
-                        self.toggle_home_current_gated();
+                        self.home.toggle_current();
                     }
                 }
                 UPDATES_TAB_INDEX => {
@@ -1762,8 +1766,8 @@ impl App {
                         }
                     }
                     // When editing, the char types into the focused field.
-                    // Otherwise letters are global hotkeys: `r` probes mirror
-                    // latency, `d` jumps to the output-dir field.
+                    // Otherwise letters are global hotkeys: `d` jumps to the
+                    // output-dir field, `s` to the download button.
                     if typing {
                         if let Some(cmd) =
                             self.mutate_collection_then_resolve(|h| h.handle_char(ch))

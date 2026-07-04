@@ -292,49 +292,23 @@ fn paste_outside_edit_mode_is_inert() {
     assert!(cmd.is_none());
 }
 
-// ── enter toggle on mirrors ───────────────────────────────────────────────────
-
-#[test]
-fn enter_on_mirror_field_toggles_state() {
-    use osu_collect::app::HomeField;
-    let mut app = make_app();
-    // navigate to nerinyan mirror field
-    // home: Collection → CustomMirror → MirrorOsuDirect → MirrorNerinyan
-    app.handle_key(press(KeyCode::Down)); // → CustomMirror
-    app.handle_key(press(KeyCode::Down)); // → MirrorOsuDirect
-    app.handle_key(press(KeyCode::Down)); // → MirrorNerinyan
-    assert_eq!(app.home.focus, HomeField::MirrorNerinyan);
-
-    let before = app.home.nerinyan;
-    app.handle_key(press(KeyCode::Enter));
-    assert_eq!(app.home.nerinyan, !before);
-}
-
-#[test]
-fn space_on_mirror_field_also_toggles_state() {
-    use osu_collect::app::HomeField;
-    let mut app = make_app();
-    app.home.focus = HomeField::MirrorNerinyan;
-
-    let before = app.home.nerinyan;
-    app.handle_key(press(KeyCode::Char(' ')));
-    assert_eq!(
-        app.home.nerinyan, !before,
-        "space toggles checkboxes as an alias for enter"
-    );
-}
+// ── config tab: osu! official gating ─────────────────────────────────────────
+// Mirror toggling lives entirely on the Config tab; the Get Maps tab only shows
+// the enabled-mirror count.
 
 #[test]
 fn osu_official_toggle_blocked_and_notifies_when_logged_out() {
-    use osu_collect::app::{AuthLoginState, HomeField};
+    use osu_collect::app::{AuthLoginState, ConfigField};
+    use osu_collect::config::constants::CONFIG_TAB_INDEX;
     let mut app = make_app();
     app.config.login_state = AuthLoginState::LoggedOut;
-    app.home.osu_official = false;
-    app.home.focus = HomeField::MirrorOsuOfficial;
+    app.config.osu_official = false;
+    app.active_tab = CONFIG_TAB_INDEX;
+    app.config.focus = ConfigField::MirrorOsuOfficial;
 
     app.handle_key(press(KeyCode::Enter));
     assert!(
-        !app.home.osu_official,
+        !app.config.osu_official,
         "osu! official must not be enablable while logged out"
     );
     assert!(
@@ -344,21 +318,76 @@ fn osu_official_toggle_blocked_and_notifies_when_logged_out() {
 
     // `space` is gated the same way.
     app.handle_key(press(KeyCode::Char(' ')));
-    assert!(!app.home.osu_official, "space must not enable it either");
+    assert!(!app.config.osu_official, "space must not enable it either");
 }
 
 #[test]
 fn osu_official_toggle_works_when_logged_in() {
-    use osu_collect::app::{AuthLoginState, HomeField};
+    use osu_collect::app::{AuthLoginState, ConfigField};
+    use osu_collect::config::constants::CONFIG_TAB_INDEX;
+    // Sandbox the config path so the toggle's auto-save never touches the real
+    // user config.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    unsafe { std::env::set_var("OSU_COLLECT_CONFIG", path.to_str().unwrap()) };
+
     let mut app = make_app();
     app.config.login_state = AuthLoginState::LoggedIn;
-    app.home.osu_official = false;
-    app.home.focus = HomeField::MirrorOsuOfficial;
+    app.config.osu_official = false;
+    app.active_tab = CONFIG_TAB_INDEX;
+    app.config.focus = ConfigField::MirrorOsuOfficial;
 
     app.handle_key(press(KeyCode::Enter));
+
+    unsafe { std::env::remove_var("OSU_COLLECT_CONFIG") };
+
     assert!(
-        app.home.osu_official,
+        app.config.osu_official,
         "logged in, the osu! official toggle works normally"
+    );
+}
+
+#[test]
+fn enter_on_home_mirrors_summary_jumps_to_config_mirrors() {
+    use osu_collect::app::{ConfigField, HomeField};
+    use osu_collect::config::constants::CONFIG_TAB_INDEX;
+    let mut app = make_app();
+    app.home.focus = HomeField::Mirrors;
+
+    app.handle_key(press(KeyCode::Enter));
+
+    assert_eq!(
+        app.active_tab, CONFIG_TAB_INDEX,
+        "enter on the mirrors summary opens the config tab"
+    );
+    // Focus lands on the first built-in mirror in the default try-order.
+    assert_eq!(app.config.focus, ConfigField::MirrorOsuDirect);
+}
+
+#[test]
+fn config_mirror_toggle_syncs_home_count() {
+    use osu_collect::app::ConfigField;
+    use osu_collect::config::constants::CONFIG_TAB_INDEX;
+    // Sandbox the config path so the toggle's auto-save never touches the real
+    // user config.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    unsafe { std::env::set_var("OSU_COLLECT_CONFIG", path.to_str().unwrap()) };
+
+    let mut app = make_app();
+    let before = app.home.mirror_count();
+    app.active_tab = CONFIG_TAB_INDEX;
+    // Nerinyan is enabled by default; toggling it off must lower the Get Maps
+    // count, since the summary derives from the Config tab now.
+    app.config.focus = ConfigField::MirrorNerinyan;
+    app.handle_key(press(KeyCode::Enter));
+
+    unsafe { std::env::remove_var("OSU_COLLECT_CONFIG") };
+
+    assert_eq!(
+        app.home.mirror_count(),
+        before - 1,
+        "toggling a mirror off on the config tab lowers the Get Maps enabled count"
     );
 }
 
@@ -581,11 +610,11 @@ fn up_at_help_top_stays_pinned() {
 
 #[test]
 fn keys_are_inert_while_help_open() {
-    // `r` would normally probe mirrors on the home tab; the help overlay must
-    // swallow it so background actions never fire underneath the modal.
+    // `d` would normally jump to the output-dir field on the home tab; the help
+    // overlay must swallow it so background actions never fire under the modal.
     let mut app = make_app();
     app.help_open = true;
-    let cmd = app.handle_key(press(KeyCode::Char('r')));
+    let cmd = app.handle_key(press(KeyCode::Char('d')));
     assert!(
         cmd.is_none(),
         "background hotkeys must be inert while help is open"

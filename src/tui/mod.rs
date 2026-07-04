@@ -257,13 +257,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         || app.update_modal.is_some();
     let editing = app.editing && !overlay_open;
     match app.active_tab() {
-        HOME_TAB_INDEX => home::render(
-            frame,
-            body_area,
-            &app.home,
-            app.osu_official_unlocked(),
-            editing,
-        ),
+        HOME_TAB_INDEX => home::render(frame, body_area, &app.home, editing),
         UPDATES_TAB_INDEX => updates::render(frame, body_area, &app.updates, editing),
         CONFIG_TAB_INDEX => {
             let osu_dir = app.updates.osu_path();
@@ -273,7 +267,14 @@ pub fn draw(frame: &mut Frame, app: &App) {
             )
             .display()
             .to_string();
-            config::render(frame, body_area, &app.config, editing, &library_db_hint);
+            config::render(
+                frame,
+                body_area,
+                &app.config,
+                editing,
+                &library_db_hint,
+                &app.home.mirror_latency,
+            );
         }
         tab if app.is_login_tab(tab) => {
             if let Some(login_tab) = app.login.as_ref() {
@@ -288,13 +289,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         }
         tab => match app.download_for_tab(tab) {
             Some(page) => download::render(frame, body_area, page, app.tick_count),
-            None => home::render(
-                frame,
-                body_area,
-                &app.home,
-                app.osu_official_unlocked(),
-                editing,
-            ),
+            None => home::render(frame, body_area, &app.home, editing),
         },
     }
 

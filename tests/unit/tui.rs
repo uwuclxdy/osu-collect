@@ -55,8 +55,8 @@ fn home_render_shows_sections_and_footer() {
     use crate::app::HomeField;
 
     let mut app = App::new(Config::default());
-    // focus a mirror toggle so the footer hint exposes the toggle shortcut
-    app.home.focus = HomeField::MirrorNerinyan;
+    // focus a toggle option so the footer hint exposes the toggle shortcut
+    app.home.focus = HomeField::AutoOverwrite;
 
     let output = render_app(&app, 80, 24);
 
@@ -71,6 +71,23 @@ fn home_render_shows_sections_and_footer() {
     // footer renders `enter` as the glyph `↵`, never the word
     assert!(output.contains("↵ toggle"));
     assert!(!output.contains("enter toggle"), "enter must render as ↵");
+}
+
+#[test]
+fn home_mirrors_summary_shows_enabled_count() {
+    use crate::app::HomeField;
+
+    let mut app = App::new(Config::default());
+    app.home.focus = HomeField::Mirrors;
+
+    let output = render_app(&app, 80, 24);
+
+    // Default config enables 7 built-in mirrors; the collapsed row reports it
+    // instead of listing every mirror toggle.
+    assert!(
+        output.contains("mirrors") && output.contains("7 enabled"),
+        "mirrors summary must show the enabled count: {output}"
+    );
 }
 
 #[test]
@@ -1497,36 +1514,6 @@ fn config_custom_mirror_help_hidden_when_not_focused() {
     let mut app = App::new(Config::default());
     app.active_tab = CONFIG_TAB_INDEX;
     app.config.focus = ConfigField::DownloadThreads;
-
-    let output = render_app(&app, 100, 30);
-
-    assert!(
-        !output.contains("must contain {id}"),
-        "custom mirror help must not appear when field is not focused: {output}"
-    );
-}
-
-#[test]
-fn home_custom_mirror_help_shows_when_focused() {
-    use crate::app::HomeField;
-
-    let mut app = App::new(Config::default());
-    app.home.focus = HomeField::CustomMirror(0);
-
-    let output = render_app(&app, 100, 30);
-
-    assert!(
-        output.contains("must contain {id}"),
-        "custom mirror help must appear when field is focused: {output}"
-    );
-}
-
-#[test]
-fn home_custom_mirror_help_hidden_when_not_focused() {
-    use crate::app::HomeField;
-
-    let mut app = App::new(Config::default());
-    app.home.focus = HomeField::MirrorNerinyan;
 
     let output = render_app(&app, 100, 30);
 

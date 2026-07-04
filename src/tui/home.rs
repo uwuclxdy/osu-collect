@@ -1,4 +1,3 @@
-use crate::app::runtime::ProbeResult;
 use crate::app::{HomeField, HomeTab, ResolveState};
 use ratatui::{
     Frame,
@@ -9,12 +8,8 @@ use ratatui::{
 };
 
 use super::widgets;
-use super::{
-    HELP_CUSTOM_MIRROR, HELP_OSU_OFFICIAL_LOCKED, danger, line, mirror_label, success, text_dim,
-    text_faint,
-};
+use super::{accent, danger, focused_label, line, success, text_dim, text_faint};
 use crate::utils::pretty_path;
-use osu_downloader::MirrorKind;
 use std::path::Path;
 
 const PANEL_TITLE: &str = " HOME ";
@@ -31,24 +26,28 @@ const LABEL_VIDEO: &str = "video";
 
 const LABEL_START_DOWNLOAD: &str = "start download";
 
+/// Focus hint under the mirrors summary: it is read-only here, so `enter` hands
+/// off to the Config tab, which owns all mirror editing.
+const HELP_MIRRORS_SUMMARY: &str = "enter to add, remove, or reorder mirrors in the config tab";
+
 /// Positions the terminal caret (via [`ratatui::Frame::set_cursor_position`])
 /// when a text field is focused in edit mode; otherwise leaves it hidden.
 ///
 /// System-wide banners are rendered by [`super::draw`] above the body area, so
 /// this receives the already-reduced content area.
-pub fn render(frame: &mut Frame, area: Rect, form: &HomeTab, unlocked: bool, editing: bool) {
+pub fn render(frame: &mut Frame, area: Rect, form: &HomeTab, editing: bool) {
     if area.height < super::COMPACT_HEIGHT {
-        render_compact(frame, area, form, unlocked, editing);
+        render_compact(frame, area, form, editing);
         return;
     }
-    render_content(frame, area, form, unlocked, editing);
+    render_content(frame, area, form, editing);
 }
 
 /// Compact render: all focusable fields without section headers, spacers, or help lines.
 ///
 /// Navigation is identical to normal mode — the full `HOME_FIELDS` cycle still applies.
 /// Only decorative chrome is stripped to reclaim vertical space.
-fn render_compact(frame: &mut Frame, area: Rect, form: &HomeTab, unlocked: bool, editing: bool) {
+fn render_compact(frame: &mut Frame, area: Rect, form: &HomeTab, editing: bool) {
     let focus = form.focus;
     let mut items = widgets::FormItems::new(focus);
 
@@ -60,9 +59,14 @@ fn render_compact(frame: &mut Frame, area: Rect, form: &HomeTab, unlocked: bool,
         items.push(resolve_row(*state, text));
     }
 
-    push_custom_mirror_rows(&mut items, form, focus, editing, false);
-
-    push_mirror_rows(&mut items, form, focus, unlocked);
+    items.push_focusable(
+        HomeField::Mirrors,
+        mirror_summary_item(
+            form.mirror_count(),
+            form.mirror_latency_range(),
+            focus == HomeField::Mirrors,
+        ),
+    );
 
     items.push_focusable(
         HomeField::Directory,
@@ -137,7 +141,7 @@ fn directory_hint(form: &HomeTab) -> String {
     )
 }
 
-fn render_content(frame: &mut Frame, area: Rect, form: &HomeTab, unlocked: bool, editing: bool) {
+fn render_content(frame: &mut Frame, area: Rect, form: &HomeTab, editing: bool) {
     let focus = form.focus;
     let mut items = widgets::FormItems::new(focus);
 
@@ -159,12 +163,17 @@ fn render_content(frame: &mut Frame, area: Rect, form: &HomeTab, unlocked: bool,
         SECTION_MIRRORS,
         active_section == SECTION_MIRRORS,
     ));
-    push_custom_mirror_rows(&mut items, form, focus, editing, true);
-
-    push_mirror_rows(&mut items, form, focus, unlocked);
-    // Locked osu! official row: explain why it's greyed when focused.
-    if !unlocked && focus == HomeField::MirrorOsuOfficial {
-        items.push(widgets::help_item(HELP_OSU_OFFICIAL_LOCKED));
+    let mirrors_focused = focus == HomeField::Mirrors;
+    items.push_focusable(
+        HomeField::Mirrors,
+        mirror_summary_item(
+            form.mirror_count(),
+            form.mirror_latency_range(),
+            mirrors_focused,
+        ),
+    );
+    if mirrors_focused {
+        items.push(widgets::help_item(HELP_MIRRORS_SUMMARY));
     }
     items.push(widgets::spacer());
 
@@ -246,54 +255,32 @@ fn push_toggle_rows(items: &mut widgets::FormItems<HomeField>, form: &HomeTab, f
     );
 }
 
-/// Pushes the built-in mirror toggle rows, each with its latency suffix.
-///
-/// Shared by `render_compact` and `render_content` — the row content is
-/// identical in both paths; only the surrounding chrome differs.
-/// Render every custom-mirror URL row (one per [`HomeField::CustomMirror`],
-/// including the trailing empty entry slot). With `with_help`, the focused row
-/// gets the format hint line beneath it.
-fn push_custom_mirror_rows(
-    items: &mut widgets::FormItems<HomeField>,
-    form: &HomeTab,
-    focus: HomeField,
-    editing: bool,
-    with_help: bool,
-) {
-    for (idx, row) in form.custom_mirrors.rows().iter().enumerate() {
-        let field = HomeField::CustomMirror(idx);
-        let focused = focus == field;
-        items.push_focusable(field, widgets::input_item(row, focused, editing, 0));
-        if with_help && focused {
-            items.push(widgets::help_item(HELP_CUSTOM_MIRROR));
-        }
-    }
-}
-
-fn push_mirror_rows(
-    items: &mut widgets::FormItems<HomeField>,
-    form: &HomeTab,
-    focus: HomeField,
-    unlocked: bool,
-) {
-    // Rows follow the configured try-order (`ordered_mirror_rows`), matching the
-    // nav order and the pipeline so what the user reorders is what gets tried.
-    for (kind, field, on) in form.ordered_mirror_rows() {
-        // osu! official needs a login: render it greyed + inert when logged out.
-        let item = if kind == MirrorKind::OsuApi && !unlocked {
-            widgets::disabled_toggle_row(
-                mirror_label(kind),
-                Some(kind.host()),
-                on,
-                focus == field,
-                0,
-            )
+/// The collapsed mirrors row on the Get Maps tab: `mirrors  N enabled`. Mirror
+/// editing lives on the Config tab, so this row is read-only; its `enter` hands
+/// off there (focus hint + `App::open_config_mirrors`). `count` is
+/// [`HomeTab::mirror_count`] — enabled built-ins plus valid custom mirrors.
+fn mirror_summary_item(
+    count: usize,
+    latency_range: Option<(u32, u32)>,
+    focused: bool,
+) -> ListItem<'static> {
+    let value = format!("{count} enabled");
+    let mut spans = vec![
+        widgets::focus_span(focused),
+        Span::styled(widgets::label_cell("mirrors", 0), focused_label(focused)),
+        Span::styled(value, Style::default().fg(accent())),
+    ];
+    // Min–max ping over the enabled built-ins that answered with a number; a
+    // single value collapses to one readout, none omits the suffix entirely.
+    if let Some((min, max)) = latency_range {
+        let range = if min == max {
+            format!("  ·  {min}ms")
         } else {
-            let latency = form.mirror_latency.get(&kind).copied();
-            mirror_row_item(mirror_label(kind), kind.host(), on, focus == field, latency)
+            format!("  ·  {min}–{max}ms")
         };
-        items.push_focusable(field, item);
+        spans.push(Span::styled(range, Style::default().fg(text_dim())));
     }
+    ListItem::new(Line::from(spans))
 }
 
 /// The section a focused field belongs to, driving the active-section header cue.
@@ -304,50 +291,9 @@ fn home_section(field: HomeField) -> &'static str {
     use HomeField::*;
     match field {
         Collection => SECTION_COLLECTION,
-        CustomMirror(_) | MirrorOsuDirect | MirrorNerinyan | MirrorSayobot | MirrorNekoha
-        | MirrorBeatconnect | MirrorOsudl | MirrorCatboy | MirrorHinamizawa | MirrorOsuOfficial => {
-            SECTION_MIRRORS
-        }
+        Mirrors => SECTION_MIRRORS,
         Threads | AutoOverwrite | Video | Directory => SECTION_DOWNLOAD,
         Download => SECTION_NONE,
-    }
-}
-
-/// Mirror toggle row: the shared [`widgets::row_item`] base plus a trailing
-/// latency readout (see [`latency_span`]).
-fn mirror_row_item(
-    label: &str,
-    host: &str,
-    on: bool,
-    focused: bool,
-    latency: Option<Option<ProbeResult>>,
-) -> ListItem<'static> {
-    // The host is an informational hint, not a configurable value, so it is NOT
-    // column-aligned (label_width 0) — it trails the mirror name directly.
-    widgets::row_item_with_suffix(label, Some(host), on, focused, latency_span(latency), 0)
-}
-
-/// The trailing latency readout appended to a mirror row, or `None` before the
-/// first probe.
-///
-/// `latency` mirrors `HomeTab::mirror_latency` semantics:
-/// - `None`          → not yet probed (no suffix)
-/// - `Some(None)`    → probe in flight (`…`)
-/// - `Some(Some(_))` → result received
-fn latency_span(latency: Option<Option<ProbeResult>>) -> Option<Span<'static>> {
-    match latency? {
-        None => Some(Span::styled("  …", Style::default().fg(text_dim()))),
-        Some(ProbeResult::Ms(ms)) => {
-            let mut s = String::with_capacity(10);
-            s.push_str("  ");
-            s.push_str(&ms.to_string());
-            s.push_str("ms");
-            Some(Span::styled(s, Style::default().fg(success())))
-        }
-        Some(ProbeResult::Timeout) => {
-            Some(Span::styled("  timeout", Style::default().fg(danger())))
-        }
-        Some(ProbeResult::Error) => Some(Span::styled("  N/A", Style::default().fg(danger()))),
     }
 }
 

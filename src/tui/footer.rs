@@ -231,6 +231,7 @@ fn home_hint(form: &HomeTab, editing: bool) -> String {
     let mut segments = vec![HINT_MOVE];
     match form.focus {
         HomeField::Download => segments.push(HINT_ENTER_DOWNLOAD),
+        HomeField::Mirrors => segments.push(HINT_ENTER_OPEN),
         f if f.is_stepper() => segments.push(HINT_PLUS_MINUS),
         f if f.is_toggle() => segments.push(HINT_ENTER_TOGGLE),
         f if f.is_text_input() => segments.push(HINT_EDIT),

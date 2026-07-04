@@ -209,28 +209,6 @@ fn threads_field_is_not_text_input() {
     assert!(HomeField::Threads.is_stepper());
 }
 
-#[test]
-fn r_key_is_not_suppressed_when_threads_focused() {
-    use crate::app::AppCommand;
-    use crate::app::state::App;
-    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
-
-    let mut app = App::new(Config::default());
-    app.home.focus = HomeField::Threads;
-
-    let key = KeyEvent {
-        code: KeyCode::Char('r'),
-        modifiers: KeyModifiers::empty(),
-        kind: KeyEventKind::Press,
-        state: KeyEventState::empty(),
-    };
-    let cmd = app.handle_key(key);
-    assert!(
-        matches!(cmd, Some(AppCommand::ProbeMirrors)),
-        "'r' with threads focused must trigger mirror probe, got {cmd:?}"
-    );
-}
-
 // ── InputField caret model ──────────────────────────────────────────────────
 
 #[test]
@@ -346,4 +324,60 @@ fn caret_movement_clamps_to_bounds() {
     field.caret_left();
     field.caret_left();
     assert_eq!(field.caret(), 0, "left clamps at the value start");
+}
+
+// ── mirror_latency_range: Get Maps summary min–max over enabled builtins ──────
+
+use crate::app::runtime::ProbeResult;
+
+/// A home tab with only the three default-on mirrors enabled, no pings yet.
+fn home_three_enabled() -> HomeTab {
+    let mut home = home_all_off(&Config::default());
+    home.nerinyan = true;
+    home.osu_direct = true;
+    home.sayobot = true;
+    home
+}
+
+/// No numeric pings yet → no range (unprobed and in-flight contribute nothing).
+#[test]
+fn latency_range_none_without_numeric_pings() {
+    let mut home = home_three_enabled();
+    assert_eq!(home.mirror_latency_range(), None);
+
+    home.mirror_probe_started(); // all in-flight (Some(None))
+    assert_eq!(
+        home.mirror_latency_range(),
+        None,
+        "in-flight probes must not produce a range"
+    );
+}
+
+/// A single numeric ping collapses to `(n, n)`.
+#[test]
+fn latency_range_single_value_collapses() {
+    let mut home = home_three_enabled();
+    home.set_mirror_latency(MirrorKind::Nerinyan, ProbeResult::Ms(42));
+    assert_eq!(home.mirror_latency_range(), Some((42, 42)));
+}
+
+/// Min and max span the numeric pings; timeout / error are ignored.
+#[test]
+fn latency_range_spans_numeric_and_ignores_non_numeric() {
+    let mut home = home_three_enabled();
+    home.set_mirror_latency(MirrorKind::Nerinyan, ProbeResult::Ms(42));
+    home.set_mirror_latency(MirrorKind::OsuDirect, ProbeResult::Ms(118));
+    home.set_mirror_latency(MirrorKind::Sayobot, ProbeResult::Timeout);
+    assert_eq!(home.mirror_latency_range(), Some((42, 118)));
+}
+
+/// A ping on a disabled mirror is excluded from the range.
+#[test]
+fn latency_range_excludes_disabled_mirror() {
+    let mut home = home_three_enabled();
+    home.set_mirror_latency(MirrorKind::Nerinyan, ProbeResult::Ms(50));
+    // Nekoha has a faster ping but is disabled → must not widen the range.
+    home.nekoha = false;
+    home.set_mirror_latency(MirrorKind::Nekoha, ProbeResult::Ms(5));
+    assert_eq!(home.mirror_latency_range(), Some((50, 50)));
 }

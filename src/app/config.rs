@@ -239,6 +239,18 @@ impl ConfigTab {
         mirror_kind_of(self.focus).is_some()
     }
 
+    /// Focus the first built-in mirror row in the current try-order — the top of
+    /// the mirrors section. Used when the Get Maps mirrors summary jumps here.
+    pub fn focus_mirrors(&mut self) {
+        if let Some(field) = self
+            .mirror_order
+            .first()
+            .and_then(|&k| mirror_config_field(k))
+        {
+            self.focus = field;
+        }
+    }
+
     /// Move the focused built-in mirror one slot up (`up`) or down in the
     /// try-order, keeping focus on that mirror. Returns whether the order
     /// changed — `false` when focus isn't a built-in mirror row or the row is
