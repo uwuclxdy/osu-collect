@@ -98,7 +98,7 @@ const GLOBAL: &[HelpRow] = &[
     HelpRow::new("↑ ↓", "move / scroll"),
     HelpRow::new("↵", "activate / toggle / edit field"),
     HelpRow::new("space", "toggle selection"),
-    HelpRow::new("s", "jump to download button"),
+    HelpRow::new("c", "switch osu! client"),
     HelpRow::new("esc", "exit edit / back"),
     HelpRow::new("?", "toggle help"),
     HelpRow::new("u", "update (when available)"),
@@ -114,12 +114,16 @@ const VIM: &[HelpRow] = &[
     HelpRow::new("i / a", "edit focused field"),
 ];
 
-const HOME_TAB: &[HelpRow] = &[HelpRow::new("↵", "edit field / activate row")];
+const HOME_TAB: &[HelpRow] = &[
+    HelpRow::new("↵", "edit field / activate row"),
+    HelpRow::new("s", "jump to download button"),
+];
 
 const UPDATES_TAB: &[HelpRow] = &[
     HelpRow::new("↵", "expand list / download"),
     HelpRow::new("a", "select all"),
     HelpRow::new("d", "select none"),
+    HelpRow::new("s", "jump to download button"),
     HelpRow::new("r", "recheck failed"),
 ];
 
