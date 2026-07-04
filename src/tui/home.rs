@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 use super::widgets;
-use super::{accent, danger, focused_label, line, success, text_dim, text_faint};
+use super::{accent, danger, focused_label, line, success, text_dim, text_faint, warning};
 use crate::utils::pretty_path;
 use std::path::Path;
 
@@ -272,13 +272,23 @@ fn mirror_summary_item(
     ];
     // Min–max ping over the enabled built-ins that answered with a number; a
     // single value collapses to one readout, none omits the suffix entirely.
+    // The fastest end reads SUCCESS, the slowest WARNING, so the range doubles
+    // as a relative fast/slow cue; separator and unit stay dim.
     if let Some((min, max)) = latency_range {
-        let range = if min == max {
-            format!("  ·  {min}ms")
-        } else {
-            format!("  ·  {min}–{max}ms")
-        };
-        spans.push(Span::styled(range, Style::default().fg(text_dim())));
+        let dim = Style::default().fg(text_dim());
+        spans.push(Span::styled("  ·  ", dim));
+        spans.push(Span::styled(
+            min.to_string(),
+            Style::default().fg(success()),
+        ));
+        if min != max {
+            spans.push(Span::styled("–", dim));
+            spans.push(Span::styled(
+                max.to_string(),
+                Style::default().fg(warning()),
+            ));
+        }
+        spans.push(Span::styled("ms", dim));
     }
     ListItem::new(Line::from(spans))
 }
