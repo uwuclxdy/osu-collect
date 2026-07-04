@@ -2,7 +2,7 @@ use crate::app::{AuthLoginState, LoginField, LoginPhase, LoginTab};
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Style,
+    style::{Color, Style},
     text::{Line, Span},
     widgets::ListItem,
 };
@@ -32,7 +32,11 @@ pub fn render(
     login_state: &AuthLoginState,
     editing: bool,
 ) {
-    let items = build_login_items(login, login_state, editing);
+    // Informational lines word-wrap to the panel's inner text width so the
+    // narrow config-split panel never hard-clips them: inner is width - 2
+    // borders - 2 padding, and note lines indent 2 more.
+    let text_width = area.width.saturating_sub(6) as usize;
+    let items = build_login_items(login, login_state, editing, text_width);
 
     let cursor_col = editing
         .then(|| {
@@ -62,6 +66,7 @@ fn build_login_items(
     login: &LoginTab,
     login_state: &AuthLoginState,
     editing: bool,
+    text_width: usize,
 ) -> widgets::FormItems<LoginField> {
     let focus = login.focus;
     let in_flight = matches!(login_state, AuthLoginState::InProgress(_));
@@ -96,14 +101,14 @@ fn build_login_items(
                 ),
             );
             items.push(widgets::spacer());
-            items.push(note_line(NOTE_PASSWORD));
+            push_wrapped(&mut items, NOTE_PASSWORD, text_dim(), text_width);
         }
         LoginPhase::NeedsVerification => {
             items.push(widgets::section_header(
                 SECTION_VERIFICATION,
                 focus == LoginField::Code,
             ));
-            items.push(note_line(NOTE_VERIFICATION));
+            push_wrapped(&mut items, NOTE_VERIFICATION, text_dim(), text_width);
             items.push_focusable(
                 LoginField::Code,
                 widgets::input_item(&login.code, focus == LoginField::Code, editing, 0),
@@ -124,16 +129,26 @@ fn build_login_items(
         }
         LoginPhase::LoggedIn => {
             items.push(status_line());
-            items.push(note_line("the osu! official mirror is now available."));
-            // Only after a fresh sign-in this session — not when the tab was
+            push_wrapped(
+                &mut items,
+                "the osu! official mirror is now available.",
+                text_dim(),
+                text_width,
+            );
+            // Only after a fresh sign-in this session — not when the panel was
             // opened already-logged-in via the config "manage" chip.
             if login.just_logged_in {
-                items.push(note_line("you can close this tab now (esc or q)."));
+                push_wrapped(
+                    &mut items,
+                    "press esc or q to close login.",
+                    text_dim(),
+                    text_width,
+                );
             }
             items.push(widgets::spacer());
             items.push(widgets::section_header(SECTION_ACCOUNT, false));
             for line in CAUTION {
-                items.push(caution_line(line));
+                push_wrapped(&mut items, line, warning(), text_width);
             }
             items.push(widgets::spacer());
             items.push_focusable(
@@ -167,18 +182,48 @@ fn status_line() -> ListItem<'static> {
     ]))
 }
 
-/// A dim informational line, indented to the panel content gutter.
-fn note_line(text: &'static str) -> ListItem<'static> {
-    ListItem::new(Line::from(vec![
-        Span::raw("  "),
-        Span::styled(text, Style::default().fg(text_dim())),
-    ]))
+/// Pushes an informational line word-wrapped to `width`, one indented `ListItem`
+/// per wrapped line, in `color`. Keeps the narrow config-split panel from
+/// hard-clipping the login copy at its right border.
+fn push_wrapped(
+    items: &mut widgets::FormItems<LoginField>,
+    text: &str,
+    color: Color,
+    width: usize,
+) {
+    for line in wrap(text, width) {
+        items.push(ListItem::new(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(line, Style::default().fg(color)),
+        ])));
+    }
 }
 
-/// A caution line in WARNING color.
-fn caution_line(text: &'static str) -> ListItem<'static> {
-    ListItem::new(Line::from(vec![
-        Span::raw("  "),
-        Span::styled(text, Style::default().fg(warning())),
-    ]))
+/// Greedy word-wrap to `width` columns. The login copy is ASCII, so char count
+/// equals display width. Always returns at least one line; a word longer than
+/// `width` is left to overflow its own line rather than split mid-word.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![text.to_string()];
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for word in text.split_whitespace() {
+        if cur.is_empty() {
+            cur.push_str(word);
+        } else if cur.chars().count() + 1 + word.chars().count() <= width {
+            cur.push(' ');
+            cur.push_str(word);
+        } else {
+            lines.push(std::mem::take(&mut cur));
+            cur.push_str(word);
+        }
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
 }

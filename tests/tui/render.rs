@@ -761,6 +761,33 @@ fn login_split_docks_login_on_the_right_of_config() {
     assert!(login_x > w / 2, "login panel docks on the right half");
 }
 
+#[test]
+fn login_split_info_lines_wrap_instead_of_clipping() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+    use osu_collect::app::{AuthLoginState, ConfigField};
+
+    let mut app = make_app();
+    app.config.login_state = AuthLoginState::LoggedOut;
+    app.next_tab();
+    app.next_tab();
+    app.config.focus = ConfigField::AuthChip;
+    app.handle_key(KeyEvent {
+        code: KeyCode::Enter,
+        modifiers: KeyModifiers::empty(),
+        kind: KeyEventKind::Press,
+        state: KeyEventState::empty(),
+    });
+    assert!(app.login_open());
+
+    // At 120 cols the login panel is ~48 wide, so the credentials note (62
+    // chars) used to hard-clip at the border. Wrapped, its tail survives.
+    let content = render_content(&app, 120, 24);
+    assert!(
+        content.contains("stored locally"),
+        "the credentials note must wrap, not clip: {content}"
+    );
+}
+
 // ── config item order ─────────────────────────────────────────────────────────
 
 #[test]
