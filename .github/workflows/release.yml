@@ -161,6 +161,12 @@ jobs:
           name: macos-binary
           path: release
 
+      # The in-binary updater and install scripts verify against GitHub's inline
+      # per-asset `digest`, not these `.sha256`/SHA256SUMS files. The sidecars are
+      # kept for backward compatibility: binaries released BEFORE the digest switch
+      # only know how to fetch the sidecar, so dropping it here would strand them
+      # (they could no longer self-update to this release). Remove the sidecar
+      # generation + attachment once pre-digest installs are negligible.
       - name: Generate SHA256SUMS
         run: |
           cat release/osu-collect-linux-x64.sha256 \
