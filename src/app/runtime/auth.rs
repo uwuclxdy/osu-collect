@@ -33,19 +33,24 @@ pub(super) fn handle_auth_event(event: AuthEvent, app: &mut App) {
                 // The token is saved but device verification is pending, so it
                 // can't download yet — treat as logged-out until verified.
                 app.config.set_logged_out();
+                // The open panel advances to the verification step and shows the
+                // instruction inline; only toast when it's closed (a login can
+                // finish after the panel was dismissed mid-flight).
                 if let Some(login) = app.login.as_mut() {
                     login.enter_verification();
+                } else {
+                    app.push_toast(
+                        Toast::info("verification needed")
+                            .with_detail("enter the code osu! emailed you"),
+                    );
                 }
-                app.push_toast(
-                    Toast::info("verification needed")
-                        .with_detail("enter the code osu! emailed you"),
-                );
             } else {
                 app.config.set_login_complete();
                 if let Some(login) = app.login.as_mut() {
                     login.enter_logged_in();
+                } else {
+                    app.toast_ok("login successful");
                 }
-                app.toast_ok("login successful");
             }
         }
         AuthEvent::LazerLoginComplete(Err(err)) => {
@@ -57,10 +62,13 @@ pub(super) fn handle_auth_event(event: AuthEvent, app: &mut App) {
         }
         AuthEvent::VerificationComplete(Ok(())) => {
             app.config.set_login_complete();
+            // The open panel shows the logged-in state inline; only toast when
+            // it's closed.
             if let Some(login) = app.login.as_mut() {
                 login.enter_logged_in();
+            } else {
+                app.toast_ok("login successful");
             }
-            app.toast_ok("login successful");
         }
         AuthEvent::VerificationComplete(Err(err)) => {
             // Stay on the verification step (phase unchanged) so the user can
