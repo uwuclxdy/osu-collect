@@ -1,7 +1,7 @@
 use super::{
-    AutoUpdateError, AvailableUpdate, DownloadedAsset, ReleaseResponse, apply_update_to,
-    check_for_update_with, check_release, is_cargo_target_path, newest_release, target_asset_name,
-    verify_checksum,
+    AutoUpdateError, AvailableUpdate, DownloadedAsset, ReleaseAsset, ReleaseResponse,
+    apply_update_to, asset_checksum, check_for_update_with, check_release, is_cargo_target_path,
+    newest_release, target_asset_name, verify_checksum,
 };
 use reqwest::Client;
 use sha2::{Digest, Sha256};
@@ -79,7 +79,6 @@ async fn apply_update_to_replaces_binary_and_cleans_rollback() {
 async fn start_mock_release_server(
     release_body: String,
     asset_body: Vec<u8>,
-    checksum_body: String,
 ) -> (String, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -108,13 +107,6 @@ async fn start_mock_release_server(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
                     release_body.len(),
                     release_body
-                )
-                .into_bytes()
-            } else if request.starts_with("GET /asset.sha256") {
-                format!(
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
-                    checksum_body.len(),
-                    checksum_body
                 )
                 .into_bytes()
             } else if request.starts_with("GET /asset") {
@@ -156,14 +148,16 @@ async fn check_and_apply_with_client_runs_hooks_on_update() {
         "name": "v9.9.9",
         "tag_name": "v9.9.9",
         "assets": [
-            {"name": asset_name, "browser_download_url": "http://placeholder/asset"},
-            {"name": format!("{asset_name}.sha256"), "browser_download_url": "http://placeholder/asset.sha256"}
+            {
+                "name": asset_name,
+                "browser_download_url": "http://placeholder/asset",
+                "digest": format!("sha256:{checksum}")
+            }
         ]
     })
     .to_string();
 
-    let (base, handle) =
-        start_mock_release_server(release_body, asset_bytes.clone(), checksum.clone()).await;
+    let (base, handle) = start_mock_release_server(release_body, asset_bytes.clone()).await;
 
     let release_url = format!("{}/release", base);
     let client = Client::builder()
@@ -215,8 +209,7 @@ async fn check_and_apply_with_client_skips_when_current() {
     })
     .to_string();
 
-    let (base, handle) =
-        start_mock_release_server(release_body, b"noop".to_vec(), "deadbeef".to_string()).await;
+    let (base, handle) = start_mock_release_server(release_body, b"noop".to_vec()).await;
 
     let release_url = format!("{}/release", base);
     let client = Client::builder()
@@ -253,6 +246,54 @@ async fn check_and_apply_with_client_skips_when_current() {
 }
 
 #[tokio::test]
+async fn check_release_fails_closed_without_digest() {
+    let Some(asset_name) = target_asset_or_skip() else {
+        return;
+    };
+
+    // A newer release whose asset carries no `digest` must fail rather than
+    // install an unverifiable binary — and never reach the applier.
+    let release_body = serde_json::json!({
+        "name": "v9.9.9",
+        "tag_name": "v9.9.9",
+        "assets": [
+            {"name": asset_name, "browser_download_url": "http://placeholder/asset"}
+        ]
+    })
+    .to_string();
+
+    let (base, handle) = start_mock_release_server(release_body, b"new-binary".to_vec()).await;
+    let release_url = format!("{}/release", base);
+    let client = Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let applier_ran = Arc::new(AtomicBool::new(false));
+    let applier_flag = applier_ran.clone();
+
+    let result = check_release(
+        &client,
+        &release_url,
+        || {},
+        move |_asset| {
+            let applier_flag = applier_flag.clone();
+            async move {
+                applier_flag.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+        },
+        false,
+    )
+    .await;
+
+    assert!(matches!(result, Err(AutoUpdateError::ChecksumMissing(_))));
+    assert!(!applier_ran.load(Ordering::SeqCst));
+
+    handle.abort();
+}
+
+#[tokio::test]
 async fn check_for_update_returns_metadata_when_newer() {
     let Some(asset_name) = target_asset_or_skip() else {
         return;
@@ -268,8 +309,7 @@ async fn check_for_update_returns_metadata_when_newer() {
     })
     .to_string();
 
-    let (base, handle) =
-        start_mock_release_server(release_body, b"noop".to_vec(), "deadbeef".to_string()).await;
+    let (base, handle) = start_mock_release_server(release_body, b"noop".to_vec()).await;
     let release_url = format!("{}/release", base);
     let client = Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -303,8 +343,7 @@ async fn check_for_update_none_when_current() {
     })
     .to_string();
 
-    let (base, handle) =
-        start_mock_release_server(release_body, b"noop".to_vec(), "deadbeef".to_string()).await;
+    let (base, handle) = start_mock_release_server(release_body, b"noop".to_vec()).await;
     let release_url = format!("{}/release", base);
     let client = Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -369,6 +408,48 @@ fn newest_release_picks_highest_semver_including_prereleases() {
     let (release, version) = newest_release(releases).expect("a publishable release");
     assert_eq!(release.tag_name, "v0.4.1-pre");
     assert_eq!(version, semver::Version::parse("0.4.1-pre").unwrap());
+}
+
+fn asset_with_digest(digest: Option<&str>) -> ReleaseAsset {
+    ReleaseAsset {
+        name: "osu-collect-linux-x64".into(),
+        browser_download_url: "http://placeholder/asset".into(),
+        digest: digest.map(str::to_string),
+    }
+}
+
+#[test]
+fn asset_checksum_accepts_valid_digest_and_fails_closed_otherwise() {
+    let hex = "a".repeat(64);
+
+    // valid digest: `sha256:` stripped, hex lowercased.
+    let ok = asset_checksum(&asset_with_digest(Some(&format!(
+        "sha256:{}",
+        hex.to_uppercase()
+    ))));
+    assert_eq!(ok.unwrap(), hex);
+
+    // absent digest → ChecksumMissing.
+    assert!(matches!(
+        asset_checksum(&asset_with_digest(None)),
+        Err(AutoUpdateError::ChecksumMissing(_))
+    ));
+
+    // every malformed shape → ChecksumFormat (fail closed, never a silent pass).
+    for bad in [
+        format!("md5:{hex}"),                 // wrong algorithm
+        hex.clone(),                          // no algorithm prefix
+        "sha256:abcd".to_string(),            // too short
+        format!("sha256:{}", "g".repeat(64)), // non-hex chars
+    ] {
+        assert!(
+            matches!(
+                asset_checksum(&asset_with_digest(Some(&bad))),
+                Err(AutoUpdateError::ChecksumFormat(_))
+            ),
+            "expected ChecksumFormat for {bad:?}"
+        );
+    }
 }
 
 #[test]

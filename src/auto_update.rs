@@ -181,16 +181,12 @@ where
         .find(|asset| asset.name == target_asset)
         .ok_or_else(|| AutoUpdateError::AssetMissing(target_asset.to_string()))?;
 
+    // Pin the expected hash from GitHub's inline `digest` before spending a
+    // download on an asset we'd have no way to verify.
+    let expected_checksum = asset_checksum(asset)?;
+
     info!(release = %release.name, "Downloading newer release");
     let downloaded = download_asset(client, asset, AUTO_UPDATE_TIMEOUT).await?;
-
-    let expected_checksum = match fetch_asset_checksum(client, asset, &release.assets).await {
-        Ok(checksum) => checksum,
-        Err(err) => {
-            let _ = fs::remove_file(&downloaded.path).await;
-            return Err(err);
-        }
-    };
 
     verify_checksum(&downloaded, &expected_checksum).await?;
 
@@ -278,42 +274,25 @@ async fn download_asset(
     })
 }
 
-async fn fetch_asset_checksum(
-    client: &Client,
-    asset: &ReleaseAsset,
-    assets: &[ReleaseAsset],
-) -> Result<String, AutoUpdateError> {
-    let checksum_asset = assets
-        .iter()
-        .find(|candidate| candidate.name == format!("{}.sha256", asset.name))
-        .or_else(|| {
-            assets.iter().find(|candidate| {
-                candidate.name.ends_with(".sha256") && candidate.name.contains(&asset.name)
-            })
-        })
+/// The SHA-256 GitHub computes for a release asset at upload time, returned
+/// inline in the releases JSON as `digest: "sha256:<64 hex>"` and immutable once
+/// set. Integrity, not authenticity: a compromised publisher who swaps the asset
+/// gets it re-digested. The win over a publisher-authored `.sha256` sidecar is no
+/// second request and nothing spoofable to fetch. Missing digest, a non-`sha256:`
+/// algorithm, or a malformed hex body all fail closed.
+fn asset_checksum(asset: &ReleaseAsset) -> Result<String, AutoUpdateError> {
+    let digest = asset
+        .digest
+        .as_deref()
         .ok_or_else(|| AutoUpdateError::ChecksumMissing(asset.name.clone()))?;
 
-    let body = client
-        .get(&checksum_asset.browser_download_url)
-        .timeout(AUTO_UPDATE_TIMEOUT)
-        .send()
-        .await?
-        .error_for_status()?
-        .text()
-        .await?;
-
-    parse_checksum(&body, &asset.name)
-}
-
-fn parse_checksum(body: &str, asset_name: &str) -> Result<String, AutoUpdateError> {
-    let checksum = body
-        .split_whitespace()
-        .find(|part| !part.is_empty())
-        .ok_or_else(|| AutoUpdateError::ChecksumFormat(asset_name.to_string()))?
+    let checksum = digest
+        .strip_prefix("sha256:")
+        .ok_or_else(|| AutoUpdateError::ChecksumFormat(asset.name.clone()))?
         .to_ascii_lowercase();
 
     if checksum.len() != 64 || !checksum.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(AutoUpdateError::ChecksumFormat(asset_name.to_string()));
+        return Err(AutoUpdateError::ChecksumFormat(asset.name.clone()));
     }
 
     Ok(checksum)
@@ -466,6 +445,11 @@ struct ReleaseResponse {
 struct ReleaseAsset {
     pub name: String,
     pub browser_download_url: String,
+    /// SHA-256 GitHub computes at upload time (`sha256:<64 hex>`). `None` on
+    /// assets predating the feature or still being processed; `asset_checksum`
+    /// fails closed when it's absent.
+    #[serde(default)]
+    pub digest: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -478,9 +462,9 @@ pub enum AutoUpdateError {
     ExecutablePath,
     #[error("missing asset for platform: {0}")]
     AssetMissing(String),
-    #[error("missing checksum for asset: {0}")]
+    #[error("release asset has no digest: {0}")]
     ChecksumMissing(String),
-    #[error("checksum file malformed for asset: {0}")]
+    #[error("malformed asset digest: {0}")]
     ChecksumFormat(String),
     #[error("checksum mismatch: expected {expected}, actual {actual}")]
     ChecksumMismatch { expected: String, actual: String },
