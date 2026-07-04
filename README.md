@@ -129,7 +129,7 @@ Tracks every collection you've downloaded, re-checks them against osu!collector,
 
 ### Logging in with your osu! account (optional)
 
-The config tab's login chip opens a dedicated **login tab** where you enter your osu! username and password (masked). This signs in through osu!lazer's first-party client, which is the only way to unlock the **osu! official** download mirror. If osu! needs to verify a new device, the tab prompts for the emailed code. Your password is sent only to `osu.ppy.sh` and never stored — only the resulting token lives in `auth.json` (local).
+The config tab's login chip opens a **login panel** that docks on the right side of the config tab, where you enter your osu! username and password (masked). It closes when you press <kbd>esc</kbd> or switch tabs. Signing in goes through osu!lazer's first-party client, the only way to enable the **osu! official** download mirror. If osu! needs to verify a new device, the panel prompts for the emailed code. Your password is sent only to `osu.ppy.sh` and never stored — only the resulting token lives in `auth.json` (local).
 
 > Heads up: this uses osu!lazer's first-party login, an unofficial grey area. The official mirror is rate-limited (~10–20 downloads/hour) and stays **off by default** — keep it as a last-resort source and use it sparingly. Requests to osu! are throttled automatically (about one per second, shared across all download threads) to stay within its general API rate; the hourly download cap still applies and shows up as a temporary rate-limit when reached.
 
