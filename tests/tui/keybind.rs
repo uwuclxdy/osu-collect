@@ -478,28 +478,85 @@ fn enter_on_collection_field_does_not_start_download() {
 
 // ── config tab key bindings ───────────────────────────────────────────────────
 
-#[test]
-fn enter_on_config_chip_opens_login_tab() {
-    use osu_collect::app::{ConfigField, HomeField};
+/// Move focus to the config auth chip, ready to open the login split. Pins a
+/// logged-out state so the panel opens on the credentials phase regardless of
+/// any osu! token stored on the host running the tests.
+fn focus_config_auth_chip() -> osu_collect::app::App {
+    use osu_collect::app::{AuthLoginState, ConfigField, HomeField};
     use osu_collect::config::constants::CONFIG_TAB_INDEX;
 
     let mut app = make_app();
+    app.config.login_state = AuthLoginState::LoggedOut;
     // Focus a non-text field so Right switches tabs rather than moving the caret.
     app.home.focus = HomeField::Video;
     app.handle_key(press(KeyCode::Right));
     app.handle_key(press(KeyCode::Right));
     assert_eq!(app.active_tab(), CONFIG_TAB_INDEX);
     app.config.focus = ConfigField::AuthChip;
+    app
+}
 
-    // The chip is a navigation affordance: enter opens the dedicated login tab
-    // and dispatches no command (the tab owns the actual login flow).
+#[test]
+fn enter_on_config_chip_opens_login_split() {
+    use osu_collect::config::constants::CONFIG_TAB_INDEX;
+
+    let mut app = focus_config_auth_chip();
+
+    // The chip opens the login split on the right and dispatches no command
+    // (the panel owns the login flow). The active tab stays on Config — the
+    // login split is a focus-trap panel, not a tab.
     let cmd = app.handle_key(press(KeyCode::Enter));
-    assert!(cmd.is_none(), "opening the login tab dispatches no command");
-    assert!(app.login.is_some(), "login tab must be created");
+    assert!(
+        cmd.is_none(),
+        "opening the login split dispatches no command"
+    );
+    assert!(app.login_open(), "login split must open");
     assert_eq!(
-        Some(app.active_tab()),
-        app.login_tab_index(),
-        "focus must move to the login tab"
+        app.active_tab(),
+        CONFIG_TAB_INDEX,
+        "active tab stays on config while the login split is open"
+    );
+}
+
+#[test]
+fn esc_closes_login_split_and_stays_on_config() {
+    use osu_collect::app::ConfigField;
+    use osu_collect::config::constants::CONFIG_TAB_INDEX;
+
+    let mut app = focus_config_auth_chip();
+    app.handle_key(press(KeyCode::Enter));
+    assert!(app.login_open());
+
+    // esc closes the split in place and hands focus back to the auth chip.
+    app.handle_key(press(KeyCode::Esc));
+    assert!(!app.login_open(), "esc closes the login split");
+    assert_eq!(app.active_tab(), CONFIG_TAB_INDEX);
+    assert_eq!(app.config.focus, ConfigField::AuthChip);
+}
+
+#[test]
+fn switching_tabs_closes_login_split() {
+    let mut app = focus_config_auth_chip();
+    app.handle_key(press(KeyCode::Enter));
+    assert!(app.login_open());
+
+    // A tab switch closes the split (it lives only on Config).
+    app.handle_key(press(KeyCode::Right));
+    assert!(!app.login_open(), "switching tabs closes the login split");
+}
+
+#[test]
+fn typing_routes_to_login_field_while_split_open() {
+    let mut app = focus_config_auth_chip();
+    app.handle_key(press(KeyCode::Enter));
+    // The username field is focused on open; enter descends into edit mode.
+    app.handle_key(press(KeyCode::Enter));
+    app.handle_key(press(KeyCode::Char('a')));
+    app.handle_key(press(KeyCode::Char('b')));
+    assert_eq!(
+        app.login.as_ref().map(|l| l.username.value.as_str()),
+        Some("ab"),
+        "chars route into the focused login field while the split is open"
     );
 }
 

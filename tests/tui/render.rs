@@ -714,6 +714,53 @@ fn help_overlay_hidden_when_closed() {
     );
 }
 
+// ── login split ───────────────────────────────────────────────────────────────
+
+#[test]
+fn login_split_docks_login_on_the_right_of_config() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+    use osu_collect::app::{AuthLoginState, ConfigField};
+
+    let mut app = make_app();
+    // Pin logged-out so the panel opens on the credentials phase regardless of
+    // any osu! token on the host.
+    app.config.login_state = AuthLoginState::LoggedOut;
+    app.next_tab();
+    app.next_tab();
+    app.config.focus = ConfigField::AuthChip;
+    app.handle_key(KeyEvent {
+        code: KeyCode::Enter,
+        modifiers: KeyModifiers::empty(),
+        kind: KeyEventKind::Press,
+        state: KeyEventState::empty(),
+    });
+    assert!(
+        app.login_open(),
+        "enter on the auth chip opens the login split"
+    );
+
+    let (w, h) = (120u16, 30u16);
+    let buf = render_to_buffer(&app, w, h);
+    let cells = buf.content();
+    let mut config_x = None;
+    let mut login_x = None;
+    for y in 0..h {
+        let row: String = (0..w)
+            .map(|x| cells[(y * w + x) as usize].symbol())
+            .collect();
+        if let Some(i) = row.find("CONFIG") {
+            config_x.get_or_insert(i as u16);
+        }
+        if let Some(i) = row.find("LOGIN") {
+            login_x.get_or_insert(i as u16);
+        }
+    }
+    let config_x = config_x.expect("config panel still renders on the left");
+    let login_x = login_x.expect("login panel renders");
+    assert!(config_x < w / 2, "config panel keeps the left half");
+    assert!(login_x > w / 2, "login panel docks on the right half");
+}
+
 // ── config item order ─────────────────────────────────────────────────────────
 
 #[test]

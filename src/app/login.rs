@@ -12,7 +12,7 @@ pub enum LoginPhase {
     LoggedIn,
 }
 
-/// Focusable rows on the login tab. The visible set depends on [`LoginPhase`]
+/// Focusable rows on the login panel. The visible set depends on [`LoginPhase`]
 /// (see [`LoginTab::fields`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoginField {
@@ -49,7 +49,7 @@ const VERIFICATION_FIELDS: &[LoginField] =
     &[LoginField::Code, LoginField::Submit, LoginField::Resend];
 const LOGGED_IN_FIELDS: &[LoginField] = &[LoginField::Submit];
 
-/// State for the dynamic, closeable login tab. Drives the osu!lazer password
+/// State for the dynamic, closeable login panel. Drives the osu!lazer password
 /// (ROPC) login that authorizes the osu! official download mirror.
 pub struct LoginTab {
     pub username: InputField,
@@ -69,7 +69,7 @@ pub struct LoginTab {
 }
 
 impl LoginTab {
-    /// Build a fresh login tab. When `logged_in` (a token is already stored) the
+    /// Build a fresh login panel. When `logged_in` (a token is already stored) the
     /// tab opens on the logged-in view; otherwise on the credentials form.
     pub fn new(logged_in: bool) -> Self {
         let phase = if logged_in {

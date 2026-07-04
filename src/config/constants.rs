@@ -81,9 +81,6 @@ pub const STATIC_TABS: usize = 3;
 pub const TAB_HOME_LOWER: &str = "home";
 pub const TAB_UPDATES_LOWER: &str = "updates";
 pub const TAB_CONFIG_LOWER: &str = "config";
-/// Dynamic, closeable login tab. Opened from the config auth chip and appended
-/// after any download tabs (so download indices stay anchored at `STATIC_TABS`).
-pub const TAB_LOGIN_LOWER: &str = "login";
 
 /// Free-space threshold below which a disk-low banner and warning pill appear (1 GiB).
 pub const DISK_WARN_BYTES: u64 = 1024 * 1024 * 1024;

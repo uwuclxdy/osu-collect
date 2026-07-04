@@ -17,7 +17,7 @@ use crate::{
         Config, RetryFailedOnDownload,
         constants::{
             CONFIG_TAB_INDEX, DISK_CACHE_TTL, HOME_TAB_INDEX, STATIC_TABS, TAB_CONFIG_LOWER,
-            TAB_HOME_LOWER, TAB_LOGIN_LOWER, TAB_UPDATES_LOWER, UPDATES_TAB_INDEX,
+            TAB_HOME_LOWER, TAB_UPDATES_LOWER, UPDATES_TAB_INDEX,
         },
         save_config,
     },
@@ -61,9 +61,10 @@ pub struct App {
     pub home: HomeTab,
     pub updates: UpdatesTab,
     pub config: ConfigTab,
-    /// The dynamic, closeable login tab. `Some` only while the tab is open
-    /// (opened from the config auth chip, closed with `esc`/`q`). Rendered as a
-    /// tab appended after any download tabs.
+    /// The login panel. `Some` only while the login split is open on the Config
+    /// tab (opened from the auth chip, closed with `esc`/`q` or a tab switch).
+    /// Rendered as a focus-trap panel docked on the right of the Config body;
+    /// while it is open the config form is frozen and all input routes here.
     pub login: Option<LoginTab>,
     pub downloads: Vec<CollectionPage>,
     /// Transient top-right notifications — results and errors. Ephemeral by
@@ -305,7 +306,7 @@ impl App {
         if focused_osu_official && !self.osu_official_unlocked() {
             self.push_toast(
                 Toast::info("log in to enable the osu! official mirror")
-                    .with_detail("open the login tab from the config auth chip"),
+                    .with_detail("open login from the config auth chip"),
             );
             return true;
         }
@@ -385,6 +386,8 @@ impl App {
     pub fn next_tab(&mut self) -> Option<AppCommand> {
         // Commit a mid-edit config field before the tab (and its focus) changes.
         self.commit_field_edit();
+        // Switching tabs closes the login split (it lives only on Config).
+        self.close_login();
         let total = self.total_tabs();
         self.active_tab = (self.active_tab + 1) % total;
         self.editing = false;
@@ -393,6 +396,7 @@ impl App {
 
     pub fn prev_tab(&mut self) -> Option<AppCommand> {
         self.commit_field_edit();
+        self.close_login();
         let total = self.total_tabs();
         if self.active_tab == 0 {
             self.active_tab = total - 1;
@@ -503,7 +507,10 @@ impl App {
         if !self.editing {
             return;
         }
-        if self.active_tab() == CONFIG_TAB_INDEX && self.config.focus.is_text_input() {
+        if self.active_tab() == CONFIG_TAB_INDEX
+            && self.login.is_none()
+            && self.config.focus.is_text_input()
+        {
             self.apply_config_change();
         } else if self.active_tab() == UPDATES_TAB_INDEX
             && self.updates.selection.focus == UpdatesField::OsuPath
@@ -515,15 +522,14 @@ impl App {
     fn focus_next_field(&mut self) {
         self.commit_field_edit();
         self.editing = false;
+        if let Some(login) = self.login.as_mut() {
+            login.next_field();
+            return;
+        }
         match self.active_tab() {
             HOME_TAB_INDEX => self.home.next_field(),
             UPDATES_TAB_INDEX => self.updates.next_field(),
             CONFIG_TAB_INDEX => self.config.next_field(),
-            tab if self.is_login_tab(tab) => {
-                if let Some(login) = self.login.as_mut() {
-                    login.next_field();
-                }
-            }
             _ => {}
         }
     }
@@ -531,15 +537,14 @@ impl App {
     fn focus_prev_field(&mut self) {
         self.commit_field_edit();
         self.editing = false;
+        if let Some(login) = self.login.as_mut() {
+            login.prev_field();
+            return;
+        }
         match self.active_tab() {
             HOME_TAB_INDEX => self.home.prev_field(),
             UPDATES_TAB_INDEX => self.updates.prev_field(),
             CONFIG_TAB_INDEX => self.config.prev_field(),
-            tab if self.is_login_tab(tab) => {
-                if let Some(login) = self.login.as_mut() {
-                    login.prev_field();
-                }
-            }
             _ => {}
         }
     }
@@ -547,15 +552,14 @@ impl App {
     fn focus_first_field(&mut self) {
         self.commit_field_edit();
         self.editing = false;
+        if let Some(login) = self.login.as_mut() {
+            login.first_field();
+            return;
+        }
         match self.active_tab() {
             HOME_TAB_INDEX => self.home.first_field(),
             UPDATES_TAB_INDEX => self.updates.first_field(),
             CONFIG_TAB_INDEX => self.config.first_field(),
-            tab if self.is_login_tab(tab) => {
-                if let Some(login) = self.login.as_mut() {
-                    login.first_field();
-                }
-            }
             _ => {}
         }
     }
@@ -563,15 +567,14 @@ impl App {
     fn focus_last_field(&mut self) {
         self.commit_field_edit();
         self.editing = false;
+        if let Some(login) = self.login.as_mut() {
+            login.last_field();
+            return;
+        }
         match self.active_tab() {
             HOME_TAB_INDEX => self.home.last_field(),
             UPDATES_TAB_INDEX => self.updates.last_field(),
             CONFIG_TAB_INDEX => self.config.last_field(),
-            tab if self.is_login_tab(tab) => {
-                if let Some(login) = self.login.as_mut() {
-                    login.last_field();
-                }
-            }
             _ => {}
         }
     }
@@ -666,7 +669,7 @@ impl App {
         matches!(self.config.login_state, AuthLoginState::InProgress(_))
     }
 
-    /// Enter on the login tab. Text-input rows toggle edit mode in the caller
+    /// Enter on the login panel. Text-input rows toggle edit mode in the caller
     /// (via `focused_text_input`); this handles the action chips.
     fn login_enter(&mut self) -> Option<AppCommand> {
         match self.login.as_ref()?.focus {
@@ -676,7 +679,7 @@ impl App {
         }
     }
 
-    /// Enter on the login tab's primary action chip. Cancels a running request,
+    /// Enter on the login panel's primary action chip. Cancels a running request,
     /// else branches on the phase: log in / verify / log out.
     fn login_chip_enter(&mut self) -> Option<AppCommand> {
         if self.login_in_flight() {
@@ -750,45 +753,37 @@ impl App {
     }
 
     fn total_tabs(&self) -> usize {
-        STATIC_TABS + self.downloads.len() + usize::from(self.login.is_some())
+        STATIC_TABS + self.downloads.len()
     }
 
-    /// Tab index of the login tab while open. Appended after the download tabs
-    /// so download indices stay anchored at `STATIC_TABS`.
-    pub fn login_tab_index(&self) -> Option<usize> {
-        self.login
-            .as_ref()
-            .map(|_| STATIC_TABS + self.downloads.len())
+    /// Whether the login split is open. While it is, the active tab stays on
+    /// Config, the config form is frozen, and all field input routes to the
+    /// login panel (a focus trap).
+    pub fn login_open(&self) -> bool {
+        self.login.is_some()
     }
 
-    /// Whether `idx` is the currently-open login tab.
-    pub fn is_login_tab(&self, idx: usize) -> bool {
-        self.login_tab_index() == Some(idx)
-    }
-
-    /// Open the login tab (or focus it if already open) and switch to it. The
-    /// phase is seeded from the current login state so a logged-in user lands on
-    /// the account view rather than the credentials form.
-    fn open_login_tab(&mut self) {
+    /// Open the login split on the Config tab (or leave it open if already
+    /// shown). The active tab stays on Config; the phase is seeded from the
+    /// current login state so a logged-in user lands on the account view rather
+    /// than the credentials form.
+    fn open_login(&mut self) {
         if self.login.is_none() {
             let logged_in = matches!(self.config.login_state, AuthLoginState::LoggedIn);
             self.login = Some(LoginTab::new(logged_in));
         }
-        if let Some(index) = self.login_tab_index() {
-            self.active_tab = index;
-        }
         self.editing = false;
     }
 
-    /// Close the login tab and land focus on the nearest remaining tab (the
-    /// rightmost download, else config). An in-flight login keeps running — its
-    /// result updates the chip in the background.
-    fn close_login_tab(&mut self) {
+    /// Close the login split and hand focus back to the config auth chip (which
+    /// stays focused underneath while the panel is open). An in-flight login
+    /// keeps running — its result updates the chip in the background.
+    fn close_login(&mut self) {
         if self.login.take().is_none() {
             return;
         }
         self.editing = false;
-        self.active_tab = self.active_tab.min(self.total_tabs().saturating_sub(1));
+        self.config.focus = ConfigField::AuthChip;
     }
 
     /// Persist the current collection and download-directory inputs to the
@@ -1106,14 +1101,14 @@ impl App {
         if self.help_open {
             return false;
         }
+        // The login split traps focus while open, regardless of active tab.
+        if let Some(login) = self.login.as_ref() {
+            return login.focus.is_text_input();
+        }
         match self.active_tab() {
             HOME_TAB_INDEX => self.home.focus.is_text_input(),
             UPDATES_TAB_INDEX => self.updates.osu_path_editable(),
             CONFIG_TAB_INDEX => self.config.focus.is_text_input(),
-            tab if self.is_login_tab(tab) => self
-                .login
-                .as_ref()
-                .is_some_and(|login| login.focus.is_text_input()),
             _ => false,
         }
     }
@@ -1122,57 +1117,53 @@ impl App {
     /// re-resolve the collection (the value is unchanged), so unlike typing they
     /// return no command.
     fn caret_left_focused(&mut self) {
+        if let Some(login) = self.login.as_mut() {
+            login.caret_left();
+            return;
+        }
         match self.active_tab() {
             HOME_TAB_INDEX => self.home.caret_left(),
             UPDATES_TAB_INDEX => self.updates.caret_left(),
             CONFIG_TAB_INDEX => self.config.caret_left(),
-            tab if self.is_login_tab(tab) => {
-                if let Some(login) = self.login.as_mut() {
-                    login.caret_left();
-                }
-            }
             _ => {}
         }
     }
 
     fn caret_right_focused(&mut self) {
+        if let Some(login) = self.login.as_mut() {
+            login.caret_right();
+            return;
+        }
         match self.active_tab() {
             HOME_TAB_INDEX => self.home.caret_right(),
             UPDATES_TAB_INDEX => self.updates.caret_right(),
             CONFIG_TAB_INDEX => self.config.caret_right(),
-            tab if self.is_login_tab(tab) => {
-                if let Some(login) = self.login.as_mut() {
-                    login.caret_right();
-                }
-            }
             _ => {}
         }
     }
 
     fn caret_home_focused(&mut self) {
+        if let Some(login) = self.login.as_mut() {
+            login.caret_home();
+            return;
+        }
         match self.active_tab() {
             HOME_TAB_INDEX => self.home.caret_home(),
             UPDATES_TAB_INDEX => self.updates.caret_home(),
             CONFIG_TAB_INDEX => self.config.caret_home(),
-            tab if self.is_login_tab(tab) => {
-                if let Some(login) = self.login.as_mut() {
-                    login.caret_home();
-                }
-            }
             _ => {}
         }
     }
 
     fn caret_end_focused(&mut self) {
+        if let Some(login) = self.login.as_mut() {
+            login.caret_end();
+            return;
+        }
         match self.active_tab() {
             HOME_TAB_INDEX => self.home.caret_end(),
             UPDATES_TAB_INDEX => self.updates.caret_end(),
             CONFIG_TAB_INDEX => self.config.caret_end(),
-            tab if self.is_login_tab(tab) => {
-                if let Some(login) = self.login.as_mut() {
-                    login.caret_end();
-                }
-            }
             _ => {}
         }
     }
@@ -1180,6 +1171,10 @@ impl App {
     /// Delete the char at the caret in the focused text field (`Delete` key).
     /// On the home collection field this re-resolves, matching backspace.
     fn delete_forward_focused(&mut self) -> Option<AppCommand> {
+        if let Some(login) = self.login.as_mut() {
+            login.delete_forward();
+            return None;
+        }
         match self.active_tab() {
             HOME_TAB_INDEX => self.mutate_collection_then_resolve(HomeTab::delete_forward),
             UPDATES_TAB_INDEX => {
@@ -1190,12 +1185,6 @@ impl App {
                 self.config.delete_forward();
                 None
             }
-            tab if self.is_login_tab(tab) => {
-                if let Some(login) = self.login.as_mut() {
-                    login.delete_forward();
-                }
-                None
-            }
             _ => None,
         }
     }
@@ -1204,6 +1193,10 @@ impl App {
     /// ctrl+w). No-op when focus is not on a text input. On the home collection
     /// field this re-resolves, matching plain backspace.
     fn backspace_word_focused(&mut self) -> Option<AppCommand> {
+        if let Some(login) = self.login.as_mut() {
+            login.backspace_word();
+            return None;
+        }
         match self.active_tab() {
             HOME_TAB_INDEX => self.mutate_collection_then_resolve(HomeTab::backspace_word),
             UPDATES_TAB_INDEX => {
@@ -1212,12 +1205,6 @@ impl App {
             }
             CONFIG_TAB_INDEX => {
                 self.config.backspace_word();
-                None
-            }
-            tab if self.is_login_tab(tab) => {
-                if let Some(login) = self.login.as_mut() {
-                    login.backspace_word();
-                }
                 None
             }
             _ => None,
@@ -1473,13 +1460,20 @@ impl App {
                 // esc exits edit mode before anything else (back/quit cascade).
                 if self.editing {
                     self.editing = false;
-                    // Committing a config text edit applies it immediately.
-                    if self.active_tab() == CONFIG_TAB_INDEX {
+                    // Committing a config text edit applies it immediately. Login
+                    // fields hold their own value and persist nothing on exit.
+                    if self.active_tab() == CONFIG_TAB_INDEX && self.login.is_none() {
                         self.apply_config_change();
                     }
                     return None;
                 }
                 if self.close_modal() {
+                    return None;
+                }
+                // The login split is a focus-trap panel: esc/q (non-typing) close
+                // it in place and hand focus back to the config auth chip.
+                if self.login.is_some() {
+                    self.close_login();
                     return None;
                 }
                 if self.active_tab() == UPDATES_TAB_INDEX && self.updates.handle_escape().is_some()
@@ -1603,13 +1597,19 @@ impl App {
                     let was_editing = self.editing;
                     self.editing = !self.editing;
                     // Leaving edit mode commits: config rows flush to disk, the
-                    // updates osu! path persists to `[recent]`.
-                    if was_editing && self.active_tab() == CONFIG_TAB_INDEX {
+                    // updates osu! path persists to `[recent]`. Login fields hold
+                    // their own value and persist nothing on exit.
+                    if was_editing && self.active_tab() == CONFIG_TAB_INDEX && self.login.is_none()
+                    {
                         self.apply_config_change();
                     } else if was_editing && self.active_tab() == UPDATES_TAB_INDEX {
                         self.persist_osu_path_inputs();
                     }
                     return None;
+                }
+                // The login split traps activation while open (before the tab match).
+                if self.login.is_some() {
+                    return self.login_enter();
                 }
                 match self.active_tab() {
                     HOME_TAB_INDEX => {
@@ -1665,9 +1665,9 @@ impl App {
                     }
                     CONFIG_TAB_INDEX => match self.config.focus {
                         ConfigField::AuthChip => {
-                            // The chip is a navigation affordance: open the
-                            // dedicated login tab, which owns the login flow.
-                            self.open_login_tab();
+                            // The chip is a navigation affordance: open the login
+                            // split on the right, which owns the login flow.
+                            self.open_login();
                             return None;
                         }
                         field if field.is_text_input() || field.is_stepper() => {}
@@ -1679,7 +1679,6 @@ impl App {
                             }
                         }
                     },
-                    tab if self.is_login_tab(tab) => return self.login_enter(),
                     _ => {
                         // download page: enter expands/collapses the failed section
                         if let Some(page) = self.active_download_page_mut() {
@@ -1692,6 +1691,12 @@ impl App {
             // checkbox / list selection but never activates buttons, opens lists,
             // or confirms the auth chip. In a text input it types a literal
             // space instead.
+            KeyCode::Char(' ') if self.login.is_some() => {
+                // Login split: chips trigger on enter only; space just types.
+                if typing && let Some(login) = self.login.as_mut() {
+                    login.handle_char(' ');
+                }
+            }
             KeyCode::Char(' ') => match self.active_tab() {
                 HOME_TAB_INDEX => {
                     if typing {
@@ -1724,12 +1729,6 @@ impl App {
                         }
                     }
                 },
-                tab if self.is_login_tab(tab) => {
-                    // Chips trigger on enter only; space just types into a field.
-                    if typing && let Some(login) = self.login.as_mut() {
-                        login.handle_char(' ');
-                    }
-                }
                 _ => {
                     if let Some(page) = self.active_download_page_mut() {
                         page.toggle_failed_section();
@@ -1738,14 +1737,21 @@ impl App {
             },
             // `c` switches the osu! client (stable ↔ lazer) from any tab. It
             // changes the owned library, so it clears the prior scan and kicks a
-            // fresh one. Suppressed while typing so `c` types a literal char.
-            KeyCode::Char('c') if !typing => {
+            // fresh one. Suppressed while typing so `c` types a literal char, and
+            // while the login split is open (it traps every field key).
+            KeyCode::Char('c') if !typing && self.login.is_none() => {
                 let action = self.updates.switch_client();
                 self.persist_osu_path_inputs();
                 if action == UpdatesAction::RefreshAll {
                     return Some(AppCommand::ScanLocalDatabase);
                 }
                 return None;
+            }
+            // Login split traps chars: no non-typing hotkeys, just type the field.
+            KeyCode::Char(ch) if self.login.is_some() => {
+                if typing && let Some(login) = self.login.as_mut() {
+                    login.handle_char(ch);
+                }
             }
             KeyCode::Char(ch) => match self.active_tab() {
                 HOME_TAB_INDEX => {
@@ -1837,12 +1843,6 @@ impl App {
                         self.config.handle_char(ch);
                     }
                 }
-                tab if self.is_login_tab(tab) => {
-                    // No non-typing hotkeys on the login tab; type into the field.
-                    if typing && let Some(login) = self.login.as_mut() {
-                        login.handle_char(ch);
-                    }
-                }
                 _ => {
                     if let Some(cmd) = self.handle_download_tab_key(ch) {
                         return Some(cmd);
@@ -1859,20 +1859,21 @@ impl App {
                 {
                     return self.backspace_word_focused();
                 }
-                match self.active_tab() {
-                    HOME_TAB_INDEX => {
-                        if let Some(cmd) = self.mutate_collection_then_resolve(HomeTab::backspace) {
-                            return Some(cmd);
+                if let Some(login) = self.login.as_mut() {
+                    login.backspace();
+                } else {
+                    match self.active_tab() {
+                        HOME_TAB_INDEX => {
+                            if let Some(cmd) =
+                                self.mutate_collection_then_resolve(HomeTab::backspace)
+                            {
+                                return Some(cmd);
+                            }
                         }
+                        UPDATES_TAB_INDEX => self.updates.backspace(),
+                        CONFIG_TAB_INDEX => self.config.backspace(),
+                        _ => {}
                     }
-                    UPDATES_TAB_INDEX => self.updates.backspace(),
-                    CONFIG_TAB_INDEX => self.config.backspace(),
-                    tab if self.is_login_tab(tab) => {
-                        if let Some(login) = self.login.as_mut() {
-                            login.backspace();
-                        }
-                    }
-                    _ => {}
                 }
             }
             _ => {}
@@ -1890,6 +1891,10 @@ impl App {
         if !(self.editing && self.focused_text_input()) {
             return None;
         }
+        if let Some(login) = self.login.as_mut() {
+            login.handle_paste(&text);
+            return None;
+        }
         match self.active_tab() {
             HOME_TAB_INDEX => self.mutate_collection_then_resolve(|h| h.handle_paste(&text)),
             UPDATES_TAB_INDEX => {
@@ -1898,12 +1903,6 @@ impl App {
             }
             CONFIG_TAB_INDEX => {
                 self.config.handle_paste(&text);
-                None
-            }
-            tab if self.is_login_tab(tab) => {
-                if let Some(login) = self.login.as_mut() {
-                    login.handle_paste(&text);
-                }
                 None
             }
             _ => None,
@@ -2113,10 +2112,6 @@ impl App {
         for page in &self.downloads {
             titles.push(download_tab_title(page));
         }
-        // Appended last so download indices stay anchored at `STATIC_TABS`.
-        if self.login.is_some() {
-            titles.push(Cow::Borrowed(TAB_LOGIN_LOWER));
-        }
         titles
     }
 
@@ -2305,11 +2300,11 @@ impl App {
             .min(self.total_tabs() - 1);
     }
 
-    /// `esc` as a pure "back" key. Runs after the edit/modal/updates cascade.
-    /// Cancels an armed quit prompt, backs out of a dynamic tab (closes the
-    /// login/settled-download tab or cancels a running download), and otherwise
-    /// does nothing at the static top level. It never arms or confirms a quit —
-    /// quitting is `q`-only.
+    /// `esc` as a pure "back" key. Runs after the edit/modal/login/updates
+    /// cascade. Cancels an armed quit prompt, backs out of a settled-download tab
+    /// (closes it or cancels a running download), and otherwise does nothing at
+    /// the static top level. It never arms or confirms a quit — quitting is
+    /// `q`-only. The login split is closed earlier in the esc cascade.
     fn handle_back_key(&mut self) -> Option<AppCommand> {
         if self.home.quit_prompt {
             self.home.quit_prompt = false;
@@ -2339,12 +2334,6 @@ impl App {
 
     fn cancel_command_for_active_tab(&mut self) -> Option<AppCommand> {
         if self.active_tab < STATIC_TABS {
-            return None;
-        }
-
-        // The login tab is dynamic + closeable: `esc`/`q` close it in place.
-        if self.is_login_tab(self.active_tab) {
-            self.close_login_tab();
             return None;
         }
 

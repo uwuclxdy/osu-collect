@@ -179,7 +179,7 @@ impl ConfigTab {
             prereleases: config.update.prereleases,
             mirror_order: config.mirror.ordered_builtins(),
             // Start focus one row below the auth chip so an accidental enter
-            // never opens the login tab on entry.
+            // never opens login on entry.
             focus: ConfigField::Theme,
             message: None,
             default_threads: default_threads(),

@@ -52,7 +52,7 @@ const CHIP_ACTION_LOGIN: &str = "log in";
 const CHIP_ACTION_MANAGE: &str = "manage";
 const CHIP_ACTION_VIEW: &str = "view";
 const CHIP_LOGGING_IN: &str = " logging in… ";
-const CHIP_LOGIN_HINT: &str = "opens the login tab to enable the osu! official mirror";
+const CHIP_LOGIN_HINT: &str = "opens login to enable the osu! official mirror";
 
 const THEME_MODE_LABELS: &[&str] = &["full", "compatible"];
 
@@ -443,7 +443,7 @@ fn focus_section(field: ConfigField) -> Option<&'static str> {
 }
 
 /// Renders the auth state chip: a single styled row at the top of the config
-/// tab. The action segment opens the dedicated login tab (which owns the actual
+/// tab. The action segment opens the login split (which owns the actual
 /// login / verify / logout flow); the state segment mirrors `login_state`.
 ///
 /// - Signed in:   ` signed in   manage`

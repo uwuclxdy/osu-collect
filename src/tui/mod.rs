@@ -20,7 +20,7 @@ use crate::config::constants::{CONFIG_TAB_INDEX, HOME_TAB_INDEX, UPDATES_TAB_IND
 use osu_downloader::MirrorKind;
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout},
+    layout::{Constraint, Layout, Rect},
     style::{Color, Style},
     widgets::Block,
 };
@@ -196,6 +196,33 @@ pub fn focused_label(focused: bool) -> Style {
     }
 }
 
+/// Split the Config body when the login panel is open: the login form docks on
+/// the right (~40 %, clamped to a legible width), the config form keeps the left
+/// with a 1-col gutter between the two panels. Returns `(config_area,
+/// login_area)`, each `None` when that panel should not render.
+///
+/// Below `MIN_SPLIT_WIDTH` a side-by-side split would crush the config form, so
+/// the login panel claims the whole area and config is not drawn — rather than
+/// collapse the form to an unreadable sliver.
+fn login_split(area: Rect, open: bool) -> (Option<Rect>, Option<Rect>) {
+    if !open {
+        return (Some(area), None);
+    }
+    const MIN_SPLIT_WIDTH: u16 = 60;
+    if area.width < MIN_SPLIT_WIDTH {
+        return (None, Some(area));
+    }
+    // Divide before multiply so the intermediate never overflows u16.
+    let login_w = (area.width / 5 * 2).clamp(34, 52);
+    let cols = Layout::horizontal([
+        Constraint::Min(0),
+        Constraint::Length(1),
+        Constraint::Length(login_w),
+    ])
+    .split(area);
+    (Some(cols[0]), Some(cols[2]))
+}
+
 /// Render one full frame.
 ///
 /// A focused text field positions the terminal caret via
@@ -268,20 +295,23 @@ pub fn draw(frame: &mut Frame, app: &App) {
             )
             .display()
             .to_string();
-            config::render(
-                frame,
-                body_area,
-                &app.config,
-                editing,
-                &library_db_hint,
-                &app.home.mirror_latency,
-            );
-        }
-        tab if app.is_login_tab(tab) => {
-            if let Some(login_tab) = app.login.as_ref() {
+            // The login panel docks on the right as a focus-trap split; the
+            // config form keeps the left (frozen while it is open).
+            let (config_area, login_area) = login_split(body_area, app.login.is_some());
+            if let Some(config_area) = config_area {
+                config::render(
+                    frame,
+                    config_area,
+                    &app.config,
+                    editing,
+                    &library_db_hint,
+                    &app.home.mirror_latency,
+                );
+            }
+            if let (Some(login_tab), Some(login_area)) = (app.login.as_ref(), login_area) {
                 login::render(
                     frame,
-                    body_area,
+                    login_area,
                     login_tab,
                     &app.config.login_state,
                     editing,
@@ -320,7 +350,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             area,
             app.help_scroll.get(),
             app.active_tab(),
-            app.is_login_tab(app.active_tab()),
+            app.login_open(),
             app.config.vim_keys,
         );
         app.help_scroll.set(clamped);

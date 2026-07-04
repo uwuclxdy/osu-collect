@@ -29,7 +29,7 @@ const QUIT_PROMPT_TEXT_DOWNLOADS: &str = "press q again to quit · active downlo
 
 /// Download-page back key while running: `q` aborts the in-flight download.
 const HINT_ABORT: &str = "q abort";
-/// `esc`/`q` close key — a settled download page or the dynamic login tab. `x`
+/// `esc`/`q` close key — a settled download page or the login split. `x`
 /// stays toast-only (a notification key, not a page action) so it isn't a back key.
 const HINT_CLOSE: &str = "esc/q close";
 const HINT_RETRY: &str = "r retry failed";
@@ -152,9 +152,9 @@ fn current_message(app: &App) -> Option<&AppMessage> {
     match app.active_tab() {
         HOME_TAB_INDEX => app.home.message.as_ref(),
         UPDATES_TAB_INDEX => app.updates.message.as_ref(),
+        // The login split lives on Config and surfaces its in-progress status
+        // via `config.message`, so the Config arm covers it too.
         CONFIG_TAB_INDEX => app.config.message.as_ref(),
-        // The login flow surfaces its in-progress status via `config.message`.
-        tab if app.is_login_tab(tab) => app.config.message.as_ref(),
         _ => None,
     }
 }
@@ -188,11 +188,14 @@ fn hint_for(app: &App) -> String {
 /// and the global hints are layered on by [`hint_for`]; this returns only the
 /// tab-specific action segments and which back/quit key (if any) trails the bar.
 fn tab_hints(app: &App) -> (Vec<&'static str>, Option<&'static str>) {
+    // The login split traps focus while open; its keys own the bar (esc/q close).
+    if app.login_open() {
+        return (login_hints(app), Some(HINT_CLOSE));
+    }
     match app.active_tab() {
         HOME_TAB_INDEX => (home_hints(&app.home), Some(HINT_QUIT)),
         UPDATES_TAB_INDEX => updates_hints(&app.updates),
         CONFIG_TAB_INDEX => (config_hints(&app.config), Some(HINT_QUIT)),
-        tab if app.is_login_tab(tab) => (login_hints(app), Some(HINT_CLOSE)),
         _ => download_hints(app),
     }
 }
