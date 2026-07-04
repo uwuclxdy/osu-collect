@@ -24,6 +24,14 @@ impl OsuClient {
             OsuClient::Lazer => OsuClient::Stable,
         };
     }
+
+    /// Short lowercase display label (`stable` / `lazer`).
+    pub fn label(self) -> &'static str {
+        match self {
+            OsuClient::Stable => "stable",
+            OsuClient::Lazer => "lazer",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

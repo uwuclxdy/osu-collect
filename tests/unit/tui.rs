@@ -376,16 +376,20 @@ fn active_tab_has_accent_color_no_brackets_and_plain_bg() {
         .any(|cell| cell.symbol() == "h" && cell.style().fg == Some(accent));
     assert!(has_accent_h, "active tab 'home' must render with accent fg");
 
-    // no bracket characters should appear in the header row (row 0)
+    // The only brackets allowed in the header are the client chip
+    // (`[ stable ]` / `[ lazer ]`); tab titles must never be bracket-wrapped
+    // (the retired `[home]` style).
     let header_row: String = buf
         .content
         .iter()
         .take(80)
         .map(|cell| cell.symbol())
         .collect();
+    let chip = format!("[ {} ]", app.updates.path.client_type.label());
+    let without_chip = header_row.replacen(&chip, "", 1);
     assert!(
-        !header_row.contains('[') && !header_row.contains(']'),
-        "header row must not contain bracket markers"
+        !without_chip.contains('[') && !without_chip.contains(']'),
+        "only the client chip may use brackets in the header row"
     );
 
     // header area (row 0) must use plain BG, not BG_RAISED
@@ -1547,7 +1551,7 @@ fn updates_osu_path_help_hidden_when_not_focused() {
 
     let mut app = App::new(Config::default());
     app.active_tab = UPDATES_TAB_INDEX;
-    app.updates.selection.focus = UpdatesField::ClientType;
+    app.updates.selection.focus = UpdatesField::Collections;
 
     let output = render_app(&app, 100, 30);
 

@@ -817,3 +817,44 @@ fn shift_arrow_off_mirror_row_falls_through_to_focus_move() {
         "shift+arrow off a mirror row moves focus like a plain arrow"
     );
 }
+
+// ── global client switch ──────────────────────────────────────────────────────
+
+#[test]
+fn c_switches_client_and_rescans_from_any_tab() {
+    use osu_collect::config::constants::HOME_TAB_INDEX;
+
+    let mut app = make_app();
+    app.active_tab = HOME_TAB_INDEX;
+    let before = app.updates.path.client_type;
+
+    let cmd = app.handle_key(press(KeyCode::Char('c')));
+
+    assert_ne!(
+        app.updates.path.client_type, before,
+        "c must flip the osu! client from any tab"
+    );
+    assert!(
+        matches!(cmd, Some(AppCommand::ScanLocalDatabase)),
+        "switching client must kick off a fresh local scan"
+    );
+}
+
+#[test]
+fn c_types_literal_char_while_editing() {
+    use osu_collect::app::HomeField;
+    use osu_collect::config::constants::HOME_TAB_INDEX;
+
+    let mut app = make_app();
+    app.active_tab = HOME_TAB_INDEX;
+    app.home.focus = HomeField::Collection;
+    app.editing = true;
+    let before = app.updates.path.client_type;
+
+    app.handle_key(press(KeyCode::Char('c')));
+
+    assert_eq!(
+        app.updates.path.client_type, before,
+        "c must not switch the client while typing into a field"
+    );
+}

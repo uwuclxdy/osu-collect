@@ -233,6 +233,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             downloading: app.is_downloading(),
             brand_ramp: app.brand_ramp(),
             update_phase: app.update_phase,
+            client: app.updates.path.client_type,
         },
     );
 

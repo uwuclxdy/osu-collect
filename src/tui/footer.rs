@@ -54,6 +54,8 @@ const HINT_MARK_INSTALLED: &str = "i installed / I all";
 const HINT_QUIT: &str = "q quit";
 const HINT_HELP: &str = "? help";
 const HINT_UPDATE: &str = "u update";
+/// Global `c` binding: switch the osu! client (stable ↔ lazer) from any tab.
+const HINT_SWITCH_CLIENT: &str = "c switch client";
 /// Close hint for the dynamic, closeable login tab.
 const HINT_LOGIN_CLOSE: &str = "esc/q close";
 
@@ -157,6 +159,15 @@ fn hint_for(app: &App) -> String {
         tab if app.is_login_tab(tab) => login_hint(app, app.editing),
         _ => download_tab_hint(app),
     };
+    // `c` switches the osu! client from any tab; advertise it globally except
+    // while editing a text field, where `c` types a literal char.
+    if !app.editing {
+        hint = if hint.is_empty() {
+            HINT_SWITCH_CLIENT.to_string()
+        } else {
+            format!("{hint}{HINT_SEPARATOR}{HINT_SWITCH_CLIENT}")
+        };
+    }
     // A pending notify-only update is actionable from any tab via `u`.
     if app.available_update.is_some() {
         if hint.is_empty() {
@@ -264,7 +275,6 @@ fn updates_hint(form: &UpdatesTab, editing: bool) -> String {
 
     let mut segments = vec![HINT_MOVE];
     match form.selection.focus {
-        UpdatesField::ClientType => segments.push(HINT_ENTER_TOGGLE),
         UpdatesField::Collections | UpdatesField::BeatmapList => segments.push(HINT_ENTER_OPEN),
         UpdatesField::Download => segments.push(HINT_ENTER_DOWNLOAD),
         UpdatesField::OsuPath => segments.push(HINT_EDIT),

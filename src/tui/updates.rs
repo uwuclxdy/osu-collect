@@ -5,7 +5,6 @@ use crate::app::{
         ScanStatus,
     },
 };
-use crate::osu_db::OsuClient;
 use crate::utils::pretty_path;
 use ratatui::{
     Frame,
@@ -26,9 +25,6 @@ const SECTION_MISSING: &str = "missing beatmaps";
 /// Sentinel for a field that belongs to no section (the download button);
 /// never equals a rendered header label, so no title lights up.
 const SECTION_NONE: &str = "";
-
-const LABEL_CLIENT: &str = "client";
-const CLIENT_OPTIONS: &[&str] = &["lazer", "stable"];
 
 const LABEL_COLLECTIONS: &str = "collections";
 const LABEL_AVAILABLE: &str = "missing";
@@ -138,16 +134,6 @@ fn build_items(form: &UpdatesTab, editing: bool) -> (Vec<ListItem<'static>>, usi
         SECTION_SOURCE,
         active_section == SECTION_SOURCE,
     ));
-    if focus == UpdatesField::ClientType && !in_list {
-        focused_index = items.len();
-    }
-    items.push(widgets::cycle_item(
-        LABEL_CLIENT,
-        CLIENT_OPTIONS,
-        client_label(form.path.client_type),
-        focus == UpdatesField::ClientType && !in_list,
-        0,
-    ));
     if focus == UpdatesField::OsuPath && !in_list {
         focused_index = items.len();
     }
@@ -237,7 +223,7 @@ fn build_items(form: &UpdatesTab, editing: bool) -> (Vec<ListItem<'static>>, usi
 fn updates_section(field: UpdatesField) -> &'static str {
     use UpdatesField::*;
     match field {
-        ClientType | OsuPath => SECTION_SOURCE,
+        OsuPath => SECTION_SOURCE,
         Collections => SECTION_COLLECTIONS,
         BeatmapList => SECTION_MISSING,
         Download => SECTION_NONE,
@@ -315,13 +301,6 @@ fn display_item(
             .get(*cache_index)
             .map(|beatmap| beatmap_item(beatmap, is_scroll_pos))
             .unwrap_or_else(|| ListItem::new(Line::from(""))),
-    }
-}
-
-fn client_label(client: OsuClient) -> &'static str {
-    match client {
-        OsuClient::Lazer => "lazer",
-        OsuClient::Stable => "stable",
     }
 }
 

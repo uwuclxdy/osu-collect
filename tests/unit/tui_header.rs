@@ -34,6 +34,7 @@ fn header_buffer_with_update(
                     downloading,
                     brand_ramp: if downloading { 1.0 } else { 0.0 },
                     update_phase,
+                    client: crate::osu_db::OsuClient::Stable,
                 },
             );
         })
@@ -53,6 +54,56 @@ fn brand_renders_osu_bang_collect() {
         buffer_text(&buf).contains("osu!collect"),
         "header must render the osu!collect wordmark"
     );
+}
+
+#[test]
+fn client_chip_renders_after_version() {
+    let buf = header_buffer_with_active(0);
+    let text = buffer_text(&buf);
+    let chip = text
+        .find("[ stable ]")
+        .expect("header must render the active client chip");
+    let version = text.find(" v").expect("header must render the version");
+    assert!(chip > version, "the client chip sits right of the version");
+}
+
+#[test]
+fn client_chip_label_breathes_with_tick() {
+    // The label color must respond to the tick (the breathing glow). The `b` of
+    // "stable" is unique in the header, so it isolates the label from the brand.
+    let label_fg = |tick: u64| {
+        let tabs: Vec<std::borrow::Cow<'static, str>> =
+            ["home"].map(std::borrow::Cow::Borrowed).into();
+        let backend = TestBackend::new(40, 1);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal
+            .draw(|frame| {
+                render(
+                    frame,
+                    RenderParams {
+                        area: Rect::new(0, 0, 40, 1),
+                        tabs: &tabs,
+                        active: 0,
+                        tick,
+                        downloading: false,
+                        brand_ramp: 0.0,
+                        update_phase: None,
+                        client: crate::osu_db::OsuClient::Stable,
+                    },
+                );
+            })
+            .expect("render");
+        let buf = terminal.backend().buffer().clone();
+        buf.content
+            .iter()
+            .find(|c| c.symbol() == "b")
+            .and_then(|c| c.style().fg)
+    };
+    // A quarter-period apart (period is 80 ticks) → different breath depth.
+    let a = label_fg(0);
+    let b = label_fg(20);
+    assert!(a.is_some() && b.is_some(), "the label glyph must render");
+    assert_ne!(a, b, "client label color must animate across ticks");
 }
 
 #[test]

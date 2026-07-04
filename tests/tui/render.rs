@@ -398,11 +398,15 @@ fn home_footer_toggle_focus_has_quit_hint_ending_with_help() {
     assert!(footer.contains("↑↓"), "must show move hint");
     assert!(footer.contains("↵ toggle"), "must show ↵ toggle");
     assert!(footer.contains("q quit"), "must show q quit");
-    assert!(footer.contains('?'), "must end with ? help");
+    assert!(footer.contains('?'), "must show ? help");
+    assert!(
+        footer.contains("switch client"),
+        "must show c switch client"
+    );
     assert_eq!(
         hint_count(&footer),
-        4,
-        "toggle focus must show move, toggle, quit, help"
+        5,
+        "toggle focus must show move, toggle, quit, help, switch-client"
     );
 }
 
@@ -416,11 +420,15 @@ fn home_footer_button_focus_shows_enter_download() {
     assert!(footer.contains("↑↓"), "must show move hint");
     assert!(footer.contains("↵ download"), "must show ↵ download");
     assert!(footer.contains("q quit"), "must show q quit");
-    assert!(footer.contains('?'), "must end with ? help");
+    assert!(footer.contains('?'), "must show ? help");
+    assert!(
+        footer.contains("switch client"),
+        "must show c switch client"
+    );
     assert_eq!(
         hint_count(&footer),
-        4,
-        "button focus must show move, download, quit, help"
+        5,
+        "button focus must show move, download, quit, help, switch-client"
     );
 }
 
@@ -438,37 +446,49 @@ fn home_footer_text_input_focus_has_four_hints_with_edit_and_quit() {
     );
     assert!(footer.contains('q'), "must show q quit");
     assert!(footer.contains('?'), "must show ? help");
+    assert!(
+        footer.contains("switch client"),
+        "must show c switch client"
+    );
     assert_eq!(
         hint_count(&footer),
-        4,
-        "selected text input must show move, edit, quit, help"
+        5,
+        "selected text input must show move, edit, quit, help, switch-client"
     );
 }
 
 #[test]
-fn updates_footer_not_in_list_has_at_most_four_hints() {
+fn updates_footer_not_in_list_has_at_most_five_hints() {
     let mut app = make_app();
     app.next_tab();
     let footer = render_footer_row(&app, 200, 24);
     assert!(footer.contains("↑↓"), "must show move hint");
     assert!(footer.contains('?'), "must show ? help");
     assert!(
-        hint_count(&footer) <= 4,
-        "updates not-in-list footer must show at most 4 hints, got {}",
+        footer.contains("switch client"),
+        "must show c switch client"
+    );
+    assert!(
+        hint_count(&footer) <= 5,
+        "updates not-in-list footer must show at most 5 hints, got {}",
         hint_count(&footer)
     );
 }
 
 #[test]
-fn updates_footer_in_list_has_exactly_four_hints() {
+fn updates_footer_in_list_has_exactly_five_hints() {
     let mut app = make_app();
     app.next_tab();
     app.updates.selection.in_collection_list = true;
     let footer = render_footer_row(&app, 200, 24);
+    assert!(
+        footer.contains("switch client"),
+        "must show c switch client"
+    );
     assert_eq!(
         hint_count(&footer),
-        4,
-        "updates in-list footer must show exactly 4 hints"
+        5,
+        "updates in-list footer must show scroll, toggle, all/none, help, switch-client"
     );
 }
 
@@ -484,10 +504,14 @@ fn config_footer_non_text_has_four_hints_with_help() {
     assert!(footer.contains("↵ toggle"), "must show ↵ toggle");
     assert!(footer.contains("q quit"), "must show q quit");
     assert!(footer.contains('?'), "must show ? help");
+    assert!(
+        footer.contains("switch client"),
+        "must show c switch client"
+    );
     assert_eq!(
         hint_count(&footer),
-        4,
-        "config non-text footer must show exactly 4 hints"
+        5,
+        "config non-text footer must show exactly 5 hints"
     );
 }
 
@@ -510,10 +534,14 @@ fn config_footer_text_input_shows_edit_not_toggle() {
         !footer.contains("↵ toggle"),
         "text field must not show ↵ toggle"
     );
+    assert!(
+        footer.contains("switch client"),
+        "must show c switch client"
+    );
     assert_eq!(
         hint_count(&footer),
-        4,
-        "config text field footer must show move, edit, quit, help"
+        5,
+        "config text field footer must show move, edit, quit, help, switch-client"
     );
 
     // While editing, the footer collapses to the exit affordance.

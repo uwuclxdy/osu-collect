@@ -17,7 +17,6 @@ use tracing::{debug, info};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdatesField {
-    ClientType,
     OsuPath,
     Collections,
     BeatmapList,
@@ -26,7 +25,6 @@ pub enum UpdatesField {
 }
 
 const UPDATE_FIELDS: &[UpdatesField] = &[
-    UpdatesField::ClientType,
     UpdatesField::OsuPath,
     UpdatesField::Collections,
     UpdatesField::BeatmapList,
@@ -250,7 +248,7 @@ impl SelectionState {
             beatmaps_state: None,
             in_collection_list: false,
             in_beatmap_list: false,
-            focus: UpdatesField::ClientType,
+            focus: UpdatesField::OsuPath,
             collection_sort: CollectionSort::Default,
             beatmap_sort: BeatmapSort::Default,
         }
@@ -482,47 +480,35 @@ impl UpdatesTab {
             && !self.selection.in_beatmap_list
     }
 
-    pub fn toggle_current(&mut self) -> UpdatesAction {
-        match self.selection.focus {
-            UpdatesField::ClientType => {
-                self.path.client_type.toggle();
-                let new_path = PathState::detect_default_path(self.path.client_type);
-                if self.path.osu_path.value.is_empty()
-                    || self.path.osu_path.value == self.path.osu_path.placeholder
-                {
-                    self.path.osu_path.set_value(new_path.clone());
-                }
-                self.path.osu_path.placeholder = new_path;
-                // Clear current data and trigger full rescan
-                // Increment generation to invalidate any in-flight fetch tasks
-                self.scan.scan_generation = self.scan.scan_generation.wrapping_add(1);
-                self.selection.local_collections.clear();
-                self.scan.all_local_checksums.clear();
-                self.scan.local_beatmapsets.clear();
-                self.selection.cached_missing_sets.clear();
-                self.selection.visible_missing.clear();
-                self.selection.display_items.clear();
-                self.selection.collections_state = None;
-                self.selection.beatmaps_state = None;
-                self.selection.in_collection_list = false;
-                self.selection.in_beatmap_list = false;
-                self.scan.scan_status = ScanStatus::Idle;
-                UpdatesAction::RefreshAll
-            }
-            UpdatesField::Collections => {
-                if self.selection.in_collection_list {
-                    self.toggle_collection_at_scroll();
-                }
-                UpdatesAction::None
-            }
-            UpdatesField::BeatmapList => {
-                if self.selection.in_beatmap_list {
-                    self.toggle_beatmap_at_scroll();
-                }
-                UpdatesAction::None
-            }
-            _ => UpdatesAction::None,
+    /// Switch the active osu! client (stable ↔ lazer) and reset for a fresh
+    /// scan. Re-detects the default install path while the field still holds a
+    /// placeholder, then clears the prior client's scan data so the next scan
+    /// rebuilds against the new library. Returns `RefreshAll` so the caller
+    /// kicks off `ScanLocalDatabase`.
+    pub fn switch_client(&mut self) -> UpdatesAction {
+        self.path.client_type.toggle();
+        let new_path = PathState::detect_default_path(self.path.client_type);
+        if self.path.osu_path.value.is_empty()
+            || self.path.osu_path.value == self.path.osu_path.placeholder
+        {
+            self.path.osu_path.set_value(new_path.clone());
         }
+        self.path.osu_path.placeholder = new_path;
+        // Clear current data and trigger full rescan
+        // Increment generation to invalidate any in-flight fetch tasks
+        self.scan.scan_generation = self.scan.scan_generation.wrapping_add(1);
+        self.selection.local_collections.clear();
+        self.scan.all_local_checksums.clear();
+        self.scan.local_beatmapsets.clear();
+        self.selection.cached_missing_sets.clear();
+        self.selection.visible_missing.clear();
+        self.selection.display_items.clear();
+        self.selection.collections_state = None;
+        self.selection.beatmaps_state = None;
+        self.selection.in_collection_list = false;
+        self.selection.in_beatmap_list = false;
+        self.scan.scan_status = ScanStatus::Idle;
+        UpdatesAction::RefreshAll
     }
 
     /// Toggle the item under the scroll cursor in whichever list is currently

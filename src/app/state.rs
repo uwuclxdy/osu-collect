@@ -1636,13 +1636,6 @@ impl App {
                             return None;
                         }
                         match self.updates.selection.focus {
-                            UpdatesField::ClientType => {
-                                let action = self.updates.toggle_current();
-                                self.persist_osu_path_inputs();
-                                if action == UpdatesAction::RefreshAll {
-                                    return Some(AppCommand::ScanLocalDatabase);
-                                }
-                            }
                             UpdatesField::Collections | UpdatesField::BeatmapList => {
                                 self.updates.enter_opens_list();
                             }
@@ -1718,12 +1711,6 @@ impl App {
                         self.updates.handle_char(' ');
                     } else if in_list {
                         self.updates.toggle_list_item();
-                    } else if self.updates.selection.focus == UpdatesField::ClientType {
-                        let action = self.updates.toggle_current();
-                        self.persist_osu_path_inputs();
-                        if action == UpdatesAction::RefreshAll {
-                            return Some(AppCommand::ScanLocalDatabase);
-                        }
                     }
                 }
                 CONFIG_TAB_INDEX => match self.config.focus {
@@ -1749,6 +1736,17 @@ impl App {
                     }
                 }
             },
+            // `c` switches the osu! client (stable ↔ lazer) from any tab. It
+            // changes the owned library, so it clears the prior scan and kicks a
+            // fresh one. Suppressed while typing so `c` types a literal char.
+            KeyCode::Char('c') if !typing => {
+                let action = self.updates.switch_client();
+                self.persist_osu_path_inputs();
+                if action == UpdatesAction::RefreshAll {
+                    return Some(AppCommand::ScanLocalDatabase);
+                }
+                return None;
+            }
             KeyCode::Char(ch) => match self.active_tab() {
                 HOME_TAB_INDEX => {
                     // Stepper: +/- adjust thread count when threads field is focused.

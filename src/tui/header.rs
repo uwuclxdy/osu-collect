@@ -9,6 +9,7 @@ use ratatui::{
 };
 
 use crate::app::UpdateIndicator;
+use crate::osu_db::OsuClient;
 
 use super::theme::blend;
 use super::{accent, accent_alt, spinner_str, text_dim, warning};
@@ -34,6 +35,9 @@ pub struct RenderParams<'a, 't> {
     /// Ease-in ramp (0..1) for the shimmer. Rises from 0 when downloading
     /// begins so the animation fades in instead of cutting in.
     pub brand_ramp: f32,
+    /// Active osu! client, shown as a `[ stable ]` / `[ lazer ]` chip just left
+    /// of the version. Switched globally with `c`.
+    pub client: OsuClient,
     /// Self-update indicator phase; when set, the right-side version label gains
     /// a trailing glyph after the current version (shimmering `↑` available,
     /// spinner downloading, static `↻` restart-pending). `None` renders the plain
@@ -50,6 +54,7 @@ pub fn render(frame: &mut Frame, params: RenderParams<'_, '_>) {
         downloading,
         brand_ramp,
         update_phase,
+        client,
     } = params;
 
     if area.width == 0 || area.height == 0 {
@@ -57,12 +62,14 @@ pub fn render(frame: &mut Frame, params: RenderParams<'_, '_>) {
     }
 
     let (version_line, version_width) = version_indicator(update_phase, tick);
+    let (client_line, client_width) = client_indicator(client, tick);
     let brand_width = BRAND.chars().count() as u16;
 
     let layout = Layout::horizontal([
         Constraint::Length(brand_width),
         Constraint::Min(0),
         Constraint::Length(version_width),
+        Constraint::Length(client_width),
     ])
     .split(area);
 
@@ -94,6 +101,49 @@ pub fn render(frame: &mut Frame, params: RenderParams<'_, '_>) {
         Paragraph::new(Line::from(version_line)).alignment(Alignment::Right),
         layout[2],
     );
+
+    frame.render_widget(
+        Paragraph::new(client_line).alignment(Alignment::Right),
+        layout[3],
+    );
+}
+
+/// Ticks for one full breath of the client label. ~4s at the 50ms tick — slow
+/// enough to read as a gentle glow rather than a blink.
+const CLIENT_BREATH_TICKS: f32 = 80.0;
+/// Peak brightness lean of the breath (fraction toward white). Kept shallow so
+/// the pulse is barely-there.
+const CLIENT_BREATH_DEPTH: f32 = 0.16;
+
+/// Right-edge client chip (`[ stable ]` / `[ lazer ]`) shown just right of the
+/// version. Only the label carries the active client's pastel pink; the brackets
+/// stay dim. The label breathes — a slow, shallow lean toward white — a cue
+/// distinct from the brand's traveling shimmer and the update sweep. Selection
+/// is global (`c` switches it).
+fn client_indicator(client: OsuClient, tick: u64) -> (Line<'static>, u16) {
+    let name = client.label();
+    // Sine breath in [0,1]; the shallow depth keeps it subtle. A single uniform
+    // lean (not a per-char wave) is what sets it apart from the brand shimmer.
+    let phase = (tick as f32 / CLIENT_BREATH_TICKS).fract() * std::f32::consts::TAU;
+    let breath = phase.sin() * 0.5 + 0.5;
+    let label = blend(WHITE, client_pink(client), breath * CLIENT_BREATH_DEPTH);
+    let bracket = Style::default().fg(text_dim());
+    let spans = vec![
+        Span::styled(" [ ", bracket),
+        Span::styled(name, Style::default().fg(label).bold()),
+        Span::styled(" ] ", bracket),
+    ];
+    let width = (" [ ".len() + name.len() + " ] ".len()) as u16;
+    (Line::from(spans), width)
+}
+
+/// Each osu! client's pastel pink: stable's warm rosy pink, lazer's cooler
+/// orchid-pink, so the two labels stay distinguishable at a glance.
+fn client_pink(client: OsuClient) -> Color {
+    match client {
+        OsuClient::Stable => Color::Rgb(248, 150, 186),
+        OsuClient::Lazer => Color::Rgb(228, 132, 200),
+    }
 }
 
 /// Right-side version label + its rendered width. Idle (`None`): the static dim
