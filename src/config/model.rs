@@ -134,6 +134,15 @@ pub struct MirrorConfig {
     /// never serialized back, so saving migrates it into `urls`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<Box<str>>,
+    /// User-defined try-order for the built-in mirrors, as host keys
+    /// ([`MirrorKind::host`](mirrors::MirrorKind::host)). Empty (the default)
+    /// means the canonical [`MirrorKind::BUILTINS`](mirrors::MirrorKind::BUILTINS)
+    /// order. Reconstructed into a ranked list by
+    /// [`ordered_builtins`](MirrorConfig::ordered_builtins), which drops unknown
+    /// host keys and appends any built-in missing from the list, so the field
+    /// can never hide or duplicate a mirror.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub order: Vec<Box<str>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -236,6 +245,7 @@ impl Default for MirrorConfig {
             osu_official: false,
             urls: Vec::new(),
             url: None,
+            order: Vec::new(),
         }
     }
 }
@@ -252,6 +262,35 @@ impl MirrorConfig {
             .map(str::trim)
             .filter(|template| !template.is_empty())
             .collect()
+    }
+
+    /// The built-in mirror kinds in the user's configured try-order.
+    ///
+    /// Known host keys from [`order`](Self::order) come first in their saved
+    /// order (duplicates collapsed, unknown keys dropped), then any built-in
+    /// absent from `order` is appended in
+    /// [`MirrorKind::BUILTINS`](mirrors::MirrorKind::BUILTINS) order. The result
+    /// always holds every built-in exactly once, so it is the single source of
+    /// truth for both the pipeline try-order and the TUI mirror-row order.
+    pub fn ordered_builtins(&self) -> Vec<mirrors::MirrorKind> {
+        use mirrors::MirrorKind;
+        let mut ordered: Vec<MirrorKind> = Vec::with_capacity(MirrorKind::BUILTINS.len());
+        for key in &self.order {
+            if let Some(kind) = MirrorKind::BUILTINS
+                .iter()
+                .copied()
+                .find(|kind| kind.host() == key.as_ref())
+                && !ordered.contains(&kind)
+            {
+                ordered.push(kind);
+            }
+        }
+        for &kind in MirrorKind::BUILTINS {
+            if !ordered.contains(&kind) {
+                ordered.push(kind);
+            }
+        }
+        ordered
     }
 
     fn any_enabled(&self) -> bool {

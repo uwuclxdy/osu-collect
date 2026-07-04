@@ -101,3 +101,63 @@ fn all_theme_variants_serialize_and_deserialize() {
         );
     }
 }
+
+#[test]
+fn ordered_builtins_defaults_to_canonical_order() {
+    use crate::mirrors::MirrorKind;
+    let mirror = Config::default().mirror;
+    assert_eq!(mirror.ordered_builtins(), MirrorKind::BUILTINS.to_vec());
+}
+
+#[test]
+fn ordered_builtins_puts_saved_hosts_first_then_appends_missing() {
+    use crate::mirrors::MirrorKind;
+    let mut config = Config::default();
+    config.mirror.order = vec![
+        MirrorKind::Catboy.host().into(),
+        MirrorKind::Nekoha.host().into(),
+    ];
+    let ordered = config.mirror.ordered_builtins();
+    assert_eq!(ordered[0], MirrorKind::Catboy);
+    assert_eq!(ordered[1], MirrorKind::Nekoha);
+    // Every built-in still appears exactly once — the field never hides or
+    // duplicates a mirror.
+    assert_eq!(ordered.len(), MirrorKind::BUILTINS.len());
+    for kind in MirrorKind::BUILTINS {
+        assert_eq!(
+            ordered.iter().filter(|k| *k == kind).count(),
+            1,
+            "{kind:?} appears exactly once"
+        );
+    }
+}
+
+#[test]
+fn ordered_builtins_drops_unknown_hosts_and_dedups() {
+    use crate::mirrors::MirrorKind;
+    let mut config = Config::default();
+    config.mirror.order = vec![
+        "ghost.example".into(),
+        MirrorKind::Sayobot.host().into(),
+        MirrorKind::Sayobot.host().into(),
+    ];
+    let ordered = config.mirror.ordered_builtins();
+    assert_eq!(ordered[0], MirrorKind::Sayobot);
+    assert_eq!(ordered.len(), MirrorKind::BUILTINS.len());
+}
+
+#[test]
+fn mirror_order_deserializes_from_toml() {
+    use crate::mirrors::MirrorKind;
+    let dir = tempfile::tempdir().unwrap();
+    let toml = format!(
+        "[mirror]\norder = [\"{}\", \"{}\"]\n",
+        MirrorKind::Catboy.host(),
+        MirrorKind::OsuDirect.host()
+    );
+    let path = write_toml(dir.path(), &toml);
+    let loaded = load_config_from(&path).expect("load must succeed");
+    let ordered = loaded.mirror.ordered_builtins();
+    assert_eq!(ordered[0], MirrorKind::Catboy);
+    assert_eq!(ordered[1], MirrorKind::OsuDirect);
+}

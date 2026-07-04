@@ -182,37 +182,22 @@ fn build_config_items(
     }
 
     let logged_in = matches!(form.login_state, AuthLoginState::LoggedIn);
-    let mirror_states = [
-        (ConfigField::MirrorOsuDirect, form.osu_direct),
-        (ConfigField::MirrorNerinyan, form.nerinyan),
-        (ConfigField::MirrorSayobot, form.sayobot),
-        (ConfigField::MirrorNekoha, form.nekoha),
-        (ConfigField::MirrorBeatconnect, form.beatconnect),
-        (ConfigField::MirrorOsudl, form.osudl),
-        (ConfigField::MirrorCatboy, form.catboy),
-        (ConfigField::MirrorHinamizawa, form.hinamizawa),
-        (ConfigField::MirrorOsuOfficial, form.osu_official),
-    ];
-    for (kind, (field, on)) in MirrorKind::BUILTINS.iter().zip(mirror_states) {
+    // Rows follow the configured try-order (`ordered_mirror_rows`), matching the
+    // nav order and the pipeline so what the user reorders is what gets tried.
+    for (kind, field, on) in form.ordered_mirror_rows() {
         // Host is an informational hint, not a configurable value, so it is NOT
         // column-aligned (label_width 0) — it trails the mirror name.
-        let item = if *kind == MirrorKind::OsuApi && !logged_in {
+        let item = if kind == MirrorKind::OsuApi && !logged_in {
             // osu! official needs a login: greyed + inert when logged out.
             widgets::disabled_toggle_row(
-                mirror_label(*kind),
+                mirror_label(kind),
                 Some(kind.host()),
                 on,
                 focus == field,
                 0,
             )
         } else {
-            widgets::row_item(
-                mirror_label(*kind),
-                Some(kind.host()),
-                on,
-                focus == field,
-                0,
-            )
+            widgets::row_item(mirror_label(kind), Some(kind.host()), on, focus == field, 0)
         };
         items.push_focusable(field, item);
     }

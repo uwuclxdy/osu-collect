@@ -198,3 +198,69 @@ fn config_download_threads_is_not_text_input() {
     assert!(!ConfigField::DownloadThreads.is_text_input());
     assert!(ConfigField::DownloadThreads.is_stepper());
 }
+
+#[test]
+fn reorder_focused_mirror_moves_row_and_keeps_focus() {
+    use crate::mirrors::MirrorKind;
+
+    let mut tab = ConfigTab::new(&Config::default());
+    // Nerinyan is the second built-in in the default order; move it up.
+    tab.focus = ConfigField::MirrorNerinyan;
+    assert!(
+        tab.reorder_focused_mirror(true),
+        "moving a mid-list mirror up must report a change"
+    );
+    assert_eq!(tab.mirror_order[0], MirrorKind::Nerinyan);
+    assert_eq!(tab.mirror_order[1], MirrorKind::OsuDirect);
+    assert_eq!(
+        tab.focus,
+        ConfigField::MirrorNerinyan,
+        "focus follows the moved mirror"
+    );
+}
+
+#[test]
+fn reorder_focused_mirror_is_noop_at_edge_and_off_mirror() {
+    let mut tab = ConfigTab::new(&Config::default());
+    // The top built-in cannot move further up.
+    tab.focus = ConfigField::MirrorOsuDirect;
+    assert!(!tab.reorder_focused_mirror(true));
+    // A non-mirror row is never part of the reorder set.
+    tab.focus = ConfigField::Theme;
+    assert!(!tab.focus_is_builtin_mirror());
+    assert!(!tab.reorder_focused_mirror(false));
+}
+
+#[test]
+fn build_config_writes_reordered_order_and_omits_default() {
+    use crate::mirrors::MirrorKind;
+
+    let default_tab = ConfigTab::new(&Config::default());
+    assert!(
+        default_tab.build_config().unwrap().mirror.order.is_empty(),
+        "an untouched order must serialize empty (BUILTINS default)"
+    );
+
+    let mut tab = ConfigTab::new(&Config::default());
+    tab.focus = ConfigField::MirrorNerinyan;
+    tab.reorder_focused_mirror(true);
+    let built = tab.build_config().unwrap();
+    assert_eq!(
+        built.mirror.order.first().map(|s| s.as_ref()),
+        Some(MirrorKind::Nerinyan.host()),
+        "a reordered tab writes the host-key order"
+    );
+    // The written order reconstructs the same ranking.
+    assert_eq!(built.mirror.ordered_builtins()[0], MirrorKind::Nerinyan);
+}
+
+#[test]
+fn nav_order_follows_reordered_mirrors() {
+    let mut tab = ConfigTab::new(&Config::default());
+    tab.focus = ConfigField::MirrorNerinyan;
+    tab.reorder_focused_mirror(true); // Nerinyan becomes the first mirror row
+    // Stepping down from vim-keys lands on the new first mirror.
+    tab.focus = ConfigField::VimKeys;
+    tab.next_field();
+    assert_eq!(tab.focus, ConfigField::MirrorNerinyan);
+}

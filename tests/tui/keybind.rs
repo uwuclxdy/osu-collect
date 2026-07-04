@@ -30,6 +30,15 @@ fn ctrl(code: KeyCode) -> KeyEvent {
     }
 }
 
+fn shift(code: KeyCode) -> KeyEvent {
+    KeyEvent {
+        code,
+        modifiers: KeyModifiers::SHIFT,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::empty(),
+    }
+}
+
 // ── ctrl shortcuts ────────────────────────────────────────────────────────────
 
 #[test]
@@ -720,5 +729,62 @@ fn enter_inside_collection_list_is_no_op() {
     assert!(
         app.updates.selection.in_collection_list,
         "enter must not close the collection list"
+    );
+}
+
+// ── config tab: mirror reorder ────────────────────────────────────────────────
+
+#[test]
+fn shift_arrow_reorders_config_mirror_and_syncs_pipeline() {
+    use osu_collect::app::ConfigField;
+    use osu_collect::config::constants::CONFIG_TAB_INDEX;
+    use osu_downloader::MirrorKind;
+
+    // Sandbox the config path so the reorder's auto-save never touches the real
+    // user config.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    unsafe { std::env::set_var("OSU_COLLECT_CONFIG", path.to_str().unwrap()) };
+
+    let mut app = make_app();
+    app.active_tab = CONFIG_TAB_INDEX;
+    // Nerinyan is the second built-in in the default order.
+    app.config.focus = ConfigField::MirrorNerinyan;
+    app.handle_key(shift(KeyCode::Up));
+
+    unsafe { std::env::remove_var("OSU_COLLECT_CONFIG") };
+
+    assert_eq!(
+        app.config.mirror_order[0],
+        MirrorKind::Nerinyan,
+        "shift+up moves the focused mirror to the front of the try-order"
+    );
+    assert_eq!(
+        app.home.mirror_order[0],
+        MirrorKind::Nerinyan,
+        "the Get Maps pipeline order syncs with the config reorder"
+    );
+    let first = app.home.build_mirror_list().first().map(|m| m.kind());
+    assert_eq!(
+        first,
+        Some(MirrorKind::Nerinyan),
+        "the pipeline tries the reordered mirror first"
+    );
+}
+
+#[test]
+fn shift_arrow_off_mirror_row_falls_through_to_focus_move() {
+    use osu_collect::app::ConfigField;
+    use osu_collect::config::constants::CONFIG_TAB_INDEX;
+
+    let mut app = make_app();
+    app.active_tab = CONFIG_TAB_INDEX;
+    // Theme is not a mirror row, so shift+down behaves like plain focus movement.
+    app.config.focus = ConfigField::Theme;
+    app.handle_key(shift(KeyCode::Down));
+    assert_eq!(
+        app.config.focus,
+        ConfigField::VimKeys,
+        "shift+arrow off a mirror row moves focus like a plain arrow"
     );
 }

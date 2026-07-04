@@ -1547,6 +1547,20 @@ impl App {
                     return Some(cmd);
                 }
             }
+            // ⇧↑ / ⇧↓ reorder the focused built-in mirror row in the Config tab's
+            // try-order; the new order persists and the Get Maps rows + pipeline
+            // follow it. Only fires on a mirror row, so shift+arrow elsewhere
+            // falls through to plain focus movement.
+            KeyCode::Up | KeyCode::Down
+                if key.modifiers.contains(KeyModifiers::SHIFT)
+                    && self.active_tab() == CONFIG_TAB_INDEX
+                    && self.config.focus_is_builtin_mirror() =>
+            {
+                if self.config.reorder_focused_mirror(key.code == KeyCode::Up) {
+                    self.apply_config_change();
+                    self.home.set_mirror_order(self.config.mirror_order.clone());
+                }
+            }
             KeyCode::Up => {
                 if self.active_tab() == UPDATES_TAB_INDEX
                     && (self.updates.selection.in_collection_list

@@ -16,6 +16,7 @@ use crate::{
         },
     },
     download::ArchiveValidation,
+    mirrors::MirrorKind,
     utils::expand_tilde,
 };
 
@@ -60,21 +61,14 @@ pub enum ConfigField {
 
 // Navigation order — must mirror the render order in `tui::config`
 // (`build_config_items`): auth · display · mirrors · download · logging,
-// matching the home tab's mirrors-before-download flow. The dynamic
-// custom-mirror rows sit between these two slices (after the built-in mirrors).
-const CONFIG_FIELDS_BEFORE_CUSTOM: &[ConfigField] = &[
+// matching the home tab's mirrors-before-download flow. The built-in mirror
+// rows sit between this head slice and the dynamic custom-mirror rows, in the
+// configured try-order (`ConfigTab::ordered_mirror_rows`), so they are not
+// listed here.
+const CONFIG_FIELDS_HEAD: &[ConfigField] = &[
     ConfigField::AuthChip,
     ConfigField::Theme,
     ConfigField::VimKeys,
-    ConfigField::MirrorOsuDirect,
-    ConfigField::MirrorNerinyan,
-    ConfigField::MirrorSayobot,
-    ConfigField::MirrorNekoha,
-    ConfigField::MirrorBeatconnect,
-    ConfigField::MirrorOsudl,
-    ConfigField::MirrorCatboy,
-    ConfigField::MirrorHinamizawa,
-    ConfigField::MirrorOsuOfficial,
 ];
 
 const CONFIG_FIELDS_AFTER_CUSTOM: &[ConfigField] = &[
@@ -135,6 +129,11 @@ pub struct ConfigTab {
     pub vim_keys: bool,
     pub auto_update: bool,
     pub prereleases: bool,
+    /// Built-in mirror try-order, seeded from
+    /// [`MirrorConfig::ordered_builtins`](crate::config::MirrorConfig::ordered_builtins).
+    /// Reordered in place by [`reorder_focused_mirror`](Self::reorder_focused_mirror)
+    /// and written back to `[mirror].order` by [`build_config`](Self::build_config).
+    pub mirror_order: Vec<MirrorKind>,
     pub focus: ConfigField,
     pub message: Option<AppMessage>,
     pub default_threads: u8,
@@ -178,6 +177,7 @@ impl ConfigTab {
             vim_keys: config.display.vim_keys,
             auto_update: config.update.auto_update,
             prereleases: config.update.prereleases,
+            mirror_order: config.mirror.ordered_builtins(),
             // Start focus one row below the auth chip so an accidental enter
             // never opens the login tab on entry.
             focus: ConfigField::Theme,
@@ -192,17 +192,74 @@ impl ConfigTab {
     /// entry (including the trailing empty slot), rebuilt each call so the
     /// dynamic custom-mirror count is always reflected.
     pub(crate) fn fields(&self) -> Vec<ConfigField> {
+        let mirror_rows = self.ordered_mirror_rows();
         let mut fields = Vec::with_capacity(
-            CONFIG_FIELDS_BEFORE_CUSTOM.len()
+            CONFIG_FIELDS_HEAD.len()
+                + mirror_rows.len()
                 + self.custom_mirrors.row_count()
                 + CONFIG_FIELDS_AFTER_CUSTOM.len(),
         );
-        fields.extend_from_slice(CONFIG_FIELDS_BEFORE_CUSTOM);
+        fields.extend_from_slice(CONFIG_FIELDS_HEAD);
+        fields.extend(mirror_rows.iter().map(|&(_, field, _)| field));
         for idx in 0..self.custom_mirrors.row_count() {
             fields.push(ConfigField::MirrorCustomUrl(idx));
         }
         fields.extend_from_slice(CONFIG_FIELDS_AFTER_CUSTOM);
         fields
+    }
+
+    /// Built-in mirror rows in the configured try-order: `(kind, nav field,
+    /// enabled)`. Single source for both the nav order ([`fields`](Self::fields))
+    /// and the Config mirrors render, so the two never drift.
+    pub(crate) fn ordered_mirror_rows(&self) -> Vec<(MirrorKind, ConfigField, bool)> {
+        self.mirror_order
+            .iter()
+            .filter_map(|&kind| Some((kind, mirror_config_field(kind)?, self.mirror_enabled(kind))))
+            .collect()
+    }
+
+    /// Whether the built-in mirror of `kind` is toggled on.
+    fn mirror_enabled(&self, kind: MirrorKind) -> bool {
+        match kind {
+            MirrorKind::Nerinyan => self.nerinyan,
+            MirrorKind::OsuDirect => self.osu_direct,
+            MirrorKind::Sayobot => self.sayobot,
+            MirrorKind::Nekoha => self.nekoha,
+            MirrorKind::Beatconnect => self.beatconnect,
+            MirrorKind::Osudl => self.osudl,
+            MirrorKind::Catboy => self.catboy,
+            MirrorKind::Hinamizawa => self.hinamizawa,
+            MirrorKind::OsuApi => self.osu_official,
+            MirrorKind::Custom => false,
+        }
+    }
+
+    /// Whether focus is on a built-in mirror row (the reorderable set).
+    pub fn focus_is_builtin_mirror(&self) -> bool {
+        mirror_kind_of(self.focus).is_some()
+    }
+
+    /// Move the focused built-in mirror one slot up (`up`) or down in the
+    /// try-order, keeping focus on that mirror. Returns whether the order
+    /// changed — `false` when focus isn't a built-in mirror row or the row is
+    /// already at the relevant edge. Enable state is untouched.
+    pub fn reorder_focused_mirror(&mut self, up: bool) -> bool {
+        let Some(kind) = mirror_kind_of(self.focus) else {
+            return false;
+        };
+        let Some(idx) = self.mirror_order.iter().position(|&k| k == kind) else {
+            return false;
+        };
+        let target = if up {
+            idx.checked_sub(1)
+        } else {
+            Some(idx + 1).filter(|&t| t < self.mirror_order.len())
+        };
+        let Some(target) = target else {
+            return false;
+        };
+        self.mirror_order.swap(idx, target);
+        true
     }
 
     /// Drop emptied custom rows once focus leaves the custom-mirror section.
@@ -410,6 +467,16 @@ impl ConfigTab {
 
     pub fn build_config(&self) -> Result<Config, String> {
         let concurrent = self.parse_concurrent()?;
+        // Persist an explicit order only once it diverges from the canonical
+        // `BUILTINS` order, so an untouched config stays free of the key.
+        let order = if self.mirror_order.as_slice() == MirrorKind::BUILTINS {
+            Vec::new()
+        } else {
+            self.mirror_order
+                .iter()
+                .map(|kind| Box::<str>::from(kind.host()))
+                .collect()
+        };
         let mirror = MirrorConfig {
             nerinyan: self.nerinyan,
             osu_direct: self.osu_direct,
@@ -423,6 +490,7 @@ impl ConfigTab {
             urls: self.custom_mirrors.nonempty_templates(),
             // Migrate any legacy single URL into `urls` on the next save.
             url: None,
+            order,
         };
 
         let download = DownloadConfig {
@@ -569,6 +637,40 @@ fn logging_dir_field(logging: &LoggingConfig) -> InputField {
         logging.file_dir.as_deref().unwrap_or(""),
         "~/.local/share/osu-collect/logs",
     )
+}
+
+/// The nav/render field for a built-in mirror kind, or `None` for
+/// [`MirrorKind::Custom`] (custom mirrors live in their own rows).
+fn mirror_config_field(kind: MirrorKind) -> Option<ConfigField> {
+    Some(match kind {
+        MirrorKind::Nerinyan => ConfigField::MirrorNerinyan,
+        MirrorKind::OsuDirect => ConfigField::MirrorOsuDirect,
+        MirrorKind::Sayobot => ConfigField::MirrorSayobot,
+        MirrorKind::Nekoha => ConfigField::MirrorNekoha,
+        MirrorKind::Beatconnect => ConfigField::MirrorBeatconnect,
+        MirrorKind::Osudl => ConfigField::MirrorOsudl,
+        MirrorKind::Catboy => ConfigField::MirrorCatboy,
+        MirrorKind::Hinamizawa => ConfigField::MirrorHinamizawa,
+        MirrorKind::OsuApi => ConfigField::MirrorOsuOfficial,
+        MirrorKind::Custom => return None,
+    })
+}
+
+/// The built-in [`MirrorKind`] a mirror nav field maps to, or `None` for any
+/// non-mirror (or custom-mirror) field.
+fn mirror_kind_of(field: ConfigField) -> Option<MirrorKind> {
+    Some(match field {
+        ConfigField::MirrorNerinyan => MirrorKind::Nerinyan,
+        ConfigField::MirrorOsuDirect => MirrorKind::OsuDirect,
+        ConfigField::MirrorSayobot => MirrorKind::Sayobot,
+        ConfigField::MirrorNekoha => MirrorKind::Nekoha,
+        ConfigField::MirrorBeatconnect => MirrorKind::Beatconnect,
+        ConfigField::MirrorOsudl => MirrorKind::Osudl,
+        ConfigField::MirrorCatboy => MirrorKind::Catboy,
+        ConfigField::MirrorHinamizawa => MirrorKind::Hinamizawa,
+        ConfigField::MirrorOsuOfficial => MirrorKind::OsuApi,
+        _ => return None,
+    })
 }
 
 fn next_value<T: Copy + PartialEq, const N: usize>(values: [T; N], current: T) -> T {

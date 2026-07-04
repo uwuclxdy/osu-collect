@@ -175,19 +175,12 @@ pub enum HomeField {
     Download,
 }
 
-// Fields after the dynamic custom-mirror rows, in render order — collection ·
-// (custom mirrors) · builtin mirrors · download, with the download directory at
-// the bottom of the download section (just above the start button).
-const HOME_FIELDS_AFTER_CUSTOM: &[HomeField] = &[
-    HomeField::MirrorOsuDirect,
-    HomeField::MirrorNerinyan,
-    HomeField::MirrorSayobot,
-    HomeField::MirrorNekoha,
-    HomeField::MirrorBeatconnect,
-    HomeField::MirrorOsudl,
-    HomeField::MirrorCatboy,
-    HomeField::MirrorHinamizawa,
-    HomeField::MirrorOsuOfficial,
+// The download-section fields, in render order, that trail the mirror rows —
+// collection · (custom mirrors) · builtin mirrors · these. The built-in mirror
+// rows sit just above, in the configured try-order (`ordered_mirror_rows`), so
+// they are not listed here. The download directory is at the top of this tail
+// (just below the last mirror), the start button at the bottom.
+const HOME_FIELDS_TAIL: &[HomeField] = &[
     HomeField::Directory,
     HomeField::Threads,
     HomeField::AutoOverwrite,
@@ -241,6 +234,11 @@ pub struct HomeTab {
     pub catboy: bool,
     pub hinamizawa: bool,
     pub osu_official: bool,
+    /// Built-in mirror try-order, seeded from
+    /// [`MirrorConfig::ordered_builtins`](crate::config::MirrorConfig::ordered_builtins)
+    /// and kept in sync with the Config tab via [`set_mirror_order`](Self::set_mirror_order).
+    /// Drives the mirror-row render, the nav order, and the pipeline try-order.
+    pub mirror_order: Vec<MirrorKind>,
     pub video: bool,
     pub focus: HomeField,
     pub message: Option<AppMessage>,
@@ -323,6 +321,7 @@ impl HomeTab {
             catboy,
             hinamizawa,
             osu_official,
+            mirror_order: config.mirror.ordered_builtins(),
             video: config.download.video,
             focus: HomeField::Collection,
             message: None,
@@ -395,15 +394,34 @@ impl HomeTab {
     /// entry (including the trailing empty slot), built fresh each call so the
     /// dynamic custom-mirror count is always reflected.
     fn fields(&self) -> Vec<HomeField> {
+        let mirror_rows = self.ordered_mirror_rows();
         let mut fields = Vec::with_capacity(
-            1 + self.custom_mirrors.row_count() + HOME_FIELDS_AFTER_CUSTOM.len(),
+            1 + self.custom_mirrors.row_count() + mirror_rows.len() + HOME_FIELDS_TAIL.len(),
         );
         fields.push(HomeField::Collection);
         for idx in 0..self.custom_mirrors.row_count() {
             fields.push(HomeField::CustomMirror(idx));
         }
-        fields.extend_from_slice(HOME_FIELDS_AFTER_CUSTOM);
+        fields.extend(mirror_rows.iter().map(|&(_, field, _)| field));
+        fields.extend_from_slice(HOME_FIELDS_TAIL);
         fields
+    }
+
+    /// Built-in mirror rows in the configured try-order: `(kind, nav field,
+    /// enabled)`. Single source for the nav order ([`fields`](Self::fields)) and
+    /// the Get Maps mirror render, so the two never drift.
+    pub(crate) fn ordered_mirror_rows(&self) -> Vec<(MirrorKind, HomeField, bool)> {
+        self.mirror_order
+            .iter()
+            .filter_map(|&kind| Some((kind, mirror_home_field(kind)?, self.mirror_enabled(kind))))
+            .collect()
+    }
+
+    /// Adopt a new built-in try-order (e.g. after the Config tab reorders it) so
+    /// the Get Maps rows and the pipeline follow the same order without a
+    /// relaunch. Enable state is untouched.
+    pub fn set_mirror_order(&mut self, order: Vec<MirrorKind>) {
+        self.mirror_order = order;
     }
 
     /// Drop emptied custom rows once focus leaves the custom-mirror section, so a
@@ -624,7 +642,8 @@ impl HomeTab {
     /// Use this for display-only contexts (e.g. the summary metric in the TUI).
     /// Call `build_mirror_list` when the actual list of mirrors is needed.
     pub fn mirror_count(&self) -> usize {
-        let builtin_count = MirrorKind::BUILTINS
+        let builtin_count = self
+            .mirror_order
             .iter()
             .filter(|&&kind| self.mirror_enabled(kind))
             .count();
@@ -633,8 +652,9 @@ impl HomeTab {
 
     /// Whether the built-in mirror of `kind` is toggled on. Maps each
     /// [`MirrorKind`] to its backing toggle so the mirror list and count derive
-    /// from the single canonical [`MirrorKind::BUILTINS`] order (the order the
-    /// TUI renders and the download pipeline tries), and can't drift from it.
+    /// from the configured try-order ([`mirror_order`](Self::mirror_order) — the
+    /// order the TUI renders and the download pipeline tries), and can't drift
+    /// from it.
     fn mirror_enabled(&self, kind: MirrorKind) -> bool {
         match kind {
             MirrorKind::Nerinyan => self.nerinyan,
@@ -651,12 +671,13 @@ impl HomeTab {
     }
 
     pub fn build_mirror_list(&self) -> Vec<Mirror> {
-        // Built-ins follow the canonical `MirrorKind::BUILTINS` order so the
+        // Built-ins follow the configured try-order (`mirror_order`) so the
         // pipeline tries them in the exact order the TUI lists them. OsuApi is
         // built header-less here; the download pipeline injects the `*`
         // (lazer-tier) bearer token + `x-api-version` header before the request
         // goes out.
-        let mut mirrors: Vec<Mirror> = MirrorKind::BUILTINS
+        let mut mirrors: Vec<Mirror> = self
+            .mirror_order
             .iter()
             .filter(|&&kind| self.mirror_enabled(kind))
             .filter_map(|&kind| {
@@ -740,6 +761,23 @@ impl HomeTab {
 
 fn parse_thread_count(value: &str) -> Result<u8, String> {
     u8::from_str(value.trim()).map_err(|_| "Thread count must be between 1 and 100".to_string())
+}
+
+/// The nav/render field for a built-in mirror kind, or `None` for
+/// [`MirrorKind::Custom`] (custom mirrors live in their own rows).
+fn mirror_home_field(kind: MirrorKind) -> Option<HomeField> {
+    Some(match kind {
+        MirrorKind::Nerinyan => HomeField::MirrorNerinyan,
+        MirrorKind::OsuDirect => HomeField::MirrorOsuDirect,
+        MirrorKind::Sayobot => HomeField::MirrorSayobot,
+        MirrorKind::Nekoha => HomeField::MirrorNekoha,
+        MirrorKind::Beatconnect => HomeField::MirrorBeatconnect,
+        MirrorKind::Osudl => HomeField::MirrorOsudl,
+        MirrorKind::Catboy => HomeField::MirrorCatboy,
+        MirrorKind::Hinamizawa => HomeField::MirrorHinamizawa,
+        MirrorKind::OsuApi => HomeField::MirrorOsuOfficial,
+        MirrorKind::Custom => return None,
+    })
 }
 
 #[cfg(test)]

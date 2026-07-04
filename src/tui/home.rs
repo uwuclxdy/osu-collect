@@ -276,36 +276,21 @@ fn push_mirror_rows(
     focus: HomeField,
     unlocked: bool,
 ) {
-    let mirror_states = [
-        (HomeField::MirrorOsuDirect, form.osu_direct),
-        (HomeField::MirrorNerinyan, form.nerinyan),
-        (HomeField::MirrorSayobot, form.sayobot),
-        (HomeField::MirrorNekoha, form.nekoha),
-        (HomeField::MirrorBeatconnect, form.beatconnect),
-        (HomeField::MirrorOsudl, form.osudl),
-        (HomeField::MirrorCatboy, form.catboy),
-        (HomeField::MirrorHinamizawa, form.hinamizawa),
-        (HomeField::MirrorOsuOfficial, form.osu_official),
-    ];
-    for (kind, (field, on)) in MirrorKind::BUILTINS.iter().zip(mirror_states) {
+    // Rows follow the configured try-order (`ordered_mirror_rows`), matching the
+    // nav order and the pipeline so what the user reorders is what gets tried.
+    for (kind, field, on) in form.ordered_mirror_rows() {
         // osu! official needs a login: render it greyed + inert when logged out.
-        let item = if *kind == MirrorKind::OsuApi && !unlocked {
+        let item = if kind == MirrorKind::OsuApi && !unlocked {
             widgets::disabled_toggle_row(
-                mirror_label(*kind),
+                mirror_label(kind),
                 Some(kind.host()),
                 on,
                 focus == field,
                 0,
             )
         } else {
-            let latency = form.mirror_latency.get(kind).copied();
-            mirror_row_item(
-                mirror_label(*kind),
-                kind.host(),
-                on,
-                focus == field,
-                latency,
-            )
+            let latency = form.mirror_latency.get(&kind).copied();
+            mirror_row_item(mirror_label(kind), kind.host(), on, focus == field, latency)
         };
         items.push_focusable(field, item);
     }
