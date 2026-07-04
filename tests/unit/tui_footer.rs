@@ -92,6 +92,34 @@ fn footer_hint_settled_tab_advertises_close_without_a_dismiss_token() {
 }
 
 #[test]
+fn footer_hint_advertises_dismiss_only_while_a_toast_is_visible() {
+    let mut app = App::new(Config::default());
+    // Non-text row so keys act globally (not editing) and `x` is a live hotkey.
+    app.home.focus = HomeField::AutoOverwrite;
+
+    assert!(
+        !hint_for(&app).contains("x dismiss"),
+        "no toast → no dismiss token"
+    );
+
+    app.toast_info("hi");
+    assert!(
+        hint_for(&app).contains("x dismiss"),
+        "a visible toast must advertise `x dismiss`, got: {}",
+        hint_for(&app)
+    );
+
+    // Editing types a literal `x`, so the hint must not promise dismissal.
+    app.home.focus = HomeField::Collection;
+    app.editing = true;
+    assert!(
+        !hint_for(&app).contains("x dismiss"),
+        "editing must not advertise `x dismiss`, got: {}",
+        hint_for(&app)
+    );
+}
+
+#[test]
 fn footer_hint_caps_at_four_segments_on_settled_tab() {
     let mut app = App::new(Config::default());
     push_focused_page(&mut app, 1, DownloadStage::Completed);

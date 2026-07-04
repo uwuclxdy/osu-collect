@@ -56,6 +56,8 @@ const HINT_HELP: &str = "? help";
 const HINT_UPDATE: &str = "u update";
 /// Global `c` binding: switch the osu! client (stable ↔ lazer) from any tab.
 const HINT_SWITCH_CLIENT: &str = "c switch client";
+/// `x` dismisses the top toast; advertised only while one is visible.
+const HINT_DISMISS: &str = "x dismiss";
 /// Close hint for the dynamic, closeable login tab.
 const HINT_LOGIN_CLOSE: &str = "esc/q close";
 
@@ -65,6 +67,9 @@ const HINT_MODAL_CLOSE: &str = "esc close";
 /// Footer hint for button-carrying confirm modals — the buttons show the
 /// choices, so only the universal cancel key is surfaced.
 const HINT_MODAL_CANCEL: &str = "esc cancel";
+/// Footer hint for the scrollable update-changelog modal: its body scrolls and
+/// `esc` closes (the [later]/[update] buttons carry the choices).
+const HINT_MODAL_SCROLL_CLOSE: &str = "↑↓ scroll  ·  esc close";
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     if area.width == 0 || area.height == 0 {
@@ -135,6 +140,8 @@ fn modal_hint(app: &App) -> Option<String> {
         Some(HINT_MODAL_CLOSE.to_string())
     } else if app.confirm_retry_on_start.is_some() || app.confirm_retry.is_some() {
         Some(HINT_MODAL_CANCEL.to_string())
+    } else if app.update_modal.is_some() {
+        Some(HINT_MODAL_SCROLL_CLOSE.to_string())
     } else {
         None
     }
@@ -175,6 +182,16 @@ fn hint_for(app: &App) -> String {
         } else {
             hint = format!("{hint}{HINT_SEPARATOR}{HINT_UPDATE}");
         }
+    }
+    // `x` dismisses the top toast, but only while one is visible and we're not
+    // editing (where `x` types a literal char). Kept last so the transient
+    // group appears/vanishes at the tail without shifting the stable keys.
+    if !app.editing && !app.toasts.is_empty() {
+        hint = if hint.is_empty() {
+            HINT_DISMISS.to_string()
+        } else {
+            format!("{hint}{HINT_SEPARATOR}{HINT_DISMISS}")
+        };
     }
     hint
 }
