@@ -28,7 +28,11 @@ struct GuestToken {
 
 impl GuestToken {
     fn is_stale(&self) -> bool {
-        unix_now() + GUEST_REFRESH_MARGIN_SECS >= self.expires_at
+        self.is_stale_at(unix_now())
+    }
+
+    fn is_stale_at(&self, now: u64) -> bool {
+        now + GUEST_REFRESH_MARGIN_SECS >= self.expires_at
     }
 }
 
@@ -64,8 +68,9 @@ impl HttpSearchService {
             ));
         };
 
-        // Single-flight: hold the lock across the mint so concurrent searches
-        // reuse one token instead of racing two grants.
+        // Single-flight the guest mint: hold the lock across the grant so
+        // concurrent logged-out searches share one token instead of racing two.
+        // (The user-token branch above delegates freshness to `ensure_valid`.)
         let mut guard = self.guest.lock().await;
         if let Some(token) = guard.as_ref()
             && !token.is_stale()

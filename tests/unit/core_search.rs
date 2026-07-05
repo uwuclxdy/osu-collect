@@ -1,33 +1,39 @@
-use super::{GUEST_REFRESH_MARGIN_SECS, GuestToken, unix_now};
+use super::{GUEST_REFRESH_MARGIN_SECS, GuestToken};
 
-fn token_expiring_in(secs: u64) -> GuestToken {
+fn token(expires_at: u64) -> GuestToken {
     GuestToken {
         access_token: "t".to_string(),
-        expires_at: unix_now() + secs,
+        expires_at,
     }
 }
 
+// Fixed `now` so the boundary is exact and jitter-free (the wall-clock wrapper
+// is covered separately below).
+const NOW: u64 = 1_000_000;
+
 #[test]
-fn fresh_token_is_not_stale() {
-    assert!(!token_expiring_in(3600).is_stale());
+fn token_past_the_refresh_margin_is_fresh() {
+    // Expires one second beyond the margin -> still fresh.
+    assert!(!token(NOW + GUEST_REFRESH_MARGIN_SECS + 1).is_stale_at(NOW));
 }
 
 #[test]
-fn token_inside_refresh_margin_is_stale() {
-    // Half the margin from expiry: still valid to the server, but we re-mint
-    // early so an in-flight search never carries a token that expires en route.
-    assert!(token_expiring_in(GUEST_REFRESH_MARGIN_SECS / 2).is_stale());
+fn token_exactly_at_the_refresh_margin_is_stale() {
+    // Boundary: expires_at == now + margin. `>=` re-mints early, so this is stale.
+    assert!(token(NOW + GUEST_REFRESH_MARGIN_SECS).is_stale_at(NOW));
 }
 
 #[test]
 fn already_expired_token_is_stale() {
-    assert!(
-        GuestToken {
-            access_token: "t".to_string(),
-            expires_at: 0,
-        }
-        .is_stale()
-    );
+    assert!(token(0).is_stale_at(NOW));
+}
+
+#[test]
+fn is_stale_reads_the_wall_clock() {
+    // Wrapper wiring, far from any boundary so it can't flake: a token that
+    // never expires is fresh, an already-expired one is stale.
+    assert!(!token(u64::MAX).is_stale());
+    assert!(token(0).is_stale());
 }
 
 // Live confirmation of the guest client_credentials grant (client 53382) + the
