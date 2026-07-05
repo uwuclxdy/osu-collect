@@ -127,7 +127,14 @@ pub(crate) fn render_list(
     // to the panel's bottom edge on every redraw (offset resets to 0, then
     // `select` scrolls the minimum to reveal it — always the bottom once past
     // the first page).
-    let mut state = ListState::default().with_offset(offset.get());
+    //
+    // Clamp the seed to the last full page: ratatui only scrolls to keep the
+    // focused row visible, it never pulls the offset back up when the viewport
+    // grows or the content shrinks (menu closes, terminal resizes taller), so a
+    // stale large offset leaves blank rows below the last item. Clamping refills
+    // the viewport from the bottom the moment the space appears.
+    let max_offset = total.saturating_sub(inner.height as usize);
+    let mut state = ListState::default().with_offset(offset.get().min(max_offset));
     // Always scroll the focused row into view; only the highlight bar is gated.
     state.select(focused);
     // A self-styling focused row (CTA / auth chip) keeps its own styling by

@@ -552,7 +552,13 @@ impl CollectionPage {
     }
 
     pub fn scroll_threads_up(&mut self) {
-        self.thread_scroll = self.thread_scroll.saturating_sub(1);
+        // Re-clamp first: a taller viewport (resize) shrinks the max offset while
+        // the render only clamps the drawn window, leaving `thread_scroll` stale
+        // and the first few ↑ presses dead. Snap to the last full page, then step.
+        self.thread_scroll = self
+            .thread_scroll
+            .min(self.max_thread_scroll())
+            .saturating_sub(1);
     }
 
     pub fn scroll_threads_down(&mut self) {
@@ -602,7 +608,10 @@ impl CollectionPage {
             let cur = self.failed_focus.unwrap_or(0);
             self.failed_focus = Some(cur.saturating_sub(PAGE_STEP));
         } else {
-            self.thread_scroll = self.thread_scroll.saturating_sub(PAGE_STEP);
+            self.thread_scroll = self
+                .thread_scroll
+                .min(self.max_thread_scroll())
+                .saturating_sub(PAGE_STEP);
         }
     }
 

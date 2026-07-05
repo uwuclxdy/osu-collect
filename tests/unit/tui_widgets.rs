@@ -298,6 +298,47 @@ fn focused_row_promotes_only_label_keeps_value_color_and_full_bg() {
     );
 }
 
+/// When the viewport grows (menu closes / terminal resizes taller) while
+/// scrolled down with a selection near the bottom, the offset is pulled up to
+/// the last full page so the viewport refills instead of leaving blank rows.
+///
+/// ratatui alone only keeps the *selected* row visible: with a stale offset of 5
+/// in a now-8-row viewport it would render rows 5..10 (three blank rows below).
+/// The `render_list` clamp snaps the offset to `max_offset` (10 − 8 = 2).
+#[test]
+fn stale_offset_pulls_up_to_fill_viewport() {
+    use ratatui::widgets::ListItem;
+
+    let items: Vec<ListItem<'static>> = ["Arow", "Brow", "Crow", "Drow", "Erow", "Frow", "Grow"]
+        .into_iter()
+        .chain(["Hrow", "Irow", "Jrow"])
+        .map(ListItem::new)
+        .collect();
+    let offset = std::cell::Cell::new(5);
+    let inner = Rect::new(0, 0, 10, 8);
+    let mut terminal = Terminal::new(TestBackend::new(10, 8)).expect("test backend");
+    terminal
+        .draw(|frame| {
+            // Selection on the 8th row (index 7) — visible at the stale offset, so
+            // ratatui would not move it; only the clamp pulls the page up.
+            let _ = render_list(frame, inner, items, Some(7), false, &offset);
+        })
+        .expect("frame renders");
+
+    assert_eq!(
+        offset.get(),
+        2,
+        "offset clamps to the last full page (10 - 8)"
+    );
+    let buf = terminal.backend().buffer();
+    assert_eq!(buf[(0, 0)].symbol(), "C", "top row shows item index 2");
+    assert_eq!(
+        buf[(0, 7)].symbol(),
+        "J",
+        "bottom row shows the last item — no blank rows below"
+    );
+}
+
 #[test]
 fn glyph_fill_zero_is_empty() {
     assert_eq!(glyph_fill(&FILL_BLOCK, GLYPH_BLOCK, 0).as_ref(), "");
