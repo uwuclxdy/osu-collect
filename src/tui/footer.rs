@@ -41,7 +41,7 @@ const HINT_MOVE: &str = "↑↓ move";
 const HINT_SCROLL: &str = "↑↓ scroll";
 /// ⇧↑↓ reorders the focused built-in mirror row in the Config try-order.
 const HINT_REORDER: &str = "⇧↑↓ reorder";
-const HINT_SOURCE: &str = "←→ switch source";
+const HINT_SOURCE: &str = "↵ switch source";
 const HINT_ENTER_TOGGLE: &str = "↵ toggle";
 const HINT_ENTER_OPEN: &str = "↵ open";
 const HINT_ENTER_CONFIRM: &str = "↵ confirm";

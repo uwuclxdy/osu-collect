@@ -1620,6 +1620,9 @@ impl App {
                 match self.active_tab() {
                     Tab::Home => {
                         match self.home.focus {
+                            // The source picker is a cycle row: `enter` steps it
+                            // forward, matching the config cycle fields.
+                            HomeField::Source => self.home.cycle_source(true),
                             HomeField::Download => {
                                 if let Some((id, request)) = self.request_download() {
                                     return Some(AppCommand::StartDownload { id, request });
@@ -1711,6 +1714,8 @@ impl App {
                         {
                             return Some(cmd);
                         }
+                    } else if self.home.focus == HomeField::Source {
+                        self.home.cycle_source(true);
                     } else if self.home.focus.is_toggle() {
                         self.home.toggle_current();
                     }

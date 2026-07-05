@@ -21,6 +21,7 @@ const SECTION_DOWNLOAD: &str = "download";
 /// never equals a rendered header label, so no title lights up.
 const SECTION_NONE: &str = "";
 
+const LABEL_SOURCE: &str = "source";
 const LABEL_OVERWRITE: &str = "overwrite existing";
 const LABEL_VIDEO: &str = "video";
 
@@ -53,7 +54,7 @@ fn render_compact(frame: &mut Frame, area: Rect, form: &HomeTab, editing: bool) 
 
     items.push_focusable(
         HomeField::Source,
-        source_strip_item(form.source, focus == HomeField::Source),
+        source_row_item(form.source, focus == HomeField::Source),
     );
 
     if form.source != GetMapsSource::Collection {
@@ -171,7 +172,7 @@ fn render_content(frame: &mut Frame, area: Rect, form: &HomeTab, editing: bool) 
     // Source strip is the first focusable row on every source.
     items.push_focusable(
         HomeField::Source,
-        source_strip_item(form.source, focus == HomeField::Source),
+        source_row_item(form.source, focus == HomeField::Source),
     );
     items.push(widgets::spacer());
 
@@ -361,25 +362,11 @@ fn home_section(field: HomeField) -> &'static str {
 }
 
 /// The source strip: `‹active›  other  other`, the active source bracketed in
-/// accent, the rest dim. The first focusable row on the Get Maps tab; `←`/`→`
-/// cycle it while focused.
-fn source_strip_item(active: GetMapsSource, focused: bool) -> ListItem<'static> {
-    let dim = Style::default().fg(text_dim());
-    let mut spans = vec![widgets::focus_span(focused)];
-    for (i, source) in GetMapsSource::ALL.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::styled("  ", dim));
-        }
-        if *source == active {
-            spans.push(Span::styled(
-                format!("‹{}›", source.label()),
-                Style::default().fg(accent()).bold(),
-            ));
-        } else {
-            spans.push(Span::styled(source.label(), dim));
-        }
-    }
-    ListItem::new(Line::from(spans))
+/// accent, the rest dim. The first focusable row on the Get Maps tab; `enter`/
+/// `space` cycle it (the config-cycle convention), `←`/`→` step it while focused.
+fn source_row_item(active: GetMapsSource, focused: bool) -> ListItem<'static> {
+    let options: Vec<&str> = GetMapsSource::ALL.iter().map(|s| s.label()).collect();
+    widgets::cycle_item(LABEL_SOURCE, &options, active.label(), focused, 0)
 }
 
 /// Placeholder body for a not-yet-wired source. Search lands in a later update;
