@@ -886,12 +886,12 @@ fn c_switches_client_and_rescans_from_any_tab() {
 
     let mut app = make_app();
     app.active_tab = HOME_TAB_INDEX;
-    let before = app.updates.path.client_type;
+    let before = app.library.client_type;
 
     let cmd = app.handle_key(press(KeyCode::Char('c')));
 
     assert_ne!(
-        app.updates.path.client_type, before,
+        app.library.client_type, before,
         "c must flip the osu! client from any tab"
     );
     assert!(
@@ -909,12 +909,36 @@ fn c_types_literal_char_while_editing() {
     app.active_tab = HOME_TAB_INDEX;
     app.home.focus = HomeField::Collection;
     app.editing = true;
-    let before = app.updates.path.client_type;
+    let before = app.library.client_type;
 
     app.handle_key(press(KeyCode::Char('c')));
 
     assert_eq!(
-        app.updates.path.client_type, before,
+        app.library.client_type, before,
         "c must not switch the client while typing into a field"
+    );
+}
+
+#[test]
+fn typing_into_updates_path_field_routes_to_library() {
+    use osu_collect::app::UpdatesField;
+    use osu_collect::config::constants::UPDATES_TAB_INDEX;
+
+    // The osu! path field lives on the app-global library state now, but it is
+    // still edited through the Updates panel. Typing must land on `library`.
+    let mut app = make_app();
+    app.active_tab = UPDATES_TAB_INDEX;
+    app.updates.selection.focus = UpdatesField::OsuPath;
+    app.library.osu_path.set_value(String::new());
+    app.editing = true;
+
+    app.handle_key(press(KeyCode::Char('/')));
+    app.handle_key(press(KeyCode::Char('o')));
+    app.handle_key(press(KeyCode::Char('s')));
+    app.handle_key(press(KeyCode::Backspace));
+
+    assert_eq!(
+        app.library.osu_path.value, "/o",
+        "editing the updates path field must mutate the app-global library state"
     );
 }

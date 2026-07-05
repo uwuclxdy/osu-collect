@@ -84,7 +84,7 @@ pub(super) fn handle_updates_event(
             // Surface what was actually read so a misconfigured path shows up as
             // a low/zero set count instead of a silent all-missing result.
             let local_set_count = app.updates.scan.local_beatmapsets.len();
-            let scan_path = app.updates.path.osu_path.value.clone();
+            let scan_path = app.library.osu_path.value.clone();
             app.updates.scan.scan_status = ScanStatus::FetchingCollection;
             set_loading_message(
                 &mut app.updates.message,
@@ -253,8 +253,8 @@ pub(super) fn spawn_scan_task(app: &mut App, tx: mpsc::UnboundedSender<UpdatesEv
         h.abort();
     }
 
-    let client_type = app.updates.path.client_type;
-    let osu_path = PathBuf::from(app.updates.osu_path());
+    let client_type = app.library.client_type;
+    let osu_path = PathBuf::from(app.library.osu_path());
     let generation = app.updates.scan.scan_generation;
 
     app.updates.scan.scan_status = ScanStatus::ReadingDatabase;
@@ -417,7 +417,7 @@ fn spawn_fetch_task(
     let all_local_checksums = std::mem::take(&mut app.updates.scan.all_local_checksums);
     let local_collections_raw = app.updates.scan.local_collections_raw.clone();
     let generation = app.updates.scan.scan_generation;
-    let client_type = app.updates.path.client_type;
+    let client_type = app.library.client_type;
     let current_snapshots = snapshots::current_snapshots(
         client_type,
         &app.updates.scan.local_collections_raw,

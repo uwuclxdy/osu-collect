@@ -385,7 +385,7 @@ fn active_tab_has_accent_color_no_brackets_and_plain_bg() {
         .take(80)
         .map(|cell| cell.symbol())
         .collect();
-    let chip = format!("[ {} ]", app.updates.path.client_type.label());
+    let chip = format!("[ {} ]", app.library.client_type.label());
     let without_chip = header_row.replacen(&chip, "", 1);
     assert!(
         !without_chip.contains('[') && !without_chip.contains(']'),

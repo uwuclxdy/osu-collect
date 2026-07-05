@@ -6,6 +6,7 @@ use super::{
     failed_maps,
     home::{HomeField, HomeTab},
     ignored_maps,
+    library::LibraryState,
     login::{LoginField, LoginPhase, LoginTab},
     snapshots,
     toast::{Toast, Toasts},
@@ -59,6 +60,10 @@ impl Default for BrandAnim {
 
 pub struct App {
     pub home: HomeTab,
+    /// App-global osu! client + library path. Read by the header chip, the
+    /// download pipeline, and the library scan; edited through the Updates
+    /// panel's path field. Hoisted off `updates` so one value backs all readers.
+    pub library: LibraryState,
     pub updates: UpdatesTab,
     pub config: ConfigTab,
     /// The login panel. `Some` only while the login split is open on the Config
@@ -259,7 +264,8 @@ impl App {
             .unwrap_or_default();
         Self {
             home: HomeTab::new(&config),
-            updates: UpdatesTab::from_config(&config),
+            library: LibraryState::from_config(&config),
+            updates: UpdatesTab::new(),
             config: ConfigTab::new(&config),
             login: None,
             downloads: Vec::new(),
@@ -804,8 +810,8 @@ impl App {
     /// unsaved config-tab edits are never clobbered; failures are silent.
     fn persist_osu_path_inputs(&self) {
         let mut config = crate::config::load_config_or_default();
-        config.recent.osu_client = Some(self.updates.path.client_type);
-        let path = self.updates.path.osu_path.value.trim();
+        config.recent.osu_client = Some(self.library.client_type);
+        let path = self.library.osu_path.value.trim();
         config.recent.osu_path = (!path.is_empty()).then(|| path.to_string());
         let _ = save_config(&config);
     }
@@ -847,8 +853,8 @@ impl App {
         // (`run_collection`), so the blocking db read never stalls the event loop.
         // Source mirrors the Updates-tab scan (seeded from `[recent]`).
         request.skip_already_imported = self.config.skip_already_imported;
-        request.osu_client = self.updates.path.client_type;
-        request.osu_path = self.updates.osu_path();
+        request.osu_client = self.library.client_type;
+        request.osu_path = self.library.osu_path();
 
         if self.downloads.len() >= usize::MAX - 1 {
             self.toast_err("too many downloads queued");
@@ -1022,7 +1028,7 @@ impl App {
         };
 
         let current_snapshots = snapshots::current_snapshots(
-            self.updates.path.client_type,
+            self.library.client_type,
             &self.updates.scan.local_collections_raw,
             self.updates.scan.local_beatmapsets.iter(),
             |name| extract_collection_id(name).and_then(|id| u32::try_from(id).ok()),
@@ -1123,7 +1129,7 @@ impl App {
         }
         match self.active_tab() {
             HOME_TAB_INDEX => self.home.caret_left(),
-            UPDATES_TAB_INDEX => self.updates.caret_left(),
+            UPDATES_TAB_INDEX if self.updates.osu_path_editable() => self.library.caret_left(),
             CONFIG_TAB_INDEX => self.config.caret_left(),
             _ => {}
         }
@@ -1136,7 +1142,7 @@ impl App {
         }
         match self.active_tab() {
             HOME_TAB_INDEX => self.home.caret_right(),
-            UPDATES_TAB_INDEX => self.updates.caret_right(),
+            UPDATES_TAB_INDEX if self.updates.osu_path_editable() => self.library.caret_right(),
             CONFIG_TAB_INDEX => self.config.caret_right(),
             _ => {}
         }
@@ -1149,7 +1155,7 @@ impl App {
         }
         match self.active_tab() {
             HOME_TAB_INDEX => self.home.caret_home(),
-            UPDATES_TAB_INDEX => self.updates.caret_home(),
+            UPDATES_TAB_INDEX if self.updates.osu_path_editable() => self.library.caret_home(),
             CONFIG_TAB_INDEX => self.config.caret_home(),
             _ => {}
         }
@@ -1162,7 +1168,7 @@ impl App {
         }
         match self.active_tab() {
             HOME_TAB_INDEX => self.home.caret_end(),
-            UPDATES_TAB_INDEX => self.updates.caret_end(),
+            UPDATES_TAB_INDEX if self.updates.osu_path_editable() => self.library.caret_end(),
             CONFIG_TAB_INDEX => self.config.caret_end(),
             _ => {}
         }
@@ -1177,8 +1183,8 @@ impl App {
         }
         match self.active_tab() {
             HOME_TAB_INDEX => self.mutate_collection_then_resolve(HomeTab::delete_forward),
-            UPDATES_TAB_INDEX => {
-                self.updates.delete_forward();
+            UPDATES_TAB_INDEX if self.updates.osu_path_editable() => {
+                self.library.delete_forward();
                 None
             }
             CONFIG_TAB_INDEX => {
@@ -1199,8 +1205,8 @@ impl App {
         }
         match self.active_tab() {
             HOME_TAB_INDEX => self.mutate_collection_then_resolve(HomeTab::backspace_word),
-            UPDATES_TAB_INDEX => {
-                self.updates.backspace_word();
+            UPDATES_TAB_INDEX if self.updates.osu_path_editable() => {
+                self.library.backspace_word();
                 None
             }
             CONFIG_TAB_INDEX => {
@@ -1713,7 +1719,7 @@ impl App {
                     let in_list = self.updates.selection.in_collection_list
                         || self.updates.selection.in_beatmap_list;
                     if typing {
-                        self.updates.handle_char(' ');
+                        self.library.insert_char(' ');
                     } else if in_list {
                         self.updates.toggle_list_item();
                     }
@@ -1740,7 +1746,8 @@ impl App {
             // fresh one. Suppressed while typing so `c` types a literal char, and
             // while the login split is open (it traps every field key).
             KeyCode::Char('c') if !typing && self.login.is_none() => {
-                let action = self.updates.switch_client();
+                self.library.switch_client();
+                let action = self.updates.reset_for_client_switch();
                 self.persist_osu_path_inputs();
                 if action == UpdatesAction::RefreshAll {
                     return Some(AppCommand::ScanLocalDatabase);
@@ -1794,7 +1801,7 @@ impl App {
                         || self.updates.selection.in_beatmap_list;
                     if typing {
                         // editing the osu! path field → type the char
-                        self.updates.handle_char(ch);
+                        self.library.insert_char(ch);
                     } else if in_list {
                         // list shortcuts (a all / d none / s sort) are not editing
                         if ch == 'r' && self.updates.can_recheck_failed_maps() {
@@ -1870,7 +1877,7 @@ impl App {
                                 return Some(cmd);
                             }
                         }
-                        UPDATES_TAB_INDEX => self.updates.backspace(),
+                        UPDATES_TAB_INDEX => self.library.backspace(),
                         CONFIG_TAB_INDEX => self.config.backspace(),
                         _ => {}
                     }
@@ -1898,7 +1905,7 @@ impl App {
         match self.active_tab() {
             HOME_TAB_INDEX => self.mutate_collection_then_resolve(|h| h.handle_paste(&text)),
             UPDATES_TAB_INDEX => {
-                self.updates.handle_paste(&text);
+                self.library.insert_str(&text);
                 None
             }
             CONFIG_TAB_INDEX => {

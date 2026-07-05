@@ -1,16 +1,12 @@
 use super::{
-    first_field,
-    home::InputField,
-    last_field,
+    first_field, last_field,
     messages::{AppMessage, clear_app_message},
     next_field, prev_field,
 };
 
 /// Cursor step for a list page-scroll (`Ctrl+d` / `Ctrl+u`).
 pub(crate) const LIST_PAGE: i64 = 10;
-use crate::config::Config;
-use crate::osu_db::{LocalBeatmapset, LocalCollection, Md5, OsuClient};
-use crate::utils::expand_tilde;
+use crate::osu_db::{LocalBeatmapset, LocalCollection, Md5};
 use std::collections::HashSet;
 use std::sync::OnceLock;
 use tracing::{debug, info};
@@ -155,45 +151,6 @@ pub enum BeatmapDisplayItem {
 }
 
 #[derive(Debug, Clone)]
-pub struct PathState {
-    pub client_type: OsuClient,
-    pub osu_path: InputField,
-}
-
-impl PathState {
-    fn new(client_type: OsuClient) -> Self {
-        let default_path = Self::detect_default_path(client_type);
-        Self::build(client_type, default_path.clone(), default_path)
-    }
-
-    /// Seed from a persisted path, keeping the saved value verbatim (even if it
-    /// no longer exists on disk) while still using the auto-detected default as
-    /// the placeholder hint.
-    fn from_saved(client_type: OsuClient, saved: &str) -> Self {
-        let placeholder = Self::detect_default_path(client_type);
-        Self::build(client_type, saved.to_string(), placeholder)
-    }
-
-    fn build(client_type: OsuClient, value: String, placeholder: String) -> Self {
-        Self {
-            client_type,
-            osu_path: InputField::new("osu! path", value, placeholder),
-        }
-    }
-
-    fn detect_default_path(client: OsuClient) -> String {
-        use crate::osu_db::{BeatmapReader, LazerReader, StableReader};
-
-        match client {
-            OsuClient::Stable => StableReader::default_path(),
-            OsuClient::Lazer => LazerReader::default_path(),
-        }
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default()
-    }
-}
-
-#[derive(Debug, Clone)]
 pub struct ScanState {
     pub local_collections_raw: Vec<LocalCollection>,
     pub local_beatmapsets: Vec<LocalBeatmapset>,
@@ -256,7 +213,6 @@ impl SelectionState {
 }
 
 pub struct UpdatesTab {
-    pub path: PathState,
     pub scan: ScanState,
     pub selection: SelectionState,
     pub message: Option<AppMessage>,
@@ -267,25 +223,7 @@ pub struct UpdatesTab {
 
 impl UpdatesTab {
     pub fn new() -> Self {
-        Self::with_path(PathState::new(OsuClient::default()))
-    }
-
-    /// Build the tab seeding the osu! client kind + path from the persisted
-    /// `[recent]` config, falling back to auto-detection when either value is
-    /// absent or blank. A saved-but-missing path is kept as-is so the scan
-    /// reports "no db" instead of silently reverting to the default location.
-    pub fn from_config(config: &Config) -> Self {
-        let client_type = config.recent.osu_client.unwrap_or_default();
-        let path = match config.recent.osu_path.as_deref() {
-            Some(saved) if !saved.trim().is_empty() => PathState::from_saved(client_type, saved),
-            _ => PathState::new(client_type),
-        };
-        Self::with_path(path)
-    }
-
-    fn with_path(path: PathState) -> Self {
         Self {
-            path,
             scan: ScanState::new(),
             selection: SelectionState::new(),
             message: None,
@@ -347,19 +285,6 @@ impl UpdatesTab {
                 's' => self.cycle_beatmap_sort(),
                 _ => {}
             }
-            return;
-        }
-
-        if self.osu_path_editable() {
-            self.path.osu_path.insert_char(ch);
-        }
-    }
-
-    /// Insert a bracketed-paste payload into the osu! path field when it is the
-    /// editable focus. No-op in either list (paste has no meaning there).
-    pub fn handle_paste(&mut self, text: &str) {
-        if self.osu_path_editable() {
-            self.path.osu_path.insert_str(text);
         }
     }
 
@@ -426,52 +351,6 @@ impl UpdatesTab {
         }
     }
 
-    pub fn backspace(&mut self) {
-        if self.osu_path_editable() {
-            self.path.osu_path.delete_before_caret();
-        }
-    }
-
-    /// Delete the char at the caret in the osu! path field (`Delete` key).
-    pub fn delete_forward(&mut self) {
-        if self.osu_path_editable() {
-            self.path.osu_path.delete_at_caret();
-        }
-    }
-
-    /// Delete the word left of the caret in the osu! path field
-    /// (alt/ctrl+backspace).
-    pub fn backspace_word(&mut self) {
-        if self.osu_path_editable() {
-            self.path.osu_path.delete_word_before_caret();
-        }
-    }
-
-    /// Move the caret in the osu! path field. No-op when it is not editable.
-    pub fn caret_left(&mut self) {
-        if self.osu_path_editable() {
-            self.path.osu_path.caret_left();
-        }
-    }
-
-    pub fn caret_right(&mut self) {
-        if self.osu_path_editable() {
-            self.path.osu_path.caret_right();
-        }
-    }
-
-    pub fn caret_home(&mut self) {
-        if self.osu_path_editable() {
-            self.path.osu_path.caret_home();
-        }
-    }
-
-    pub fn caret_end(&mut self) {
-        if self.osu_path_editable() {
-            self.path.osu_path.caret_end();
-        }
-    }
-
     /// Whether the osu! path text field currently accepts edits — focused and
     /// no list panel is open.
     pub fn osu_path_editable(&self) -> bool {
@@ -480,22 +359,15 @@ impl UpdatesTab {
             && !self.selection.in_beatmap_list
     }
 
-    /// Switch the active osu! client (stable ↔ lazer) and reset for a fresh
-    /// scan. Re-detects the default install path while the field still holds a
-    /// placeholder, then clears the prior client's scan data so the next scan
-    /// rebuilds against the new library. Returns `RefreshAll` so the caller
-    /// kicks off `ScanLocalDatabase`.
-    pub fn switch_client(&mut self) -> UpdatesAction {
-        self.path.client_type.toggle();
-        let new_path = PathState::detect_default_path(self.path.client_type);
-        if self.path.osu_path.value.is_empty()
-            || self.path.osu_path.value == self.path.osu_path.placeholder
-        {
-            self.path.osu_path.set_value(new_path.clone());
-        }
-        self.path.osu_path.placeholder = new_path;
-        // Clear current data and trigger full rescan
-        // Increment generation to invalidate any in-flight fetch tasks
+    /// Reset the scan for a fresh library after the app-global client switch
+    /// (the client kind + path change lives on [`LibraryState::switch_client`]).
+    /// Clears the prior client's scan data so the next scan rebuilds against the
+    /// new library. Returns `RefreshAll` so the caller kicks off
+    /// `ScanLocalDatabase`.
+    ///
+    /// [`LibraryState::switch_client`]: super::LibraryState::switch_client
+    pub fn reset_for_client_switch(&mut self) -> UpdatesAction {
+        // Increment generation to invalidate any in-flight fetch tasks.
         self.scan.scan_generation = self.scan.scan_generation.wrapping_add(1);
         self.selection.local_collections.clear();
         self.scan.all_local_checksums.clear();
@@ -746,10 +618,6 @@ impl UpdatesTab {
         clear_app_message(&mut self.message);
     }
 
-    pub fn is_path_auto_detected(&self) -> bool {
-        self.path.osu_path.value == self.path.osu_path.placeholder
-    }
-
     pub fn selected_beatmap_count(&self) -> usize {
         self.selection
             .visible_missing
@@ -766,13 +634,6 @@ impl UpdatesTab {
 
     pub fn total_missing_count(&self) -> usize {
         self.selection.visible_missing.len()
-    }
-
-    /// Returns the osu! path with any leading `~` expanded to the home
-    /// directory. Call this only when passing the path to the filesystem layer,
-    /// never for rendering (the raw typed value is shown to the user).
-    pub fn osu_path(&self) -> String {
-        expand_tilde(&self.path.osu_path.value)
     }
 
     pub fn set_local_beatmapsets(&mut self, beatmapsets: Vec<LocalBeatmapset>) {

@@ -1,5 +1,5 @@
 use crate::app::{
-    UpdatesField, UpdatesTab,
+    LibraryState, UpdatesField, UpdatesTab,
     updates::{
         BeatmapDisplayItem, BeatmapSort, CollectionEntry, CollectionSort, MissingBeatmapset,
         ScanStatus,
@@ -58,7 +58,13 @@ const SUFFIX_SELECTED: &str = "selected";
 const DIFF_PREFIX_REMOVED: &str = "-";
 const DIFF_SUFFIX_REMOVED: &str = "removed";
 
-pub fn render(frame: &mut Frame, area: Rect, form: &UpdatesTab, editing: bool) {
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    form: &UpdatesTab,
+    library: &LibraryState,
+    editing: bool,
+) {
     if area.height < super::COMPACT_HEIGHT {
         render_compact(frame, area, form);
         return;
@@ -67,7 +73,7 @@ pub fn render(frame: &mut Frame, area: Rect, form: &UpdatesTab, editing: bool) {
     let block = widgets::panel_block(PANEL_TITLE, true, true);
     let inner = block.inner(area);
 
-    let (items, focused_index) = build_items(form, editing);
+    let (items, focused_index) = build_items(form, library, editing);
     let total = items.len();
     frame.render_widget(block, area);
 
@@ -87,7 +93,7 @@ pub fn render(frame: &mut Frame, area: Rect, form: &UpdatesTab, editing: bool) {
     // Caret only when the osu! path field is the focused, editable row AND in
     // edit mode (no caret on a selected-not-editing field).
     let cursor_col = (editing && form.osu_path_editable())
-        .then(|| widgets::input_cursor_col(&form.path.osu_path, 0));
+        .then(|| widgets::input_cursor_col(&library.osu_path, 0));
     widgets::set_panel_cursor(frame, inner, focused_index, start, end, cursor_col);
 }
 
@@ -133,7 +139,11 @@ fn render_compact(frame: &mut Frame, area: Rect, form: &UpdatesTab) {
     );
 }
 
-fn build_items(form: &UpdatesTab, editing: bool) -> (Vec<ListItem<'static>>, usize) {
+fn build_items(
+    form: &UpdatesTab,
+    library: &LibraryState,
+    editing: bool,
+) -> (Vec<ListItem<'static>>, usize) {
     let mut items: Vec<ListItem<'static>> = Vec::new();
     let mut focused_index = 0usize;
     let focus = form.selection.focus;
@@ -147,9 +157,9 @@ fn build_items(form: &UpdatesTab, editing: bool) -> (Vec<ListItem<'static>>, usi
     if focus == UpdatesField::OsuPath && !in_list {
         focused_index = items.len();
     }
-    items.push(osu_path_item(form, editing));
+    items.push(osu_path_item(form, library, editing));
     if focus == UpdatesField::OsuPath && !in_list {
-        items.push(widgets::help_item(osu_path_help(form.path.client_type)));
+        items.push(widgets::help_item(osu_path_help(library.client_type)));
     }
     items.push(widgets::spacer());
 
@@ -314,11 +324,11 @@ fn display_item(
     }
 }
 
-fn osu_path_item(form: &UpdatesTab, editing: bool) -> ListItem<'static> {
+fn osu_path_item(form: &UpdatesTab, library: &LibraryState, editing: bool) -> ListItem<'static> {
     let focused = form.selection.focus == UpdatesField::OsuPath
         && !form.selection.in_collection_list
         && !form.selection.in_beatmap_list;
-    let field = &form.path.osu_path;
+    let field = &library.osu_path;
 
     // When focused and the user is actively typing, show the raw value so
     // they can see and edit exactly what they typed. When not focused,
@@ -334,7 +344,7 @@ fn osu_path_item(form: &UpdatesTab, editing: bool) -> ListItem<'static> {
             pretty_path(&field.placeholder).into_owned(),
             Style::default().fg(text_faint()),
         )
-    } else if form.is_path_auto_detected() {
+    } else if library.is_path_auto_detected() {
         Span::styled(display_value, Style::default().fg(text_faint()))
     } else {
         Span::styled(display_value, Style::default().fg(accent()))

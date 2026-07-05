@@ -260,7 +260,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             downloading: app.is_downloading(),
             brand_ramp: app.brand_ramp(),
             update_phase: app.update_phase,
-            client: app.updates.path.client_type,
+            client: app.library.client_type,
         },
     );
 
@@ -286,11 +286,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let editing = app.editing && !overlay_open;
     match app.active_tab() {
         HOME_TAB_INDEX => home::render(frame, body_area, &app.home, editing),
-        UPDATES_TAB_INDEX => updates::render(frame, body_area, &app.updates, editing),
+        UPDATES_TAB_INDEX => updates::render(frame, body_area, &app.updates, &app.library, editing),
         CONFIG_TAB_INDEX => {
-            let osu_dir = app.updates.osu_path();
+            let osu_dir = app.library.osu_path();
             let library_db_hint = crate::app::library_cache::db_file_path(
-                app.updates.path.client_type,
+                app.library.client_type,
                 std::path::Path::new(&osu_dir),
             )
             .display()
