@@ -44,7 +44,6 @@ const LABEL_LOGGING_LEVEL: &str = "log level";
 const LABEL_LOGGING_FORMAT: &str = "log format";
 const LABEL_AUTO_UPDATE: &str = "auto-update";
 const LABEL_PRERELEASES: &str = "prerelease channel";
-const HELP_PRERELEASES: &str = "off: stable only · on: also offer prerelease builds";
 
 const CHIP_LOGGED_OUT: &str = " signed out";
 const CHIP_LOGGED_IN: &str = " signed in";
@@ -80,6 +79,16 @@ fn auto_update_help(auto: bool) -> &'static str {
         "download & install update on launch"
     } else {
         "notify only; press u for changelog & update"
+    }
+}
+
+/// State-specific hint for the prerelease-channel toggle: describes what the
+/// next update check will offer in the current state.
+fn prereleases_help(on: bool) -> &'static str {
+    if on {
+        "include pre-release builds"
+    } else {
+        "stable releases only"
     }
 }
 
@@ -414,7 +423,7 @@ fn build_config_items(
         ),
     );
     if show_chrome && focus == ConfigField::Prereleases {
-        items.push(widgets::help_item(HELP_PRERELEASES));
+        items.push(widgets::help_item(prereleases_help(form.prereleases)));
     }
 
     items

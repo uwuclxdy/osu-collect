@@ -28,7 +28,7 @@ const LABEL_START_DOWNLOAD: &str = "start download";
 
 /// Focus hint under the mirrors summary: it is read-only here, so `enter` hands
 /// off to the Config tab, which owns all mirror editing.
-const HELP_MIRRORS_SUMMARY: &str = "enter to add, remove, or reorder mirrors in the config tab";
+const HELP_MIRRORS_SUMMARY: &str = "enter to edit mirrors in the config tab";
 
 /// Positions the terminal caret (via [`ratatui::Frame::set_cursor_position`])
 /// when a text field is focused in edit mode; otherwise leaves it hidden.

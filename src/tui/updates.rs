@@ -5,6 +5,7 @@ use crate::app::{
         ScanStatus,
     },
 };
+use crate::osu_db::OsuClient;
 use crate::utils::pretty_path;
 use ratatui::{
     Frame,
@@ -37,8 +38,17 @@ const DETAIL_LOCAL: &str = "local";
 
 const METRIC_KNOWN_BAD: &str = "known bad";
 
-const HELP_OSU_PATH: &str = "your osu! install dir; must contain osu!.db or client.realm";
 const HELP_DOWNLOAD_SETTINGS: &str = "uses download settings from home tab";
+
+/// Focus hint for the osu! path field: names the database file the *active*
+/// client actually reads, so the requirement matches what's selected instead of
+/// listing both.
+fn osu_path_help(client: OsuClient) -> &'static str {
+    match client {
+        OsuClient::Stable => "osu! install path (must contain osu!.db)",
+        OsuClient::Lazer => "osu!lazer install path (must contain client.realm)",
+    }
+}
 
 const TAG_PREVIOUSLY_DELETED: &str = "previously deleted";
 
@@ -139,7 +149,7 @@ fn build_items(form: &UpdatesTab, editing: bool) -> (Vec<ListItem<'static>>, usi
     }
     items.push(osu_path_item(form, editing));
     if focus == UpdatesField::OsuPath && !in_list {
-        items.push(widgets::help_item(HELP_OSU_PATH));
+        items.push(widgets::help_item(osu_path_help(form.path.client_type)));
     }
     items.push(widgets::spacer());
 

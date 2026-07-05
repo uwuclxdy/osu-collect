@@ -177,7 +177,7 @@ pub(crate) fn format_free_space(bytes: u64) -> String {
     }
 }
 
-pub const HELP_CUSTOM_MIRROR: &str = "must contain {id}";
+pub const HELP_CUSTOM_MIRROR: &str = "url must contain {id}";
 /// Focus tooltip / locked-row reason for the osu! official mirror when logged out.
 pub const HELP_OSU_OFFICIAL_LOCKED: &str = "log in to enable the osu! official mirror";
 

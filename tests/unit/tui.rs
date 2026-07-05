@@ -1531,8 +1531,11 @@ fn config_custom_mirror_help_hidden_when_not_focused() {
 fn updates_osu_path_help_shows_when_focused() {
     use crate::app::UpdatesField;
     use crate::config::constants::UPDATES_TAB_INDEX;
+    use crate::osu_db::OsuClient;
 
-    let mut app = App::new(Config::default());
+    let mut config = Config::default();
+    config.recent.osu_client = Some(OsuClient::Stable);
+    let mut app = App::new(config);
     app.active_tab = UPDATES_TAB_INDEX;
     app.updates.selection.focus = UpdatesField::OsuPath;
 
@@ -1541,6 +1544,30 @@ fn updates_osu_path_help_shows_when_focused() {
     assert!(
         output.contains("must contain osu!.db"),
         "osu! path help must appear when field is focused: {output}"
+    );
+}
+
+#[test]
+fn updates_osu_path_help_names_active_client_db() {
+    use crate::app::UpdatesField;
+    use crate::config::constants::UPDATES_TAB_INDEX;
+    use crate::osu_db::OsuClient;
+
+    let mut config = Config::default();
+    config.recent.osu_client = Some(OsuClient::Lazer);
+    let mut app = App::new(config);
+    app.active_tab = UPDATES_TAB_INDEX;
+    app.updates.selection.focus = UpdatesField::OsuPath;
+
+    let output = render_app(&app, 100, 30);
+
+    assert!(
+        output.contains("must contain client.realm"),
+        "lazer must name client.realm in the path help: {output}"
+    );
+    assert!(
+        !output.contains("osu!.db"),
+        "lazer must not mention osu!.db: {output}"
     );
 }
 
