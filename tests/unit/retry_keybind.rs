@@ -34,8 +34,8 @@ fn shift(code: KeyCode) -> KeyEvent {
 /// Navigate to a download tab that has `n` failed maps with the given reasons.
 /// Returns the `DownloadId` of the page.
 fn setup_download_tab_with_failures(app: &mut App, reasons: &[FailureReason]) -> DownloadId {
+    use crate::app::Tab;
     use crate::app::collection::CollectionPage;
-    use crate::config::constants::STATIC_TABS;
 
     let id: DownloadId = 99;
     let mut page = CollectionPage::new(id, "test".to_string(), 2);
@@ -63,7 +63,7 @@ fn setup_download_tab_with_failures(app: &mut App, reasons: &[FailureReason]) ->
     page.failed_section_expanded = true;
 
     app.downloads.push(page);
-    app.active_tab = STATIC_TABS + app.downloads.len() - 1;
+    app.active_tab = Tab::Download(app.downloads.len() - 1);
     id
 }
 

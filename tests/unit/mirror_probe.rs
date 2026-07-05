@@ -1,7 +1,7 @@
 use crate::{
     app::runtime::{MirrorProbeEvent, ProbeResult},
-    app::{App, AppCommand, HomeTab},
-    config::{Config, constants::HOME_TAB_INDEX},
+    app::{App, AppCommand, HomeTab, Tab},
+    config::Config,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use osu_downloader::MirrorKind;
@@ -155,7 +155,7 @@ fn probe_results_are_independent_per_mirror() {
 #[test]
 fn r_on_home_tab_emits_probe_mirrors() {
     let mut app = App::new(Config::default());
-    app.active_tab = HOME_TAB_INDEX;
+    app.active_tab = Tab::Home;
     // Default focus is Collection (text input) — move to a toggle field.
     app.home.focus = crate::app::HomeField::Video;
 
@@ -172,7 +172,7 @@ fn r_on_home_tab_emits_probe_mirrors() {
 #[test]
 fn r_while_editing_text_input_types_instead_of_probing() {
     let mut app = App::new(Config::default());
-    app.active_tab = HOME_TAB_INDEX;
+    app.active_tab = Tab::Home;
     app.home.focus = crate::app::HomeField::Collection;
     app.editing = true; // edit mode: keys type into the field
 
@@ -191,7 +191,7 @@ fn r_while_editing_text_input_types_instead_of_probing() {
 #[test]
 fn r_on_selected_not_editing_text_input_probes() {
     let mut app = App::new(Config::default());
-    app.active_tab = HOME_TAB_INDEX;
+    app.active_tab = Tab::Home;
     app.home.focus = crate::app::HomeField::Collection;
     // editing defaults false
 
@@ -210,10 +210,8 @@ fn r_on_selected_not_editing_text_input_probes() {
 /// `r` on the updates tab does NOT emit ProbeMirrors from home.
 #[test]
 fn r_on_updates_tab_does_not_emit_probe_mirrors() {
-    use crate::config::constants::UPDATES_TAB_INDEX;
-
     let mut app = App::new(Config::default());
-    app.active_tab = UPDATES_TAB_INDEX;
+    app.active_tab = Tab::Updates;
 
     let cmd = app.handle_key(char_key('r'));
 
@@ -228,21 +226,18 @@ fn r_on_updates_tab_does_not_emit_probe_mirrors() {
 /// Switching to the home tab via Right arrow emits ProbeMirrors.
 #[test]
 fn switching_to_home_tab_emits_probe_mirrors() {
-    use crate::config::constants::CONFIG_TAB_INDEX;
-
     let mut app = App::new(Config::default());
     // Start on config tab so that pressing Left wraps back to updates, then home.
     // Easier: start on updates tab (index 1) and press Left.
-    app.active_tab = 1; // updates
+    app.active_tab = Tab::Updates; // updates
 
     let cmd = app.handle_key(key(KeyCode::Left));
 
-    assert_eq!(app.active_tab, HOME_TAB_INDEX);
+    assert_eq!(app.active_tab, Tab::Home);
     assert!(
         matches!(cmd, Some(AppCommand::ProbeMirrors)),
         "expected ProbeMirrors when switching to home, got {cmd:?}"
     );
-    let _ = CONFIG_TAB_INDEX; // suppress unused import warning
 }
 
 /// Switching away from the home tab to updates emits ScanLocalDatabase, not ProbeMirrors.
@@ -250,7 +245,7 @@ fn switching_to_home_tab_emits_probe_mirrors() {
 fn switching_to_updates_tab_emits_scan_not_probe() {
     use crate::app::HomeField;
     let mut app = App::new(Config::default());
-    app.active_tab = HOME_TAB_INDEX;
+    app.active_tab = Tab::Home;
     // Focus a non-text field so Right switches tabs rather than moving the caret.
     app.home.focus = HomeField::Video;
 

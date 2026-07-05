@@ -15,6 +15,7 @@ pub mod messages;
 pub mod runtime;
 pub mod snapshots;
 pub mod state;
+pub mod tab;
 pub mod toast;
 pub mod updates;
 
@@ -27,6 +28,7 @@ pub use library::LibraryState;
 pub use login::{LoginField, LoginPhase, LoginTab};
 pub use runtime::run as run_app;
 pub use state::{App, AppCommand, UpdateIndicator};
+pub use tab::Tab;
 pub use toast::{Toast, ToastLevel, ToastTag, Toasts};
 pub use updates::{UpdatesField, UpdatesTab};
 

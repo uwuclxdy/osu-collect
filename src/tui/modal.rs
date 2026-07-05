@@ -24,7 +24,7 @@ use unicode_width::UnicodeWidthStr;
 use super::widgets;
 use super::{accent, accent_alt, bg, text, text_dim};
 use crate::app::state::{CONFIRM_RETRY_BUTTONS, RETRY_ON_START_BUTTONS, UPDATE_MODAL_BUTTONS};
-use crate::config::constants::{CONFIG_TAB_INDEX, HOME_TAB_INDEX, UPDATES_TAB_INDEX};
+use crate::app::tab::Tab;
 
 /// Modal sizing cap: a modal never exceeds 60% of the terminal width.
 /// Below that it shrinks to its content, so a big terminal doesn't inflate it.
@@ -156,7 +156,7 @@ pub(crate) fn render_help_overlay(
     frame: &mut Frame,
     area: Rect,
     scroll: usize,
-    active_tab: usize,
+    active_tab: Tab,
     login_open: bool,
     vim_keys: bool,
 ) -> usize {
@@ -369,15 +369,15 @@ fn button_spans(buttons: &[&'static str], focus: usize) -> Vec<Span<'static>> {
 /// Builds the help rows as measurable [`Line`]s: the always-shown `global`
 /// section plus only the section for the currently active tab. Download tabs
 /// (any index past the static three) map to the `download` section.
-fn build_help_lines(active_tab: usize, login_open: bool, vim_keys: bool) -> Vec<Line<'static>> {
+fn build_help_lines(active_tab: Tab, login_open: bool, vim_keys: bool) -> Vec<Line<'static>> {
     let (heading, rows) = if login_open {
         ("login", LOGIN_TAB)
     } else {
         match active_tab {
-            HOME_TAB_INDEX => ("home", HOME_TAB),
-            UPDATES_TAB_INDEX => ("updates", UPDATES_TAB),
-            CONFIG_TAB_INDEX => ("config", CONFIG_TAB),
-            _ => ("download", DOWNLOAD_TAB),
+            Tab::Home => ("home", HOME_TAB),
+            Tab::Updates => ("updates", UPDATES_TAB),
+            Tab::Config => ("config", CONFIG_TAB),
+            Tab::Download(_) => ("download", DOWNLOAD_TAB),
         }
     };
 

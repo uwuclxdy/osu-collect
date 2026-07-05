@@ -8,11 +8,8 @@
 //! since those modules are crate-private.
 
 use crate::{
-    app::{App, collection::CollectionPage},
-    config::{
-        Config,
-        constants::{CONFIG_TAB_INDEX, HOME_TAB_INDEX, STATIC_TABS, UPDATES_TAB_INDEX},
-    },
+    app::{App, Tab, collection::CollectionPage},
+    config::Config,
     download::{DownloadId, DownloadStage},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
@@ -35,7 +32,7 @@ fn push_page(app: &mut App, id: DownloadId, stage: DownloadStage) {
     let mut page = CollectionPage::new(id, format!("col {id}"), 2);
     page.stage = stage;
     app.downloads.push(page);
-    app.active_tab = STATIC_TABS + app.downloads.len() - 1;
+    app.active_tab = Tab::Download(app.downloads.len() - 1);
 }
 
 // ── esc/q on settled tabs removes the page ───────────────────────────────────
@@ -53,8 +50,8 @@ fn esc_on_completed_tab_removes_page_and_focuses_left() {
     assert!(app.downloads.is_empty(), "completed page must be removed");
     // Only one download tab existed, so focus falls back to config (rightmost
     // static tab — the tab immediately to the left of the closed one).
-    assert_eq!(app.active_tab, closed_index - 1);
-    assert_eq!(app.active_tab, CONFIG_TAB_INDEX);
+    assert_eq!(app.active_tab, Tab::from_index(closed_index.to_index() - 1));
+    assert_eq!(app.active_tab, Tab::Config);
 }
 
 #[test]
@@ -67,7 +64,7 @@ fn esc_on_failed_tab_removes_page_and_focuses_left() {
 
     assert!(cmd.is_none());
     assert!(app.downloads.is_empty(), "failed page must be removed");
-    assert_eq!(app.active_tab, CONFIG_TAB_INDEX);
+    assert_eq!(app.active_tab, Tab::Config);
 }
 
 #[test]
@@ -76,8 +73,8 @@ fn q_closes_middle_download_tab_and_lands_on_previous_download_tab() {
     push_page(&mut app, 1, DownloadStage::Completed);
     push_page(&mut app, 2, DownloadStage::Completed);
     push_page(&mut app, 3, DownloadStage::Completed);
-    // focus the middle download tab (id=2 → tab index STATIC_TABS + 1)
-    app.active_tab = STATIC_TABS + 1;
+    // focus the middle download tab (id=2 → Tab::Download(1))
+    app.active_tab = Tab::Download(1);
 
     app.handle_key(press(KeyCode::Char('q')));
 
@@ -85,8 +82,8 @@ fn q_closes_middle_download_tab_and_lands_on_previous_download_tab() {
     let remaining_ids: Vec<_> = app.downloads.iter().map(|p| p.id).collect();
     assert_eq!(remaining_ids, vec![1, 3]);
     // The tab immediately left of the closed one was the first download tab
-    // (id=1), which keeps its index STATIC_TABS.
-    assert_eq!(app.active_tab, STATIC_TABS);
+    // (id=1), which keeps its Tab::Download(0) slot.
+    assert_eq!(app.active_tab, Tab::Download(0));
 }
 
 // ── x never closes a download tab ────────────────────────────────────────────
@@ -163,36 +160,36 @@ fn x_on_pending_tab_is_noop() {
 fn x_on_home_tab_does_not_remove_any_download() {
     let mut app = make_app();
     push_page(&mut app, 1, DownloadStage::Completed);
-    app.active_tab = HOME_TAB_INDEX;
+    app.active_tab = Tab::Home;
 
     app.handle_key(press(KeyCode::Char('x')));
 
     assert_eq!(app.downloads.len(), 1, "downloads must be untouched");
-    assert_eq!(app.active_tab, HOME_TAB_INDEX);
+    assert_eq!(app.active_tab, Tab::Home);
 }
 
 #[test]
 fn x_on_updates_tab_does_not_remove_any_download() {
     let mut app = make_app();
     push_page(&mut app, 1, DownloadStage::Completed);
-    app.active_tab = UPDATES_TAB_INDEX;
+    app.active_tab = Tab::Updates;
 
     app.handle_key(press(KeyCode::Char('x')));
 
     assert_eq!(app.downloads.len(), 1);
-    assert_eq!(app.active_tab, UPDATES_TAB_INDEX);
+    assert_eq!(app.active_tab, Tab::Updates);
 }
 
 #[test]
 fn x_on_config_tab_does_not_remove_any_download() {
     let mut app = make_app();
     push_page(&mut app, 1, DownloadStage::Completed);
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
 
     app.handle_key(press(KeyCode::Char('x')));
 
     assert_eq!(app.downloads.len(), 1);
-    assert_eq!(app.active_tab, CONFIG_TAB_INDEX);
+    assert_eq!(app.active_tab, Tab::Config);
 }
 
 // ── q on settled tabs closes in place (no CancelDownload command) ────────────
@@ -213,7 +210,7 @@ fn q_on_completed_tab_closes_in_place_without_command() {
         app.downloads.is_empty(),
         "completed page must be removed by q"
     );
-    assert_eq!(app.active_tab, closed_index - 1);
+    assert_eq!(app.active_tab, Tab::from_index(closed_index.to_index() - 1));
 }
 
 #[test]
@@ -287,11 +284,11 @@ fn x_after_dismiss_does_not_close_settled_tab() {
 #[test]
 fn x_on_static_tab_without_error_is_unchanged() {
     let mut app = make_app();
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     // no error toast — x must remain a no-op on static tabs as before
     let cmd = app.handle_key(press(KeyCode::Char('x')));
     assert!(cmd.is_none());
-    assert_eq!(app.active_tab, CONFIG_TAB_INDEX);
+    assert_eq!(app.active_tab, Tab::Config);
 }
 
 // ── help overlay surface ──────────────────────────────────────────────────────

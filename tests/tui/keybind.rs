@@ -75,39 +75,43 @@ fn ctrl_backspace_as_ctrl_h_deletes_word_not_types_h() {
 
 #[test]
 fn right_arrow_moves_to_next_tab() {
-    use osu_collect::app::HomeField;
+    use osu_collect::app::{HomeField, Tab};
     let mut app = make_app();
     app.home.focus = HomeField::Video; // non-text so ←/→ switch screens
-    assert_eq!(app.active_tab(), 0);
+    assert_eq!(app.active_tab(), Tab::Home);
     app.handle_key(press(KeyCode::Right));
-    assert_eq!(app.active_tab(), 1);
+    assert_eq!(app.active_tab(), Tab::Updates);
 }
 
 #[test]
 fn left_arrow_wraps_to_last_tab() {
-    use osu_collect::app::HomeField;
+    use osu_collect::app::{HomeField, Tab};
     let mut app = make_app();
     app.home.focus = HomeField::Video;
     app.handle_key(press(KeyCode::Left));
     // wraps to the last static tab (2 = config) since no downloads
-    assert_eq!(app.active_tab(), 2);
+    assert_eq!(app.active_tab(), Tab::Config);
 }
 
 #[test]
 fn tab_and_backtab_switch_screens() {
-    use osu_collect::app::HomeField;
+    use osu_collect::app::{HomeField, Tab};
     let mut app = make_app();
     app.home.focus = HomeField::Video;
-    assert_eq!(app.active_tab(), 0);
+    assert_eq!(app.active_tab(), Tab::Home);
     app.handle_key(press(KeyCode::Tab));
-    assert_eq!(app.active_tab(), 1, "tab cycles to the next tab");
+    assert_eq!(app.active_tab(), Tab::Updates, "tab cycles to the next tab");
     app.handle_key(press(KeyCode::BackTab));
-    assert_eq!(app.active_tab(), 0, "shift+tab cycles to the previous tab");
+    assert_eq!(
+        app.active_tab(),
+        Tab::Home,
+        "shift+tab cycles to the previous tab"
+    );
 }
 
 #[test]
 fn tab_completes_directory_while_editing_it() {
-    use osu_collect::app::HomeField;
+    use osu_collect::app::{HomeField, Tab};
     let mut app = make_app();
     // Editing the directory field: tab completes the path, never switches tabs.
     app.home.focus = HomeField::Directory;
@@ -115,7 +119,7 @@ fn tab_completes_directory_while_editing_it() {
     app.handle_key(press(KeyCode::Tab));
     assert_eq!(
         app.active_tab(),
-        0,
+        Tab::Home,
         "tab must complete the path, not switch tabs, while editing the directory"
     );
 }
@@ -298,12 +302,12 @@ fn paste_outside_edit_mode_is_inert() {
 
 #[test]
 fn osu_official_toggle_blocked_and_notifies_when_logged_out() {
+    use osu_collect::app::Tab;
     use osu_collect::app::{AuthLoginState, ConfigField};
-    use osu_collect::config::constants::CONFIG_TAB_INDEX;
     let mut app = make_app();
     app.config.login_state = AuthLoginState::LoggedOut;
     app.config.osu_official = false;
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     app.config.focus = ConfigField::MirrorOsuOfficial;
 
     app.handle_key(press(KeyCode::Enter));
@@ -324,8 +328,8 @@ fn osu_official_toggle_blocked_and_notifies_when_logged_out() {
 #[test]
 #[serial_test::serial(config_env)]
 fn osu_official_toggle_works_when_logged_in() {
+    use osu_collect::app::Tab;
     use osu_collect::app::{AuthLoginState, ConfigField};
-    use osu_collect::config::constants::CONFIG_TAB_INDEX;
     // Sandbox the config path so the toggle's auto-save never touches the real
     // user config.
     let dir = tempfile::tempdir().unwrap();
@@ -335,7 +339,7 @@ fn osu_official_toggle_works_when_logged_in() {
     let mut app = make_app();
     app.config.login_state = AuthLoginState::LoggedIn;
     app.config.osu_official = false;
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     app.config.focus = ConfigField::MirrorOsuOfficial;
 
     app.handle_key(press(KeyCode::Enter));
@@ -350,15 +354,16 @@ fn osu_official_toggle_works_when_logged_in() {
 
 #[test]
 fn enter_on_home_mirrors_summary_jumps_to_config_mirrors() {
+    use osu_collect::app::Tab;
     use osu_collect::app::{ConfigField, HomeField};
-    use osu_collect::config::constants::CONFIG_TAB_INDEX;
     let mut app = make_app();
     app.home.focus = HomeField::Mirrors;
 
     app.handle_key(press(KeyCode::Enter));
 
     assert_eq!(
-        app.active_tab, CONFIG_TAB_INDEX,
+        app.active_tab,
+        Tab::Config,
         "enter on the mirrors summary opens the config tab"
     );
     // Focus lands on the first built-in mirror in the default try-order.
@@ -369,7 +374,7 @@ fn enter_on_home_mirrors_summary_jumps_to_config_mirrors() {
 #[serial_test::serial(config_env)]
 fn config_mirror_toggle_syncs_home_count() {
     use osu_collect::app::ConfigField;
-    use osu_collect::config::constants::CONFIG_TAB_INDEX;
+    use osu_collect::app::Tab;
     // Sandbox the config path so the toggle's auto-save never touches the real
     // user config.
     let dir = tempfile::tempdir().unwrap();
@@ -378,7 +383,7 @@ fn config_mirror_toggle_syncs_home_count() {
 
     let mut app = make_app();
     let before = app.home.mirror_count();
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     // Nerinyan is enabled by default; toggling it off must lower the Get Maps
     // count, since the summary derives from the Config tab now.
     app.config.focus = ConfigField::MirrorNerinyan;
@@ -484,8 +489,8 @@ fn enter_on_collection_field_does_not_start_download() {
 /// logged-out state so the panel opens on the credentials phase regardless of
 /// any osu! token stored on the host running the tests.
 fn focus_config_auth_chip() -> osu_collect::app::App {
+    use osu_collect::app::Tab;
     use osu_collect::app::{AuthLoginState, ConfigField, HomeField};
-    use osu_collect::config::constants::CONFIG_TAB_INDEX;
 
     let mut app = make_app();
     app.config.login_state = AuthLoginState::LoggedOut;
@@ -493,14 +498,14 @@ fn focus_config_auth_chip() -> osu_collect::app::App {
     app.home.focus = HomeField::Video;
     app.handle_key(press(KeyCode::Right));
     app.handle_key(press(KeyCode::Right));
-    assert_eq!(app.active_tab(), CONFIG_TAB_INDEX);
+    assert_eq!(app.active_tab(), Tab::Config);
     app.config.focus = ConfigField::AuthChip;
     app
 }
 
 #[test]
 fn enter_on_config_chip_opens_login_split() {
-    use osu_collect::config::constants::CONFIG_TAB_INDEX;
+    use osu_collect::app::Tab;
 
     let mut app = focus_config_auth_chip();
 
@@ -515,7 +520,7 @@ fn enter_on_config_chip_opens_login_split() {
     assert!(app.login_open(), "login split must open");
     assert_eq!(
         app.active_tab(),
-        CONFIG_TAB_INDEX,
+        Tab::Config,
         "active tab stays on config while the login split is open"
     );
 }
@@ -523,7 +528,7 @@ fn enter_on_config_chip_opens_login_split() {
 #[test]
 fn esc_closes_login_split_and_stays_on_config() {
     use osu_collect::app::ConfigField;
-    use osu_collect::config::constants::CONFIG_TAB_INDEX;
+    use osu_collect::app::Tab;
 
     let mut app = focus_config_auth_chip();
     app.handle_key(press(KeyCode::Enter));
@@ -532,7 +537,7 @@ fn esc_closes_login_split_and_stays_on_config() {
     // esc closes the split in place and hands focus back to the auth chip.
     app.handle_key(press(KeyCode::Esc));
     assert!(!app.login_open(), "esc closes the login split");
-    assert_eq!(app.active_tab(), CONFIG_TAB_INDEX);
+    assert_eq!(app.active_tab(), Tab::Config);
     assert_eq!(app.config.focus, ConfigField::AuthChip);
 }
 
@@ -564,15 +569,15 @@ fn typing_routes_to_login_field_while_split_open() {
 
 #[test]
 fn space_on_auth_chip_does_nothing() {
+    use osu_collect::app::Tab;
     use osu_collect::app::{ConfigField, HomeField};
-    use osu_collect::config::constants::CONFIG_TAB_INDEX;
 
     let mut app = make_app();
     // Focus a non-text field so Right switches tabs rather than moving the caret.
     app.home.focus = HomeField::Video;
     app.handle_key(press(KeyCode::Right));
     app.handle_key(press(KeyCode::Right));
-    assert_eq!(app.active_tab(), CONFIG_TAB_INDEX);
+    assert_eq!(app.active_tab(), Tab::Config);
     app.config.focus = ConfigField::AuthChip;
 
     // space must not trigger any action on the chip — enter is the confirm key
@@ -699,9 +704,9 @@ fn opening_help_resets_scroll() {
 // ── vim keymap (opt-in, off by default) ───────────────────────────────────────
 
 fn config_app_vim(on: bool) -> App {
-    use osu_collect::config::constants::CONFIG_TAB_INDEX;
+    use osu_collect::app::Tab;
     let mut app = make_app();
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     app.config.vim_keys = on;
     app
 }
@@ -736,20 +741,12 @@ fn vim_jk_move_field_focus() {
 
 #[test]
 fn vim_hl_switch_tabs() {
-    use osu_collect::config::constants::{CONFIG_TAB_INDEX, UPDATES_TAB_INDEX};
+    use osu_collect::app::Tab;
     let mut app = config_app_vim(true);
     app.handle_key(press(KeyCode::Char('h')));
-    assert_eq!(
-        app.active_tab(),
-        UPDATES_TAB_INDEX,
-        "h switches to the prev tab"
-    );
+    assert_eq!(app.active_tab(), Tab::Updates, "h switches to the prev tab");
     app.handle_key(press(KeyCode::Char('l')));
-    assert_eq!(
-        app.active_tab(),
-        CONFIG_TAB_INDEX,
-        "l switches to the next tab"
-    );
+    assert_eq!(app.active_tab(), Tab::Config, "l switches to the next tab");
 }
 
 #[test]
@@ -826,7 +823,7 @@ fn enter_inside_collection_list_is_no_op() {
 #[serial_test::serial(config_env)]
 fn shift_arrow_reorders_config_mirror_and_syncs_pipeline() {
     use osu_collect::app::ConfigField;
-    use osu_collect::config::constants::CONFIG_TAB_INDEX;
+    use osu_collect::app::Tab;
     use osu_downloader::MirrorKind;
 
     // Sandbox the config path so the reorder's auto-save never touches the real
@@ -836,7 +833,7 @@ fn shift_arrow_reorders_config_mirror_and_syncs_pipeline() {
     unsafe { std::env::set_var("OSU_COLLECT_CONFIG", path.to_str().unwrap()) };
 
     let mut app = make_app();
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     // Nerinyan is the second built-in in the default order.
     app.config.focus = ConfigField::MirrorNerinyan;
     app.handle_key(shift(KeyCode::Up));
@@ -864,10 +861,10 @@ fn shift_arrow_reorders_config_mirror_and_syncs_pipeline() {
 #[test]
 fn shift_arrow_off_mirror_row_falls_through_to_focus_move() {
     use osu_collect::app::ConfigField;
-    use osu_collect::config::constants::CONFIG_TAB_INDEX;
+    use osu_collect::app::Tab;
 
     let mut app = make_app();
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     // Theme is not a mirror row, so shift+down behaves like plain focus movement.
     app.config.focus = ConfigField::Theme;
     app.handle_key(shift(KeyCode::Down));
@@ -882,10 +879,10 @@ fn shift_arrow_off_mirror_row_falls_through_to_focus_move() {
 
 #[test]
 fn c_switches_client_and_rescans_from_any_tab() {
-    use osu_collect::config::constants::HOME_TAB_INDEX;
+    use osu_collect::app::Tab;
 
     let mut app = make_app();
-    app.active_tab = HOME_TAB_INDEX;
+    app.active_tab = Tab::Home;
     let before = app.library.client_type;
 
     let cmd = app.handle_key(press(KeyCode::Char('c')));
@@ -903,10 +900,10 @@ fn c_switches_client_and_rescans_from_any_tab() {
 #[test]
 fn c_types_literal_char_while_editing() {
     use osu_collect::app::HomeField;
-    use osu_collect::config::constants::HOME_TAB_INDEX;
+    use osu_collect::app::Tab;
 
     let mut app = make_app();
-    app.active_tab = HOME_TAB_INDEX;
+    app.active_tab = Tab::Home;
     app.home.focus = HomeField::Collection;
     app.editing = true;
     let before = app.library.client_type;
@@ -921,13 +918,13 @@ fn c_types_literal_char_while_editing() {
 
 #[test]
 fn typing_into_updates_path_field_routes_to_library() {
+    use osu_collect::app::Tab;
     use osu_collect::app::UpdatesField;
-    use osu_collect::config::constants::UPDATES_TAB_INDEX;
 
     // The osu! path field lives on the app-global library state now, but it is
     // still edited through the Updates panel. Typing must land on `library`.
     let mut app = make_app();
-    app.active_tab = UPDATES_TAB_INDEX;
+    app.active_tab = Tab::Updates;
     app.updates.selection.focus = UpdatesField::OsuPath;
     app.library.osu_path.set_value(String::new());
     app.editing = true;

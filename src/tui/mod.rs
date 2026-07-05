@@ -15,8 +15,7 @@ mod widgets;
 
 pub use theme::{Theme, apply_theme, theme};
 
-use crate::app::{App, system_banners};
-use crate::config::constants::{CONFIG_TAB_INDEX, HOME_TAB_INDEX, UPDATES_TAB_INDEX};
+use crate::app::{App, Tab, system_banners};
 use osu_downloader::MirrorKind;
 use ratatui::{
     Frame,
@@ -255,7 +254,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         header::RenderParams {
             area: header_area,
             tabs: &tabs,
-            active: app.active_tab(),
+            active: app.active_tab().to_index(),
             tick: app.tick_count,
             downloading: app.is_downloading(),
             brand_ramp: app.brand_ramp(),
@@ -285,9 +284,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
         || app.update_modal.is_some();
     let editing = app.editing && !overlay_open;
     match app.active_tab() {
-        HOME_TAB_INDEX => home::render(frame, body_area, &app.home, editing),
-        UPDATES_TAB_INDEX => updates::render(frame, body_area, &app.updates, &app.library, editing),
-        CONFIG_TAB_INDEX => {
+        Tab::Home => home::render(frame, body_area, &app.home, editing),
+        Tab::Updates => updates::render(frame, body_area, &app.updates, &app.library, editing),
+        Tab::Config => {
             let osu_dir = app.library.osu_path();
             let library_db_hint = crate::app::library_cache::db_file_path(
                 app.library.client_type,

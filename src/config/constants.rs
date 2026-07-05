@@ -73,9 +73,9 @@ pub const RETRY_FAILED_ON_DOWNLOAD_MODES: [RetryFailedOnDownload; 3] = [
     RetryFailedOnDownload::No,
 ];
 
-pub const HOME_TAB_INDEX: usize = 0;
-pub const UPDATES_TAB_INDEX: usize = 1;
-pub const CONFIG_TAB_INDEX: usize = 2;
+/// Count of always-present static tabs (`home`, `updates`, `config`). Download
+/// tabs are appended after these; see [`crate::app::tab::Tab`] for the identity
+/// enum that replaced the per-tab index constants.
 pub const STATIC_TABS: usize = 3;
 
 pub const TAB_HOME_LOWER: &str = "home";

@@ -1,8 +1,7 @@
 use crate::app::{
-    App, ConfigField, ConfigTab, HomeField, HomeTab, LoginField, UpdatesField, UpdatesTab,
+    App, ConfigField, ConfigTab, HomeField, HomeTab, LoginField, Tab, UpdatesField, UpdatesTab,
     messages::AppMessage,
 };
-use crate::config::constants::{CONFIG_TAB_INDEX, HOME_TAB_INDEX, UPDATES_TAB_INDEX};
 use crate::download::DownloadStage;
 use ratatui::{
     Frame,
@@ -150,12 +149,12 @@ fn modal_hint(app: &App) -> Option<String> {
 
 fn current_message(app: &App) -> Option<&AppMessage> {
     match app.active_tab() {
-        HOME_TAB_INDEX => app.home.message.as_ref(),
-        UPDATES_TAB_INDEX => app.updates.message.as_ref(),
+        Tab::Home => app.home.message.as_ref(),
+        Tab::Updates => app.updates.message.as_ref(),
         // The login split lives on Config and surfaces its in-progress status
         // via `config.message`, so the Config arm covers it too.
-        CONFIG_TAB_INDEX => app.config.message.as_ref(),
-        _ => None,
+        Tab::Config => app.config.message.as_ref(),
+        Tab::Download(_) => None,
     }
 }
 
@@ -193,10 +192,10 @@ fn tab_hints(app: &App) -> (Vec<&'static str>, Option<&'static str>) {
         return (login_hints(app), Some(HINT_CLOSE));
     }
     match app.active_tab() {
-        HOME_TAB_INDEX => (home_hints(&app.home), Some(HINT_QUIT)),
-        UPDATES_TAB_INDEX => updates_hints(&app.updates),
-        CONFIG_TAB_INDEX => (config_hints(&app.config), Some(HINT_QUIT)),
-        _ => download_hints(app),
+        Tab::Home => (home_hints(&app.home), Some(HINT_QUIT)),
+        Tab::Updates => updates_hints(&app.updates),
+        Tab::Config => (config_hints(&app.config), Some(HINT_QUIT)),
+        Tab::Download(_) => download_hints(app),
     }
 }
 

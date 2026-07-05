@@ -2,10 +2,10 @@
 
 use crate::{
     app::{
-        App, AppCommand, ConfigField, ConfigTab,
+        App, AppCommand, ConfigField, ConfigTab, Tab,
         failed_maps::{FailedMapsFile, save},
     },
-    config::{Config, RetryFailedOnDownload, constants::HOME_TAB_INDEX},
+    config::{Config, RetryFailedOnDownload},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use tempfile::TempDir;
@@ -47,7 +47,7 @@ fn app_with_failed_maps(mode: RetryFailedOnDownload) -> (App, TempDir) {
         &path,
     );
     app.failed_maps_path_override = Some(path);
-    app.active_tab = HOME_TAB_INDEX;
+    app.active_tab = Tab::Home;
     (app, dir)
 }
 

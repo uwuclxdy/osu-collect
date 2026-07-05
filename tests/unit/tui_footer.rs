@@ -1,12 +1,9 @@
 use super::super::{SPINNER_FRAMES_PADDED, spinner_str};
 use super::{hint_for, hint_line};
 use crate::app::{
-    App, ConfigField, HomeField, collection::CollectionPage, collection::FailureReason,
+    App, ConfigField, HomeField, Tab, collection::CollectionPage, collection::FailureReason,
 };
-use crate::config::{
-    Config,
-    constants::{CONFIG_TAB_INDEX, STATIC_TABS},
-};
+use crate::config::Config;
 use crate::download::{DownloadId, DownloadStage, FailedMap};
 
 #[test]
@@ -31,7 +28,7 @@ fn push_focused_page(app: &mut App, id: DownloadId, stage: DownloadStage) {
     let mut page = CollectionPage::new(id, format!("col {id}"), 1);
     page.stage = stage;
     app.downloads.push(page);
-    app.active_tab = STATIC_TABS + app.downloads.len() - 1;
+    app.active_tab = Tab::Download(app.downloads.len() - 1);
 }
 
 #[test]
@@ -238,7 +235,7 @@ fn footer_hint_trails_help_then_quit_after_the_global_hints() {
 #[test]
 fn config_footer_advertises_reorder_only_on_a_builtin_mirror_row() {
     let mut app = App::new(Config::default());
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
 
     app.config.focus = ConfigField::MirrorNerinyan;
     assert!(

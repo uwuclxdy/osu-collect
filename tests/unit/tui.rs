@@ -1,6 +1,6 @@
 use crate::{
-    app::{App, CollectionPage, ConfigField},
-    config::{Config, constants::CONFIG_TAB_INDEX},
+    app::{App, CollectionPage, ConfigField, Tab},
+    config::Config,
     download::{DownloadEvent, DownloadStage, DownloadSummary},
 };
 use ratatui::{Terminal, backend::TestBackend, style::Color};
@@ -128,7 +128,7 @@ fn home_directory_tooltip_shows_resolved_path_only_when_focused() {
 #[test]
 fn config_render_scrolls_to_focused_logging_field() {
     let mut app = App::new(Config::default());
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     app.config.focus = ConfigField::LoggingDirectory;
 
     // height=20 keeps the render in normal mode (content area > 12)
@@ -142,7 +142,7 @@ fn config_render_scrolls_to_focused_logging_field() {
 #[test]
 fn config_render_shows_download_help() {
     let mut app = App::new(Config::default());
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     app.config.focus = ConfigField::DownloadThreads;
 
     let output = render_app(&app, 80, 20);
@@ -158,7 +158,7 @@ fn config_render_shows_download_help() {
 #[test]
 fn config_render_shows_auto_defer_label() {
     let mut app = App::new(Config::default());
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     // Focus the row so the scrollable panel brings it (and its secs input) into view.
     app.config.focus = ConfigField::DownloadAutoSkipRateLimited;
 
@@ -179,7 +179,7 @@ fn config_render_shows_strict_help_only_when_strict_selected() {
     use crate::download::ArchiveValidation;
 
     let mut app = App::new(Config::default());
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     app.config.focus = ConfigField::DownloadArchiveValidation;
 
     app.config.archive_validation = ArchiveValidation::Magic;
@@ -200,7 +200,7 @@ fn config_render_shows_strict_help_only_when_strict_selected() {
 #[test]
 fn config_render_shows_auth_chip() {
     let mut app = App::new(Config::default());
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     app.config.focus = ConfigField::AuthChip;
 
     let output = render_app(&app, 80, 24);
@@ -231,7 +231,7 @@ fn download_render_shows_status_metrics_and_results() {
         unverified: 0,
     });
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let output = render_app(&app, 90, 24);
 
@@ -418,7 +418,7 @@ fn section_titles_use_text_dim() {
 
     // config tab: MIRRORS section header
     let mut app2 = App::new(Config::default());
-    app2.active_tab = CONFIG_TAB_INDEX;
+    app2.active_tab = Tab::Config;
     let buf2 = render_buffer(&app2, 120, 30);
     let has_dim_m = buf2
         .content
@@ -468,7 +468,7 @@ fn letter_key_on_config_toggle_row_is_inert() {
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 
     let mut app = App::new(Config::default());
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     // focus is a mirror toggle by default — not the auth chip.
     let key = KeyEvent {
         code: KeyCode::Char('l'),
@@ -490,7 +490,7 @@ fn auth_chip_is_reachable_via_focus_cycle() {
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 
     let mut app = App::new(Config::default());
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
 
     let down = KeyEvent {
         code: KeyCode::Down,
@@ -520,7 +520,7 @@ fn auth_chip_renders_when_focused() {
     use crate::app::ConfigField;
 
     let mut app = App::new(Config::default());
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     app.config.focus = ConfigField::AuthChip;
 
     let output = render_app(&app, 120, 30);
@@ -550,7 +550,7 @@ fn active_view_renders_progress_bar_when_downloading() {
     page.update_active_progress(42, 5_000_000, 10_000_000);
     std::thread::sleep(std::time::Duration::from_millis(150));
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let output = render_app(&app, 100, 24);
 
@@ -579,7 +579,7 @@ fn active_view_requires_percentage_for_discovered_download_size() {
     page.update_active_progress(42, 1_500_000, 10_000_000);
     std::thread::sleep(std::time::Duration::from_millis(150));
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let output = render_app(&app, 100, 24);
 
@@ -606,7 +606,7 @@ fn active_view_renders_bouncing_bar_when_total_is_unknown() {
         None,
     );
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let output = render_app(&app, 100, 24);
 
@@ -641,7 +641,7 @@ fn active_panel_drops_finished_and_idle_rows() {
         );
     }
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let baseline = render_app(&app, 120, 30);
     assert_eq!(
@@ -708,7 +708,7 @@ fn long_message_does_not_drop_the_progress_bar() {
     page.update_active_progress(42, 7_000_000, 10_000_000);
     std::thread::sleep(std::time::Duration::from_millis(150));
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let output = render_app(&app, 60, 24);
     assert!(
@@ -741,7 +741,7 @@ fn active_view_shows_bar_for_active_download_regardless_of_message() {
     page.update_active_progress(42, 3_000_000, 6_000_000);
     std::thread::sleep(std::time::Duration::from_millis(150));
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let output = render_app(&app, 100, 24);
 
@@ -765,7 +765,7 @@ fn rechecking_stage_shows_verification_progress() {
     page.download_target = 10;
     page.stats.skipped = 3;
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let output = render_app(&app, 100, 24);
 
@@ -784,7 +784,7 @@ fn rechecking_stage_replaces_top_title_with_recheck_progress() {
     page.download_target = 10;
     page.stats.skipped = 3;
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let output = render_app(&app, 100, 24);
 
@@ -810,7 +810,7 @@ fn rechecking_stage_threads_panel_shows_verification_status() {
     page.download_target = 10;
     page.stats.skipped = 2;
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let output = render_app(&app, 100, 24);
 
@@ -830,7 +830,7 @@ fn resolving_stage_renders_indeterminate_gauge_and_status() {
     let mut page = CollectionPage::new(1, "ranked maps".to_string(), 4);
     page.stage = DownloadStage::Resolving;
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let output = render_app(&app, 100, 24);
 
@@ -859,7 +859,7 @@ fn resolving_stage_with_progress_shows_count_in_title() {
     page.stage = DownloadStage::Resolving;
     page.resolve_progress = Some((2, 5));
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let output = render_app(&app, 100, 24);
 
@@ -875,7 +875,7 @@ fn resolving_stage_indeterminate_bar_is_bracketed_block() {
     let mut page = CollectionPage::new(1, "ranked maps".to_string(), 4);
     page.stage = DownloadStage::Resolving;
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let buf = render_buffer(&app, 100, 24);
     let frame_color = super::line();
@@ -922,7 +922,7 @@ fn resolving_stage_indeterminate_block_stays_inside_frame() {
     let mut page = CollectionPage::new(1, "ranked maps".to_string(), 4);
     page.stage = DownloadStage::Resolving;
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let buf = render_buffer(&app, 100, 24);
     let frame_color = super::line();
@@ -948,7 +948,7 @@ fn resolving_stage_progress_bar_renders_single_row() {
     page.stage = DownloadStage::Resolving;
     page.resolve_progress = Some((2, 5));
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let buf = render_buffer(&app, 100, 24);
     let info = Color::Rgb(116, 199, 236);
@@ -977,7 +977,7 @@ fn rechecking_stage_uses_warning_color_on_gauge() {
     page.download_target = 10;
     page.stats.skipped = 5;
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let buf = render_buffer(&app, 100, 24);
     let warning = Color::Rgb(249, 226, 175);
@@ -1294,7 +1294,7 @@ fn footer_offers_defer_and_drop_when_a_row_is_parked() {
         Some(std::time::Instant::now() + std::time::Duration::from_secs(30)),
     );
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let output = render_app(&app, 120, 24);
     assert!(
@@ -1315,7 +1315,7 @@ fn footer_offers_drop_only_when_only_deferred() {
     // A queue-deferred map with nothing parked inline: only `S drop` can act.
     page.mark_deferred(42);
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let output = render_app(&app, 120, 24);
     assert!(
@@ -1448,7 +1448,7 @@ fn config_archive_validation_help_shows_when_focused() {
     use crate::download::ArchiveValidation;
 
     let mut app = App::new(Config::default());
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     app.config.focus = ConfigField::DownloadArchiveValidation;
     app.config.archive_validation = ArchiveValidation::Magic;
 
@@ -1463,7 +1463,7 @@ fn config_archive_validation_help_shows_when_focused() {
 #[test]
 fn config_archive_validation_help_hidden_when_not_focused() {
     let mut app = App::new(Config::default());
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     app.config.focus = ConfigField::DownloadThreads;
 
     let output = render_app(&app, 100, 30);
@@ -1483,7 +1483,7 @@ fn config_archive_validation_strict_help_when_strict_selected_and_focused() {
     use crate::download::ArchiveValidation;
 
     let mut app = App::new(Config::default());
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     app.config.focus = ConfigField::DownloadArchiveValidation;
     app.config.archive_validation = ArchiveValidation::Eocd;
 
@@ -1502,7 +1502,7 @@ fn config_archive_validation_strict_help_when_strict_selected_and_focused() {
 #[test]
 fn config_custom_mirror_help_shows_when_focused() {
     let mut app = App::new(Config::default());
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     app.config.focus = ConfigField::MirrorCustomUrl(0);
 
     let output = render_app(&app, 100, 30);
@@ -1516,7 +1516,7 @@ fn config_custom_mirror_help_shows_when_focused() {
 #[test]
 fn config_custom_mirror_help_hidden_when_not_focused() {
     let mut app = App::new(Config::default());
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     app.config.focus = ConfigField::DownloadThreads;
 
     let output = render_app(&app, 100, 30);
@@ -1530,13 +1530,12 @@ fn config_custom_mirror_help_hidden_when_not_focused() {
 #[test]
 fn updates_osu_path_help_shows_when_focused() {
     use crate::app::UpdatesField;
-    use crate::config::constants::UPDATES_TAB_INDEX;
     use crate::osu_db::OsuClient;
 
     let mut config = Config::default();
     config.recent.osu_client = Some(OsuClient::Stable);
     let mut app = App::new(config);
-    app.active_tab = UPDATES_TAB_INDEX;
+    app.active_tab = Tab::Updates;
     app.updates.selection.focus = UpdatesField::OsuPath;
 
     let output = render_app(&app, 100, 30);
@@ -1550,13 +1549,12 @@ fn updates_osu_path_help_shows_when_focused() {
 #[test]
 fn updates_osu_path_help_names_active_client_db() {
     use crate::app::UpdatesField;
-    use crate::config::constants::UPDATES_TAB_INDEX;
     use crate::osu_db::OsuClient;
 
     let mut config = Config::default();
     config.recent.osu_client = Some(OsuClient::Lazer);
     let mut app = App::new(config);
-    app.active_tab = UPDATES_TAB_INDEX;
+    app.active_tab = Tab::Updates;
     app.updates.selection.focus = UpdatesField::OsuPath;
 
     let output = render_app(&app, 100, 30);
@@ -1574,10 +1572,9 @@ fn updates_osu_path_help_names_active_client_db() {
 #[test]
 fn updates_osu_path_help_hidden_when_not_focused() {
     use crate::app::UpdatesField;
-    use crate::config::constants::UPDATES_TAB_INDEX;
 
     let mut app = App::new(Config::default());
-    app.active_tab = UPDATES_TAB_INDEX;
+    app.active_tab = Tab::Updates;
     app.updates.selection.focus = UpdatesField::Collections;
 
     let output = render_app(&app, 100, 30);
@@ -1627,7 +1624,7 @@ fn compact_download_renders_without_panic() {
     page.total_maps = 10;
     page.download_target = 10;
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let output = render_app(&app, 60, 10);
     assert!(!output.is_empty(), "compact download must produce output");
@@ -1645,7 +1642,7 @@ fn compact_download_renders_without_panic() {
 #[test]
 fn compact_config_renders_without_panic() {
     let mut app = App::new(Config::default());
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     let output = render_app(&app, 60, 10);
     assert!(!output.is_empty(), "compact config must produce output");
     // section headers hidden
@@ -1664,10 +1661,8 @@ fn compact_config_renders_without_panic() {
 
 #[test]
 fn compact_updates_renders_without_panic() {
-    use crate::config::constants::UPDATES_TAB_INDEX;
-
     let mut app = App::new(Config::default());
-    app.active_tab = UPDATES_TAB_INDEX;
+    app.active_tab = Tab::Updates;
     let output = render_app(&app, 60, 10);
     assert!(!output.is_empty(), "compact updates must produce output");
     // source/missing sections are hidden

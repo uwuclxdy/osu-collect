@@ -13,10 +13,9 @@ pub use scan::{
 
 pub use resolve::{HomeResolveEvent, handle_home_resolve_event};
 
-use super::{App, AppCommand};
+use super::{App, AppCommand, Tab};
 use crate::{
     config::Config,
-    config::constants::HOME_TAB_INDEX,
     download::{self, DownloadEvent, DownloadHandle, DownloadId},
     tui::terminal::{TerminalGuard, TuiTerminal, setup_terminal, spawn_input_thread},
     tui::{apply_theme, draw},
@@ -93,7 +92,7 @@ pub async fn run(
     // collection value (restored from the last run) so its status shows without
     // the user touching the field. `schedule_resolve` parses + debounces, so a
     // non-parseable prefill just clears.
-    if app.active_tab == HOME_TAB_INDEX {
+    if app.active_tab == Tab::Home {
         schedule_probe(
             &mut tasks.mirror_probe,
             &mut tasks.mirror_probe_cancel,

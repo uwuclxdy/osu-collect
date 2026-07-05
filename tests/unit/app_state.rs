@@ -1,9 +1,6 @@
 use crate::{
-    app::{App, AppCommand},
-    config::{
-        Config,
-        constants::{CONFIG_TAB_INDEX, HOME_TAB_INDEX, UPDATES_TAB_INDEX},
-    },
+    app::{App, AppCommand, Tab},
+    config::Config,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -15,38 +12,38 @@ fn key(code: KeyCode) -> KeyEvent {
 fn right_tab_switch_ignores_stale_updates_list_on_home() {
     use crate::app::HomeField;
     let mut app = App::new(Config::default());
-    app.active_tab = HOME_TAB_INDEX;
+    app.active_tab = Tab::Home;
     // Focus a non-text field so Right switches tabs rather than moving the caret.
     app.home.focus = HomeField::Video;
     app.updates.selection.in_collection_list = true;
 
     let cmd = app.handle_key(key(KeyCode::Right));
 
-    assert_eq!(app.active_tab, UPDATES_TAB_INDEX);
+    assert_eq!(app.active_tab, Tab::Updates);
     assert!(matches!(cmd, Some(AppCommand::ScanLocalDatabase)));
 }
 
 #[test]
 fn left_tab_switch_ignores_stale_updates_list_on_config() {
     let mut app = App::new(Config::default());
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     app.updates.selection.in_beatmap_list = true;
 
     let cmd = app.handle_key(key(KeyCode::Left));
 
-    assert_eq!(app.active_tab, UPDATES_TAB_INDEX);
+    assert_eq!(app.active_tab, Tab::Updates);
     assert!(matches!(cmd, Some(AppCommand::ScanLocalDatabase)));
 }
 
 #[test]
 fn tab_switch_stays_locked_inside_updates_list() {
     let mut app = App::new(Config::default());
-    app.active_tab = UPDATES_TAB_INDEX;
+    app.active_tab = Tab::Updates;
     app.updates.selection.in_collection_list = true;
 
     let cmd = app.handle_key(key(KeyCode::Right));
 
-    assert_eq!(app.active_tab, UPDATES_TAB_INDEX);
+    assert_eq!(app.active_tab, Tab::Updates);
     assert!(cmd.is_none());
 }
 
@@ -55,7 +52,7 @@ fn u_opens_update_modal_only_when_available() {
     use crate::app::HomeField;
     use crate::auto_update::AvailableUpdate;
     let mut app = App::new(Config::default());
-    app.active_tab = HOME_TAB_INDEX;
+    app.active_tab = Tab::Home;
     // Non-text field so `u` fires as a hotkey rather than typed input.
     app.home.focus = HomeField::Video;
 
@@ -76,7 +73,7 @@ fn update_modal_confirm_returns_start_update_and_clears_banner() {
     use crate::app::HomeField;
     use crate::auto_update::AvailableUpdate;
     let mut app = App::new(Config::default());
-    app.active_tab = HOME_TAB_INDEX;
+    app.active_tab = Tab::Home;
     app.home.focus = HomeField::Video;
     app.set_available_update(AvailableUpdate {
         version: "9.9.9".into(),
@@ -96,7 +93,7 @@ fn update_modal_later_closes_and_keeps_availability() {
     use crate::app::HomeField;
     use crate::auto_update::AvailableUpdate;
     let mut app = App::new(Config::default());
-    app.active_tab = HOME_TAB_INDEX;
+    app.active_tab = Tab::Home;
     app.home.focus = HomeField::Video;
     app.set_available_update(AvailableUpdate {
         version: "9.9.9".into(),

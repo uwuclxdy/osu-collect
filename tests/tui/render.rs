@@ -346,8 +346,8 @@ fn updates_footer_in_list_shows_scroll_and_select_hints() {
 
 #[test]
 fn config_footer_omits_space_on_text_input() {
+    use osu_collect::app::Tab;
     use osu_collect::app::{ConfigField, HomeField};
-    use osu_collect::config::constants::CONFIG_TAB_INDEX;
 
     let mut app = make_app();
     // Focus a non-text field so Right switches tabs rather than moving the caret.
@@ -360,7 +360,7 @@ fn config_footer_omits_space_on_text_input() {
         crossterm::event::KeyCode::Right,
         crossterm::event::KeyModifiers::empty(),
     ));
-    assert_eq!(app.active_tab(), CONFIG_TAB_INDEX);
+    assert_eq!(app.active_tab(), Tab::Config);
     app.config.focus = ConfigField::MirrorCustomUrl(0);
 
     let content = render_content(&app, 120, 24);
@@ -500,10 +500,10 @@ fn updates_footer_in_list_has_exactly_five_hints() {
 #[test]
 fn config_footer_non_text_has_four_hints_with_help() {
     use osu_collect::app::ConfigField;
-    use osu_collect::config::constants::CONFIG_TAB_INDEX;
+    use osu_collect::app::Tab;
 
     let mut app = make_app();
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     app.config.focus = ConfigField::DownloadVideo;
     let footer = render_footer_row(&app, 200, 24);
     assert!(footer.contains("↵ toggle"), "must show ↵ toggle");
@@ -523,10 +523,10 @@ fn config_footer_non_text_has_four_hints_with_help() {
 #[test]
 fn config_footer_text_input_shows_edit_not_toggle() {
     use osu_collect::app::ConfigField;
-    use osu_collect::config::constants::CONFIG_TAB_INDEX;
+    use osu_collect::app::Tab;
 
     let mut app = make_app();
-    app.active_tab = CONFIG_TAB_INDEX;
+    app.active_tab = Tab::Config;
     app.config.focus = ConfigField::MirrorCustomUrl(0);
     let footer = render_footer_row(&app, 200, 24);
     assert!(
@@ -560,12 +560,12 @@ fn config_footer_text_input_shows_edit_not_toggle() {
 
 #[test]
 fn download_tab_footer_shows_help_hint() {
-    use osu_collect::app::CollectionPage;
+    use osu_collect::app::{CollectionPage, Tab};
 
     let mut app = make_app();
     let page = CollectionPage::new(1, "test".to_string(), 1);
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
     let footer = render_footer_row(&app, 200, 24);
     assert!(footer.contains('?'), "download tab footer must show ? help");
     assert!(
@@ -593,7 +593,7 @@ fn gauge_label_shows_avg_when_verified() {
 
 #[test]
 fn gauge_bottom_row_shows_tally_left_and_verified_right() {
-    use osu_collect::app::CollectionPage;
+    use osu_collect::app::{CollectionPage, Tab};
     use osu_collect::download::DownloadStage;
 
     let mut app = make_app();
@@ -605,7 +605,7 @@ fn gauge_bottom_row_shows_tally_left_and_verified_right() {
     page.stats.skipped = 2;
     page.stats.failed = 1;
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     let buf = render_to_buffer(&app, 100, 24);
     // Find the single row carrying both the tally and the verified count.
@@ -637,7 +637,7 @@ fn gauge_bottom_row_shows_tally_left_and_verified_right() {
 
 #[test]
 fn gauge_drops_verified_count_when_too_narrow_for_tally() {
-    use osu_collect::app::CollectionPage;
+    use osu_collect::app::{CollectionPage, Tab};
     use osu_collect::download::DownloadStage;
 
     let mut app = make_app();
@@ -649,7 +649,7 @@ fn gauge_drops_verified_count_when_too_narrow_for_tally() {
     page.stats.skipped = 2;
     page.stats.failed = 1;
     app.downloads.push(page);
-    app.active_tab = 3;
+    app.active_tab = Tab::Download(0);
 
     // Narrow: the ~53-col tally fits but tally + " 5/10 verified " do not, so the
     // verified count is dropped and the tally keeps the shared gauge bottom row.
