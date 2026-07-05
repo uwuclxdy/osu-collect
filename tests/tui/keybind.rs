@@ -236,10 +236,75 @@ fn down_moves_field_focus() {
 fn up_from_first_field_wraps_to_last() {
     use osu_collect::app::HomeField;
     let mut app = make_app();
+    // The source strip is the first focusable row; Up from it wraps to the last
+    // field (the download button).
+    app.home.focus = HomeField::Source;
+    app.handle_key(press(KeyCode::Up));
+    assert_eq!(app.home.focus, HomeField::Download);
+}
+
+#[test]
+fn up_from_collection_focuses_source_strip() {
+    use osu_collect::app::HomeField;
+    let mut app = make_app();
+    // Default focus is the collection field; the strip sits directly above it.
     assert_eq!(app.home.focus, HomeField::Collection);
     app.handle_key(press(KeyCode::Up));
-    // should wrap to last field (the download button)
-    assert_eq!(app.home.focus, HomeField::Download);
+    assert_eq!(app.home.focus, HomeField::Source);
+}
+
+#[test]
+fn arrows_cycle_source_when_strip_focused() {
+    use osu_collect::app::{GetMapsSource, HomeField, Tab};
+    let mut app = make_app();
+    app.home.focus = HomeField::Source;
+    assert_eq!(app.home.source, GetMapsSource::Collection);
+    // Right cycles forward, Left back, both wrapping; the tab never changes.
+    app.handle_key(press(KeyCode::Right));
+    assert_eq!(app.home.source, GetMapsSource::Update);
+    assert_eq!(app.active_tab(), Tab::Home);
+    app.handle_key(press(KeyCode::Left));
+    assert_eq!(app.home.source, GetMapsSource::Collection);
+    app.handle_key(press(KeyCode::Left));
+    assert_eq!(app.home.source, GetMapsSource::Search);
+    assert_eq!(app.active_tab(), Tab::Home);
+}
+
+#[test]
+fn arrows_switch_tab_off_the_strip() {
+    use osu_collect::app::{HomeField, Tab};
+    let mut app = make_app();
+    // Off the strip (collection field, not editing), ←/→ still switch tabs.
+    app.home.focus = HomeField::Collection;
+    app.handle_key(press(KeyCode::Right));
+    assert_ne!(app.active_tab(), Tab::Home);
+}
+
+#[test]
+fn placeholder_source_only_exposes_the_strip() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Search;
+    app.home.focus = HomeField::Source;
+    // No other focusable field, so field navigation stays on the strip.
+    app.handle_key(press(KeyCode::Down));
+    assert_eq!(app.home.focus, HomeField::Source);
+    // `s` / `d` have no download button or dir field to jump to here.
+    app.handle_key(press(KeyCode::Char('s')));
+    assert_eq!(app.home.focus, HomeField::Source);
+}
+
+#[test]
+fn switching_source_preserves_collection_input() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.collection.set_value("12345");
+    // Cycle away to a placeholder and back; keep-both keeps the input alive.
+    app.home.focus = HomeField::Source;
+    app.handle_key(press(KeyCode::Right));
+    app.handle_key(press(KeyCode::Left));
+    assert_eq!(app.home.source, GetMapsSource::Collection);
+    assert_eq!(app.home.collection.value, "12345");
 }
 
 // ── character input ───────────────────────────────────────────────────────────

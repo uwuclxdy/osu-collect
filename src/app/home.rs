@@ -20,6 +20,44 @@ pub enum ResolveState {
     Error,
 }
 
+/// Which get-maps source the tab is showing. The strip is the first focusable
+/// row; `←`/`→` cycle it. Only [`Collection`](GetMapsSource::Collection) is
+/// wired today — `Search` and `Update` render placeholder bodies until their
+/// own phases land.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GetMapsSource {
+    Search,
+    Collection,
+    Update,
+}
+
+impl GetMapsSource {
+    /// Strip order, left to right.
+    pub const ALL: [GetMapsSource; 3] = [
+        GetMapsSource::Search,
+        GetMapsSource::Collection,
+        GetMapsSource::Update,
+    ];
+
+    /// Lowercase strip label.
+    pub fn label(self) -> &'static str {
+        match self {
+            GetMapsSource::Search => "search",
+            GetMapsSource::Collection => "collection",
+            GetMapsSource::Update => "update",
+        }
+    }
+
+    /// The next source `forward` (right) or backward (left) along [`ALL`](Self::ALL),
+    /// wrapping at the ends.
+    fn cycled(self, forward: bool) -> Self {
+        let idx = Self::ALL.iter().position(|&s| s == self).unwrap_or(1);
+        let len = Self::ALL.len();
+        let next = if forward { idx + 1 } else { idx + len - 1 };
+        Self::ALL[next % len]
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct InputField {
     pub label: &'static str,
@@ -154,6 +192,9 @@ fn char_to_byte(s: &str, idx: usize) -> usize {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HomeField {
+    /// The source strip (search / collection / update). First focusable row;
+    /// `←`/`→` cycle the active source.
+    Source,
     Collection,
     /// Read-only count of enabled mirrors; `enter` jumps to the Config tab's
     /// mirrors section, which owns all mirror editing (toggle / custom / order).
@@ -166,10 +207,12 @@ pub enum HomeField {
     Download,
 }
 
-/// Focus order on the Get Maps tab. The mirrors summary sits between the
-/// collection field and the download section; mirror editing itself lives on the
-/// Config tab, so no per-mirror rows appear here.
-const HOME_FIELDS: &[HomeField] = &[
+/// Focus order when the collection source is active: the source strip, then the
+/// collection form. The mirrors summary sits between the collection field and
+/// the download section; mirror editing itself lives on the Config tab, so no
+/// per-mirror rows appear here.
+const COLLECTION_FIELDS: &[HomeField] = &[
+    HomeField::Source,
     HomeField::Collection,
     HomeField::Mirrors,
     HomeField::Directory,
@@ -178,6 +221,10 @@ const HOME_FIELDS: &[HomeField] = &[
     HomeField::Video,
     HomeField::Download,
 ];
+
+/// Focus order for a placeholder source (search / update): only the strip is
+/// focusable until that source's real form lands.
+const PLACEHOLDER_FIELDS: &[HomeField] = &[HomeField::Source];
 
 impl HomeField {
     pub fn is_text_input(self) -> bool {
@@ -216,6 +263,10 @@ pub struct HomeTab {
     /// Drives the enabled-mirror count and the pipeline try-order.
     pub mirror_order: Vec<MirrorKind>,
     pub video: bool,
+    /// Active get-maps source. Only `Collection` is wired today; `Search` /
+    /// `Update` render placeholder bodies. Per keep-both, switching never clears
+    /// another source's state (all of it lives on this struct).
+    pub source: GetMapsSource,
     pub focus: HomeField,
     pub message: Option<AppMessage>,
     /// Resolve status shown below the collection URL field.
@@ -299,6 +350,7 @@ impl HomeTab {
             osu_official,
             mirror_order: config.mirror.ordered_builtins(),
             video: config.download.video,
+            source: GetMapsSource::Collection,
             focus: HomeField::Collection,
             message: None,
             collection_resolve: None,
@@ -384,20 +436,36 @@ impl HomeTab {
         self.custom_mirrors = CustomMirrorList::from_templates(&mirror.custom_templates());
     }
 
+    /// Focusable fields for the active source. A placeholder source exposes only
+    /// the strip; the collection source exposes the full form.
+    fn active_fields(&self) -> &'static [HomeField] {
+        match self.source {
+            GetMapsSource::Collection => COLLECTION_FIELDS,
+            GetMapsSource::Search | GetMapsSource::Update => PLACEHOLDER_FIELDS,
+        }
+    }
+
+    /// Cycle the source strip one step (`forward` = right, else left), wrapping.
+    /// Focus stays on the strip, which is present in every source's field list,
+    /// so no re-clamp is needed.
+    pub fn cycle_source(&mut self, forward: bool) {
+        self.source = self.source.cycled(forward);
+    }
+
     pub fn next_field(&mut self) {
-        self.focus = next_field(HOME_FIELDS, self.focus);
+        self.focus = next_field(self.active_fields(), self.focus);
     }
 
     pub fn prev_field(&mut self) {
-        self.focus = prev_field(HOME_FIELDS, self.focus);
+        self.focus = prev_field(self.active_fields(), self.focus);
     }
 
     pub fn first_field(&mut self) {
-        self.focus = first_field(HOME_FIELDS, self.focus);
+        self.focus = first_field(self.active_fields(), self.focus);
     }
 
     pub fn last_field(&mut self) {
-        self.focus = last_field(HOME_FIELDS, self.focus);
+        self.focus = last_field(self.active_fields(), self.focus);
     }
 
     /// Run tab-completion on the directory input field.

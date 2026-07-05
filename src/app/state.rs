@@ -4,7 +4,7 @@ use super::{
     collection_state::{self, CollectionStateFile},
     config::{AuthLoginState, ConfigField, ConfigTab},
     failed_maps,
-    home::{HomeField, HomeTab},
+    home::{GetMapsSource, HomeField, HomeTab},
     ignored_maps,
     library::LibraryState,
     login::{LoginField, LoginPhase, LoginTab},
@@ -1489,11 +1489,14 @@ impl App {
                 }
                 return self.handle_quit_key();
             }
-            // In a focused text field, ←/→ move the caret instead of switching
+            // In a focused text field, ←/→ move the caret. On the get-maps source
+            // strip they cycle the active source. Everywhere else they switch
             // tabs. Home/End jump to the field edges (text-field only).
             KeyCode::Left => {
                 if typing {
                     self.caret_left_focused();
+                } else if self.active_tab() == Tab::Home && self.home.focus == HomeField::Source {
+                    self.home.cycle_source(false);
                 } else if !self.updates_list_open()
                     && let Some(cmd) = self.prev_tab()
                 {
@@ -1503,6 +1506,8 @@ impl App {
             KeyCode::Right => {
                 if typing {
                     self.caret_right_focused();
+                } else if self.active_tab() == Tab::Home && self.home.focus == HomeField::Source {
+                    self.home.cycle_source(true);
                 } else if !self.updates_list_open()
                     && let Some(cmd) = self.next_tab()
                 {
@@ -1782,11 +1787,12 @@ impl App {
                         }
                     } else if ch == 'r' {
                         return Some(AppCommand::ProbeMirrors);
-                    } else if ch == 'd' {
+                    } else if ch == 'd' && self.home.source == GetMapsSource::Collection {
                         return Some(AppCommand::FocusOutputDir);
-                    } else if ch == 's' {
+                    } else if ch == 's' && self.home.source == GetMapsSource::Collection {
                         // Jump straight to the download button — no arrowing down
-                        // from the just-pasted collection field.
+                        // from the just-pasted collection field. Only the
+                        // collection source has a download button to jump to.
                         self.home.focus = HomeField::Download;
                         self.editing = false;
                     }

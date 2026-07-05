@@ -1,4 +1,4 @@
-use crate::app::{HomeField, HomeTab, ResolveState};
+use crate::app::{GetMapsSource, HomeField, HomeTab, ResolveState};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -50,6 +50,29 @@ pub fn render(frame: &mut Frame, area: Rect, form: &HomeTab, editing: bool) {
 fn render_compact(frame: &mut Frame, area: Rect, form: &HomeTab, editing: bool) {
     let focus = form.focus;
     let mut items = widgets::FormItems::new(focus);
+
+    items.push_focusable(
+        HomeField::Source,
+        source_strip_item(form.source, focus == HomeField::Source),
+    );
+
+    if form.source != GetMapsSource::Collection {
+        items.push(placeholder_body(form.source));
+        let (items, focused_index) = items.into_parts();
+        widgets::render_scrollable_panel(
+            frame,
+            area,
+            PANEL_TITLE,
+            items,
+            focused_index,
+            true,
+            None,
+            true,
+            true,
+            &form.list_offset,
+        );
+        return;
+    }
 
     items.push_focusable(
         HomeField::Collection,
@@ -144,6 +167,33 @@ fn directory_hint(form: &HomeTab) -> String {
 fn render_content(frame: &mut Frame, area: Rect, form: &HomeTab, editing: bool) {
     let focus = form.focus;
     let mut items = widgets::FormItems::new(focus);
+
+    // Source strip is the first focusable row on every source.
+    items.push_focusable(
+        HomeField::Source,
+        source_strip_item(form.source, focus == HomeField::Source),
+    );
+    items.push(widgets::spacer());
+
+    // Search / update render a placeholder until their real forms land; only the
+    // collection source has a functional body today.
+    if form.source != GetMapsSource::Collection {
+        items.push(placeholder_body(form.source));
+        let (items, focused_index) = items.into_parts();
+        widgets::render_scrollable_panel(
+            frame,
+            area,
+            PANEL_TITLE,
+            items,
+            focused_index,
+            true,
+            None,
+            true,
+            true,
+            &form.list_offset,
+        );
+        return;
+    }
 
     let active_section = home_section(focus);
     items.push(widgets::section_header(
@@ -300,11 +350,52 @@ fn mirror_summary_item(
 fn home_section(field: HomeField) -> &'static str {
     use HomeField::*;
     match field {
+        // The source strip sits above every section header, so focusing it
+        // lights none of them.
+        Source => SECTION_NONE,
         Collection => SECTION_COLLECTION,
         Mirrors => SECTION_MIRRORS,
         Threads | AutoOverwrite | Video | Directory => SECTION_DOWNLOAD,
         Download => SECTION_NONE,
     }
+}
+
+/// The source strip: `‹active›  other  other`, the active source bracketed in
+/// accent, the rest dim. The first focusable row on the Get Maps tab; `←`/`→`
+/// cycle it while focused.
+fn source_strip_item(active: GetMapsSource, focused: bool) -> ListItem<'static> {
+    let dim = Style::default().fg(text_dim());
+    let mut spans = vec![widgets::focus_span(focused)];
+    for (i, source) in GetMapsSource::ALL.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled("  ", dim));
+        }
+        if *source == active {
+            spans.push(Span::styled(
+                format!("‹{}›", source.label()),
+                Style::default().fg(accent()).bold(),
+            ));
+        } else {
+            spans.push(Span::styled(source.label(), dim));
+        }
+    }
+    ListItem::new(Line::from(spans))
+}
+
+/// Placeholder body for a not-yet-wired source. Search lands in a later update;
+/// the update source folds the existing Updates tab in, so it points there for
+/// now.
+fn placeholder_body(source: GetMapsSource) -> ListItem<'static> {
+    let msg = match source {
+        GetMapsSource::Search => "search lands in a later update",
+        GetMapsSource::Update => "use the updates tab for now",
+        // The collection source renders its real form, never this placeholder.
+        GetMapsSource::Collection => "",
+    };
+    ListItem::new(Line::from(Span::styled(
+        msg.to_string(),
+        Style::default().fg(text_faint()),
+    )))
 }
 
 const RESOLVE_PREFIX: &str = "  └ ";

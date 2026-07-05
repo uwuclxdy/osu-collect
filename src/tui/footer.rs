@@ -41,6 +41,7 @@ const HINT_MOVE: &str = "↑↓ move";
 const HINT_SCROLL: &str = "↑↓ scroll";
 /// ⇧↑↓ reorders the focused built-in mirror row in the Config try-order.
 const HINT_REORDER: &str = "⇧↑↓ reorder";
+const HINT_SOURCE: &str = "←→ switch source";
 const HINT_ENTER_TOGGLE: &str = "↵ toggle";
 const HINT_ENTER_OPEN: &str = "↵ open";
 const HINT_ENTER_CONFIRM: &str = "↵ confirm";
@@ -244,6 +245,7 @@ fn join(segments: &[&str]) -> String {
 fn home_hints(form: &HomeTab) -> Vec<&'static str> {
     let mut segments = vec![HINT_MOVE];
     match form.focus {
+        HomeField::Source => segments.push(HINT_SOURCE),
         HomeField::Download => segments.push(HINT_ENTER_DOWNLOAD),
         HomeField::Mirrors => segments.push(HINT_ENTER_OPEN),
         f if f.is_stepper() => segments.push(HINT_PLUS_MINUS),

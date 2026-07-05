@@ -23,7 +23,7 @@ pub use banner::{Banner, BannerRecency, system_banners};
 pub use collection::{ActiveDownloadLine, CollectionPage};
 pub use config::{AuthLoginState, ConfigField, ConfigTab};
 pub use custom_mirrors::CustomMirrorList;
-pub use home::{HomeField, HomeTab, InputField, ResolveState};
+pub use home::{GetMapsSource, HomeField, HomeTab, InputField, ResolveState};
 pub use library::LibraryState;
 pub use login::{LoginField, LoginPhase, LoginTab};
 pub use runtime::run as run_app;
