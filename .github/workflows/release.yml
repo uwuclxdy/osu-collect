@@ -5,6 +5,10 @@ on:
     tags:
       - 'v*'
 
+# create-release, the build legs, and checksums all attach to the GitHub Release.
+permissions:
+  contents: write
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -12,154 +16,96 @@ jobs:
   # Release page exists the moment the tag lands; notes are NOT auto-generated
   # (the release script writes them), assets attach when the builds finish.
   create-release:
+    name: Create release
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
+      - name: Validate tag is semver
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag '${GITHUB_REF_NAME}' is not vX.Y.Z"; exit 1
+          fi
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
 
-  build-linux:
-    runs-on: ubuntu-latest
+  # Each target builds on its NATIVE runner so realm-cpp (vendored C++ submodule)
+  # links against the platform's own toolchain — windows is MSVC, no cross-build.
+  build:
+    name: Build ${{ matrix.asset_name }}
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash  # windows-latest ships Git Bash; keeps cp + forward-slash paths uniform
+    env:
+      OSU_CLIENT_ID: ${{ secrets.OSU_CLIENT_ID }}
+      OSU_CLIENT_SECRET: ${{ secrets.OSU_CLIENT_SECRET }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            asset_name: osu-collect-linux-x64
+            ext: ""
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            asset_name: osu-collect-windows-x64
+            ext: .exe
+          - target: aarch64-apple-darwin
+            os: macos-14
+            asset_name: osu-collect-macos-arm64
+            ext: ""
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-unknown-linux-gnu
+          targets: ${{ matrix.target }}
 
-      - name: Install dependencies
+      - name: Install native deps (Linux)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake build-essential zlib1g-dev libssl-dev
 
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Build for Linux
-        env:
-          OSU_CLIENT_ID: ${{ secrets.OSU_CLIENT_ID }}
-          OSU_CLIENT_SECRET: ${{ secrets.OSU_CLIENT_SECRET }}
-        run: cargo build --release --target x86_64-unknown-linux-gnu
-
-      - name: Prepare artifact
-        run: |
-          mkdir -p release
-          cp target/x86_64-unknown-linux-gnu/release/osu-collect release/osu-collect-linux-x64
-          chmod +x release/osu-collect-linux-x64
-          cd release && sha256sum osu-collect-linux-x64 > osu-collect-linux-x64.sha256
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: linux-binary
-          if-no-files-found: error
-          path: |
-            release/osu-collect-linux-x64
-            release/osu-collect-linux-x64.sha256
-
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Build for Windows
-        env:
-          OSU_CLIENT_ID: ${{ secrets.OSU_CLIENT_ID }}
-          OSU_CLIENT_SECRET: ${{ secrets.OSU_CLIENT_SECRET }}
-        run: cargo build --release --target x86_64-pc-windows-msvc
-
-      - name: Prepare artifact
-        run: |
-          New-Item -ItemType Directory -Force -Path release
-          Copy-Item target/x86_64-pc-windows-msvc/release/osu-collect.exe release/osu-collect-windows-x64.exe
-          Get-FileHash release/osu-collect-windows-x64.exe -Algorithm SHA256 |
-            ForEach-Object { "$($_.Hash.ToLower())  osu-collect-windows-x64.exe" } |
-            Out-File -Encoding ascii release/osu-collect-windows-x64.exe.sha256
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-binary
-          if-no-files-found: error
-          path: |
-            release/osu-collect-windows-x64.exe
-            release/osu-collect-windows-x64.exe.sha256
-
-  build-macos:
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-
-      - name: Install dependencies
+      - name: Install native deps (macOS)
+        if: matrix.os == 'macos-14'
         run: brew install cmake
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build for macOS (arm64)
-        env:
-          OSU_CLIENT_ID: ${{ secrets.OSU_CLIENT_ID }}
-          OSU_CLIENT_SECRET: ${{ secrets.OSU_CLIENT_SECRET }}
-        run: cargo build --release --target aarch64-apple-darwin
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Prepare artifact
-        run: |
-          mkdir -p release
-          cp target/aarch64-apple-darwin/release/osu-collect release/osu-collect-macos-arm64
-          chmod +x release/osu-collect-macos-arm64
-          cd release && shasum -a 256 osu-collect-macos-arm64 > osu-collect-macos-arm64.sha256
+      - name: Prepare asset
+        run: cp "target/${{ matrix.target }}/release/osu-collect${{ matrix.ext }}" "${{ matrix.asset_name }}${{ matrix.ext }}"
 
-      - name: Upload artifact
+      - name: Upload binary to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset_name }}${{ matrix.ext }}
+
+      - name: Upload artifact for checksum job
         uses: actions/upload-artifact@v7
         with:
-          name: macos-binary
+          name: ${{ matrix.asset_name }}${{ matrix.ext }}
+          path: ${{ matrix.asset_name }}${{ matrix.ext }}
           if-no-files-found: error
-          path: |
-            release/osu-collect-macos-arm64
-            release/osu-collect-macos-arm64.sha256
 
-  release:
-    needs: [build-linux, build-windows, build-macos, create-release]
+  checksums:
+    name: Checksums
+    needs: [build]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - name: Download Linux artifact
+      - name: Download all artifacts
         uses: actions/download-artifact@v8
         with:
-          name: linux-binary
           path: release
-
-      - name: Download Windows artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: windows-binary
-          path: release
-
-      - name: Download macOS artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: macos-binary
-          path: release
+          merge-multiple: true
 
       # The in-binary updater and install scripts verify against GitHub's inline
       # per-asset `digest`, not these `.sha256`/SHA256SUMS files. The sidecars are
@@ -167,25 +113,22 @@ jobs:
       # only know how to fetch the sidecar, so dropping it here would strand them
       # (they could no longer self-update to this release). Remove the sidecar
       # generation + attachment once pre-digest installs are negligible.
-      - name: Generate SHA256SUMS
+      - name: Generate checksums
         run: |
-          cat release/osu-collect-linux-x64.sha256 \
-              release/osu-collect-windows-x64.exe.sha256 \
-              release/osu-collect-macos-arm64.sha256 \
-            > release/SHA256SUMS
+          cd release
+          for f in osu-collect-linux-x64 osu-collect-windows-x64.exe osu-collect-macos-arm64; do
+            sha256sum "$f" > "$f.sha256"
+          done
+          cat osu-collect-linux-x64.sha256 \
+              osu-collect-windows-x64.exe.sha256 \
+              osu-collect-macos-arm64.sha256 \
+            > SHA256SUMS
 
-      - name: Create Release
+      - name: Upload checksums to release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release/osu-collect-linux-x64
             release/osu-collect-linux-x64.sha256
-            release/osu-collect-windows-x64.exe
             release/osu-collect-windows-x64.exe.sha256
-            release/osu-collect-macos-arm64
             release/osu-collect-macos-arm64.sha256
             release/SHA256SUMS
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
