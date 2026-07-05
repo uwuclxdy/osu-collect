@@ -1,5 +1,5 @@
 use super::super::{
-    App, collection_state, failed_maps, ignored_maps,
+    App, Toast, collection_state, failed_maps, ignored_maps,
     messages::{clear_app_message, set_loading_message},
     snapshots,
     updates::{MissingBeatmapset, MissingStatus, ScanStatus, extract_collection_id},
@@ -144,14 +144,22 @@ pub(super) fn handle_updates_event(
             app.updates.set_failed_beatmapset_count(hidden_failed_count);
             app.updates.scan.scan_status = ScanStatus::Ready;
 
-            let msg = build_scan_summary(
+            let (title, detail) = build_scan_summary(
                 count,
                 previously_deleted_count,
                 manually_added_count,
                 hidden_failed_count,
             );
             clear_app_message(&mut app.updates.message);
-            app.toast_info(msg.trim());
+            let mut toast = if count == 0 {
+                Toast::success(title)
+            } else {
+                Toast::info(title)
+            };
+            if let Some(detail) = detail {
+                toast = toast.with_detail(detail);
+            }
+            app.push_toast(toast);
 
             for (collection_id, ids) in collection_seen {
                 let installed_ids: Vec<u32> = ids
@@ -192,11 +200,15 @@ pub(super) fn handle_updates_event(
                 return;
             }
             clear_app_message(&mut app.updates.message);
-            app.toast_info(format!(
-                "{} known bad maps now downloadable; {} still unavailable",
-                available.len(),
-                unavailable.len()
-            ));
+            let mut toast = if available.is_empty() {
+                Toast::info("no bad maps recovered")
+            } else {
+                Toast::success(format!("{} maps now downloadable", available.len()))
+            };
+            if !unavailable.is_empty() {
+                toast = toast.with_detail(format!("{} still unavailable", unavailable.len()));
+            }
+            app.push_toast(toast);
             app.updates.scan.scan_generation = app.updates.scan.scan_generation.wrapping_add(1);
             spawn_scan_task(app, updates_tx.clone());
         }
@@ -206,27 +218,34 @@ pub(super) fn handle_updates_event(
     }
 }
 
+/// Post-scan toast copy: a short title (the missing count) plus an optional
+/// detail line carrying the secondary counts, ` · `-separated per the toast
+/// convention. The "re-select to download" hint for previously-deleted sets
+/// lives on the missing list, not in this ephemeral toast.
 fn build_scan_summary(
     count: usize,
     previously_deleted: usize,
     manually_added: usize,
     hidden_failed: usize,
-) -> String {
-    let mut msg = format!(" {count} missing beatmapsets");
+) -> (String, Option<String>) {
+    let title = if count == 0 {
+        "no missing beatmapsets".to_string()
+    } else {
+        format!("{count} missing beatmapsets")
+    };
+
+    let mut parts = Vec::new();
     if previously_deleted > 0 {
-        msg.push_str(&format!(
-            " ({previously_deleted} previously deleted — re-select to download)"
-        ));
+        parts.push(format!("{previously_deleted} previously deleted"));
     }
     if manually_added > 0 {
-        msg.push_str(&format!(
-            "; {manually_added} added manually since last scan"
-        ));
+        parts.push(format!("{manually_added} added since last scan"));
     }
     if hidden_failed > 0 {
-        msg.push_str(&format!("; {hidden_failed} known bad maps"));
+        parts.push(format!("{hidden_failed} known bad"));
     }
-    msg
+    let detail = (!parts.is_empty()).then(|| parts.join(" · "));
+    (title, detail)
 }
 
 pub(super) fn spawn_scan_task(app: &mut App, tx: mpsc::UnboundedSender<UpdatesEvent>) {

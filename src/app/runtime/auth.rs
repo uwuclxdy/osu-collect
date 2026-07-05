@@ -40,7 +40,7 @@ pub(super) fn handle_auth_event(event: AuthEvent, app: &mut App) {
                     login.enter_verification();
                 } else {
                     app.push_toast(
-                        Toast::info("verification needed")
+                        Toast::warning("verification needed")
                             .with_detail("enter the code osu! emailed you"),
                     );
                 }

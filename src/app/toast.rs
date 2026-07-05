@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 /// Maximum simultaneously-stacked toasts. A later arrival drops the oldest.
 const MAX_TOASTS: usize = 3;
 /// Auto-dismiss dwell for non-error toasts.
-const DWELL_DEFAULT: Duration = Duration::from_secs(3);
+const DWELL_DEFAULT: Duration = Duration::from_secs(5);
 /// Auto-dismiss dwell for `Danger` toasts — a failure lingers long enough to read.
 const DWELL_DANGER: Duration = Duration::from_secs(6);
 
@@ -26,7 +26,7 @@ pub enum ToastLevel {
 /// How long a toast stays on screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ToastLife {
-    /// Auto-dismiss after the level's dwell (3 s; 6 s for `Danger`).
+    /// Auto-dismiss after the level's dwell (5 s; 6 s for `Danger`).
     Auto,
     /// Stays until [`Toasts::replace_tagged`] swaps it out — for an operation
     /// with no known end time (the self-update download).

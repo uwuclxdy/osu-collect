@@ -305,7 +305,7 @@ impl App {
             && self.config.focus == ConfigField::MirrorOsuOfficial;
         if focused_osu_official && !self.osu_official_unlocked() {
             self.push_toast(
-                Toast::info("log in to enable the osu! official mirror")
+                Toast::warning("log in to enable the osu! official mirror")
                     .with_detail("open login from the config auth chip"),
             );
             return true;
@@ -706,7 +706,7 @@ impl App {
             )
         };
         if username.is_empty() || password.is_empty() {
-            self.toast_err("enter your osu! username and password");
+            self.toast_warn("enter your osu! username and password");
             return None;
         }
         // Wipe the password from the field the moment it is handed off, so the
@@ -722,7 +722,7 @@ impl App {
     fn request_verification(&mut self) -> Option<AppCommand> {
         let code = self.login.as_ref()?.code.value.trim().to_string();
         if code.is_empty() {
-            self.toast_err("enter the verification code");
+            self.toast_warn("enter the verification code");
             return None;
         }
         self.config.set_loading("verifying…");
@@ -823,7 +823,7 @@ impl App {
         }
         let count = ids.len();
         self.updates.hide_missing(&ids);
-        self.toast_info(format!(
+        self.toast_ok(format!(
             "marked {count} beatmapset{} installed",
             if count == 1 { "" } else { "s" }
         ));
@@ -1530,7 +1530,7 @@ impl App {
                     && self.home.focus == HomeField::Directory
                 {
                     if let Some(candidates) = self.home.tab_complete_directory() {
-                        self.toast_info(candidates);
+                        self.push_toast(Toast::info("directory matches").with_detail(candidates));
                     }
                 } else if let Some(cmd) = self.next_tab() {
                     return Some(cmd);
@@ -1943,6 +1943,12 @@ impl App {
         self.toasts.push(Toast::info(message));
     }
 
+    /// Push a needs-attention toast (top-right, `WARNING`) — validation prompts
+    /// and soft blocks, distinct from a failed op (`toast_err`).
+    pub fn toast_warn(&mut self, message: impl Into<String>) {
+        self.toasts.push(Toast::warning(message));
+    }
+
     /// Push an error toast (top-right, `DANGER`, longer dwell).
     pub fn toast_err(&mut self, message: impl Into<String>) {
         self.toasts.push(Toast::danger(message));
@@ -2235,7 +2241,10 @@ impl App {
                     // user presses it with nothing but 404s (NotFound is never
                     // retryable), say why instead of silently doing nothing.
                     if has_failed {
-                        self.toast_info("nothing to retry — failed maps are 404 / not found");
+                        self.push_toast(
+                            Toast::info("nothing to retry")
+                                .with_detail("failed maps are 404 / not found"),
+                        );
                     }
                     return None;
                 }

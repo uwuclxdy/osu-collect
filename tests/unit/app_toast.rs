@@ -38,7 +38,7 @@ fn clear_expired_drops_only_aged_auto_toasts() {
     toasts.push(Toast::success("stale"));
     // Age the second toast past the default dwell.
     if let Some(stale) = toasts.items.get_mut(1) {
-        stale.created_at = Instant::now() - Duration::from_secs(4);
+        stale.created_at = Instant::now() - Duration::from_secs(6);
     }
 
     toasts.clear_expired();
@@ -49,8 +49,9 @@ fn clear_expired_drops_only_aged_auto_toasts() {
 #[test]
 fn danger_outlives_default_dwell() {
     let mut danger = Toast::danger("boom");
-    danger.created_at = Instant::now() - Duration::from_secs(4);
-    assert!(!danger.is_expired(), "danger dwell is 6 s, not 3 s");
+    // 5.5 s: past the 5 s default dwell but shy of danger's 6 s.
+    danger.created_at = Instant::now() - Duration::from_millis(5500);
+    assert!(!danger.is_expired(), "danger dwell is 6 s, not 5 s");
 
     danger.created_at = Instant::now() - Duration::from_secs(7);
     assert!(danger.is_expired());
