@@ -25,7 +25,7 @@ jobs:
           if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::tag '${GITHUB_REF_NAME}' is not vX.Y.Z"; exit 1
           fi
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: false
 
@@ -58,7 +58,7 @@ jobs:
             asset_name: osu-collect-macos-arm64
             ext: ""
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -85,7 +85,7 @@ jobs:
         run: cp "target/${{ matrix.target }}/release/osu-collect${{ matrix.ext }}" "${{ matrix.asset_name }}${{ matrix.ext }}"
 
       - name: Upload binary to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: ${{ matrix.asset_name }}${{ matrix.ext }}
 
@@ -125,7 +125,7 @@ jobs:
             > SHA256SUMS
 
       - name: Upload checksums to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             release/osu-collect-linux-x64.sha256

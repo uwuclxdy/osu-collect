@@ -28,7 +28,7 @@ jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -38,7 +38,7 @@ jobs:
   deny:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check advisories licenses bans sources
@@ -46,7 +46,7 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: taiki-e/install-action@cargo-audit
       - name: cargo audit
         run: cargo audit
@@ -57,7 +57,7 @@ jobs:
       OSU_CLIENT_ID: ${{ secrets.OSU_CLIENT_ID }}
       OSU_CLIENT_SECRET: ${{ secrets.OSU_CLIENT_SECRET }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -109,7 +109,7 @@ jobs:
       OSU_CLIENT_ID: ${{ secrets.OSU_CLIENT_ID }}
       OSU_CLIENT_SECRET: ${{ secrets.OSU_CLIENT_SECRET }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -154,7 +154,7 @@ jobs:
       OSU_CLIENT_ID: ${{ secrets.OSU_CLIENT_ID }}
       OSU_CLIENT_SECRET: ${{ secrets.OSU_CLIENT_SECRET }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
