@@ -36,7 +36,7 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
 tracing-appender = "0.2.5"
 regex-lite = "0.1.9"
 whoami = "2.1.2"
-cxx = "1.0.194"
+cxx = "1.0.196"
 fs2 = "0.4.3"
 smallvec = "1.15.2"
 sha2 = "0.11.0"
