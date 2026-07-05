@@ -17,7 +17,7 @@ pub mod snapshots;
 pub mod state;
 pub mod tab;
 pub mod toast;
-pub mod updates;
+pub mod update_source;
 
 pub use banner::{Banner, BannerRecency, system_banners};
 pub use collection::{ActiveDownloadLine, CollectionPage};
@@ -30,7 +30,7 @@ pub use runtime::run as run_app;
 pub use state::{App, AppCommand, UpdateIndicator};
 pub use tab::Tab;
 pub use toast::{Toast, ToastLevel, ToastTag, Toasts};
-pub use updates::{UpdatesField, UpdatesTab};
+pub use update_source::{UpdateField, UpdateSource};
 
 pub(crate) fn next_field<T: Copy + PartialEq>(fields: &[T], current: T) -> T {
     adjacent_field(fields, current, 1)

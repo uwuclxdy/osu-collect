@@ -11,7 +11,7 @@ use super::{
     snapshots,
     tab::Tab,
     toast::{Toast, Toasts},
-    updates::{UpdatesAction, UpdatesField, UpdatesTab, extract_collection_id},
+    update_source::{UpdateAction, UpdateField, extract_collection_id},
 };
 use crate::auto_update::AvailableUpdate;
 use crate::{
@@ -62,9 +62,8 @@ pub struct App {
     pub home: HomeTab,
     /// App-global osu! client + library path. Read by the header chip, the
     /// download pipeline, and the library scan; edited through the Updates
-    /// panel's path field. Hoisted off `updates` so one value backs all readers.
+    /// panel's path field. Hoisted off `update` so one value backs all readers.
     pub library: LibraryState,
-    pub updates: UpdatesTab,
     pub config: ConfigTab,
     /// The login panel. `Some` only while the login split is open on the Config
     /// tab (opened from the auth chip, closed with `esc`/`q` or a tab switch).
@@ -265,7 +264,6 @@ impl App {
         Self {
             home: HomeTab::new(&config),
             library: LibraryState::from_config(&config),
-            updates: UpdatesTab::new(),
             config: ConfigTab::new(&config),
             login: None,
             downloads: Vec::new(),
@@ -420,8 +418,9 @@ impl App {
     }
 
     fn check_auto_scan(&mut self) -> Option<AppCommand> {
-        if self.active_tab == Tab::Updates && self.updates.needs_initial_scan() {
-            self.updates.scan.scan_generation = self.updates.scan.scan_generation.wrapping_add(1);
+        if self.active_tab == Tab::Updates && self.home.update.needs_initial_scan() {
+            self.home.update.scan.scan_generation =
+                self.home.update.scan.scan_generation.wrapping_add(1);
             Some(AppCommand::ScanLocalDatabase)
         } else if self.active_tab == Tab::Home && self.home.mirror_latency.is_empty() {
             // Probe once when results are missing; existing pings persist across
@@ -442,7 +441,8 @@ impl App {
 
     fn updates_list_open(&self) -> bool {
         self.active_tab() == Tab::Updates
-            && (self.updates.selection.in_collection_list || self.updates.selection.in_beatmap_list)
+            && (self.home.update.selection.in_collection_list
+                || self.home.update.selection.in_beatmap_list)
     }
 
     /// Closes the topmost open modal. Returns `true` if one was closed.
@@ -516,7 +516,7 @@ impl App {
         {
             self.apply_config_change();
         } else if self.active_tab() == Tab::Updates
-            && self.updates.selection.focus == UpdatesField::OsuPath
+            && self.home.update.selection.focus == UpdateField::OsuPath
         {
             self.persist_osu_path_inputs();
         }
@@ -531,7 +531,7 @@ impl App {
         }
         match self.active_tab() {
             Tab::Home => self.home.next_field(),
-            Tab::Updates => self.updates.next_field(),
+            Tab::Updates => self.home.update.next_field(),
             Tab::Config => self.config.next_field(),
             _ => {}
         }
@@ -546,7 +546,7 @@ impl App {
         }
         match self.active_tab() {
             Tab::Home => self.home.prev_field(),
-            Tab::Updates => self.updates.prev_field(),
+            Tab::Updates => self.home.update.prev_field(),
             Tab::Config => self.config.prev_field(),
             _ => {}
         }
@@ -561,7 +561,7 @@ impl App {
         }
         match self.active_tab() {
             Tab::Home => self.home.first_field(),
-            Tab::Updates => self.updates.first_field(),
+            Tab::Updates => self.home.update.first_field(),
             Tab::Config => self.config.first_field(),
             _ => {}
         }
@@ -576,7 +576,7 @@ impl App {
         }
         match self.active_tab() {
             Tab::Home => self.home.last_field(),
-            Tab::Updates => self.updates.last_field(),
+            Tab::Updates => self.home.update.last_field(),
             Tab::Config => self.config.last_field(),
             _ => {}
         }
@@ -586,8 +586,8 @@ impl App {
     /// the first row, a download page to the top, else field focus to the first
     /// field. Mirrors the per-tab branching of the `Up`/`Down` handler.
     fn jump_top(&mut self) {
-        if self.active_tab() == Tab::Updates && self.updates.list_open() {
-            self.updates.scroll_to_edge(true);
+        if self.active_tab() == Tab::Updates && self.home.update.list_open() {
+            self.home.update.scroll_to_edge(true);
         } else if let Some(page) = self.active_download_page_mut() {
             page.jump_top();
         } else {
@@ -597,8 +597,8 @@ impl App {
 
     /// `G` / End: jump the active surface to its bottom.
     fn jump_bottom(&mut self) {
-        if self.active_tab() == Tab::Updates && self.updates.list_open() {
-            self.updates.scroll_to_edge(false);
+        if self.active_tab() == Tab::Updates && self.home.update.list_open() {
+            self.home.update.scroll_to_edge(false);
         } else if let Some(page) = self.active_download_page_mut() {
             page.jump_bottom();
         } else {
@@ -609,8 +609,8 @@ impl App {
     /// `Ctrl+u` / PageUp: page the active list up. Forms have no page, so they
     /// jump to the first field.
     fn page_up(&mut self) {
-        if self.active_tab() == Tab::Updates && self.updates.list_open() {
-            self.updates.page_up();
+        if self.active_tab() == Tab::Updates && self.home.update.list_open() {
+            self.home.update.page_up();
         } else if let Some(page) = self.active_download_page_mut() {
             page.page_up();
         } else {
@@ -620,8 +620,8 @@ impl App {
 
     /// `Ctrl+d` / PageDown: page the active list down.
     fn page_down(&mut self) {
-        if self.active_tab() == Tab::Updates && self.updates.list_open() {
-            self.updates.page_down();
+        if self.active_tab() == Tab::Updates && self.home.update.list_open() {
+            self.home.update.page_down();
         } else if let Some(page) = self.active_download_page_mut() {
             page.page_down();
         } else {
@@ -825,7 +825,7 @@ impl App {
             ignored_maps::record_ignored(&path, ids.iter().copied());
         }
         let count = ids.len();
-        self.updates.hide_missing(&ids);
+        self.home.update.hide_missing(&ids);
         self.toast_ok(format!(
             "marked {count} beatmapset{} installed",
             if count == 1 { "" } else { "s" }
@@ -955,14 +955,15 @@ impl App {
     }
 
     pub fn request_selective_download(&mut self) -> Option<(DownloadId, SelectiveDownloadRequest)> {
-        let beatmapset_ids = self.updates.selected_beatmapset_ids();
+        let beatmapset_ids = self.home.update.selected_beatmapset_ids();
         if beatmapset_ids.is_empty() {
             self.report_scan_error("no beatmaps selected for download");
             return None;
         }
 
         let collection_ids: Vec<u32> = self
-            .updates
+            .home
+            .update
             .selected_collection_ids()
             .into_iter()
             .filter_map(|id| u32::try_from(id).ok())
@@ -1026,8 +1027,8 @@ impl App {
 
         let current_snapshots = snapshots::current_snapshots(
             self.library.client_type,
-            &self.updates.scan.local_collections_raw,
-            self.updates.scan.local_beatmapsets.iter(),
+            &self.home.update.scan.local_collections_raw,
+            self.home.update.scan.local_beatmapsets.iter(),
             |name| extract_collection_id(name).and_then(|id| u32::try_from(id).ok()),
         );
         let snapshots: Vec<_> = collection_ids
@@ -1044,7 +1045,8 @@ impl App {
                     .map(|snapshot| snapshot.name.clone())
                     .unwrap_or_default(),
                 beatmapset_ids: self
-                    .updates
+                    .home
+                    .update
                     .selection
                     .cached_missing_sets
                     .iter()
@@ -1110,7 +1112,7 @@ impl App {
         }
         match self.active_tab() {
             Tab::Home => self.home.focus.is_text_input(),
-            Tab::Updates => self.updates.osu_path_editable(),
+            Tab::Updates => self.home.update.osu_path_editable(),
             Tab::Config => self.config.focus.is_text_input(),
             _ => false,
         }
@@ -1126,7 +1128,7 @@ impl App {
         }
         match self.active_tab() {
             Tab::Home => self.home.caret_left(),
-            Tab::Updates if self.updates.osu_path_editable() => self.library.caret_left(),
+            Tab::Updates if self.home.update.osu_path_editable() => self.library.caret_left(),
             Tab::Config => self.config.caret_left(),
             _ => {}
         }
@@ -1139,7 +1141,7 @@ impl App {
         }
         match self.active_tab() {
             Tab::Home => self.home.caret_right(),
-            Tab::Updates if self.updates.osu_path_editable() => self.library.caret_right(),
+            Tab::Updates if self.home.update.osu_path_editable() => self.library.caret_right(),
             Tab::Config => self.config.caret_right(),
             _ => {}
         }
@@ -1152,7 +1154,7 @@ impl App {
         }
         match self.active_tab() {
             Tab::Home => self.home.caret_home(),
-            Tab::Updates if self.updates.osu_path_editable() => self.library.caret_home(),
+            Tab::Updates if self.home.update.osu_path_editable() => self.library.caret_home(),
             Tab::Config => self.config.caret_home(),
             _ => {}
         }
@@ -1165,7 +1167,7 @@ impl App {
         }
         match self.active_tab() {
             Tab::Home => self.home.caret_end(),
-            Tab::Updates if self.updates.osu_path_editable() => self.library.caret_end(),
+            Tab::Updates if self.home.update.osu_path_editable() => self.library.caret_end(),
             Tab::Config => self.config.caret_end(),
             _ => {}
         }
@@ -1180,7 +1182,7 @@ impl App {
         }
         match self.active_tab() {
             Tab::Home => self.mutate_collection_then_resolve(HomeTab::delete_forward),
-            Tab::Updates if self.updates.osu_path_editable() => {
+            Tab::Updates if self.home.update.osu_path_editable() => {
                 self.library.delete_forward();
                 None
             }
@@ -1202,7 +1204,7 @@ impl App {
         }
         match self.active_tab() {
             Tab::Home => self.mutate_collection_then_resolve(HomeTab::backspace_word),
-            Tab::Updates if self.updates.osu_path_editable() => {
+            Tab::Updates if self.home.update.osu_path_editable() => {
                 self.library.backspace_word();
                 None
             }
@@ -1479,7 +1481,7 @@ impl App {
                     self.close_login();
                     return None;
                 }
-                if self.active_tab() == Tab::Updates && self.updates.handle_escape().is_some() {
+                if self.active_tab() == Tab::Updates && self.home.update.handle_escape().is_some() {
                     return None;
                 }
                 // esc is purely "back": it cancels an armed quit prompt and backs
@@ -1565,10 +1567,10 @@ impl App {
             }
             KeyCode::Up => {
                 if self.active_tab() == Tab::Updates
-                    && (self.updates.selection.in_collection_list
-                        || self.updates.selection.in_beatmap_list)
+                    && (self.home.update.selection.in_collection_list
+                        || self.home.update.selection.in_beatmap_list)
                 {
-                    self.updates.scroll_up();
+                    self.home.update.scroll_up();
                 } else if let Some(page) = self.active_download_page_mut() {
                     if page.failed_section_expanded && !page.failed_maps.is_empty() {
                         page.failed_focus_prev();
@@ -1581,10 +1583,10 @@ impl App {
             }
             KeyCode::Down => {
                 if self.active_tab() == Tab::Updates
-                    && (self.updates.selection.in_collection_list
-                        || self.updates.selection.in_beatmap_list)
+                    && (self.home.update.selection.in_collection_list
+                        || self.home.update.selection.in_beatmap_list)
                 {
-                    self.updates.scroll_down();
+                    self.home.update.scroll_down();
                 } else if let Some(page) = self.active_download_page_mut() {
                     if page.failed_section_expanded && !page.failed_maps.is_empty() {
                         page.failed_focus_next();
@@ -1637,23 +1639,23 @@ impl App {
                         }
                     }
                     Tab::Updates => {
-                        let in_list = self.updates.selection.in_collection_list
-                            || self.updates.selection.in_beatmap_list;
+                        let in_list = self.home.update.selection.in_collection_list
+                            || self.home.update.selection.in_beatmap_list;
                         if in_list {
                             // enter / space toggle the focused list item
-                            self.updates.toggle_list_item();
+                            self.home.update.toggle_list_item();
                             return None;
                         }
-                        match self.updates.selection.focus {
-                            UpdatesField::Collections | UpdatesField::BeatmapList => {
-                                self.updates.enter_opens_list();
+                        match self.home.update.selection.focus {
+                            UpdateField::Collections | UpdateField::BeatmapList => {
+                                self.home.update.enter_opens_list();
                             }
-                            UpdatesField::Download => {
-                                if !self.updates.is_scan_ready() {
+                            UpdateField::Download => {
+                                if !self.home.update.is_scan_ready() {
                                     return None;
                                 }
-                                match self.updates.handle_enter() {
-                                    UpdatesAction::Download => {
+                                match self.home.update.handle_enter() {
+                                    UpdateAction::Download => {
                                         if let Some((id, request)) =
                                             self.request_selective_download()
                                         {
@@ -1663,13 +1665,13 @@ impl App {
                                             });
                                         }
                                     }
-                                    UpdatesAction::RecheckFailedMaps => {
+                                    UpdateAction::RecheckFailedMaps => {
                                         return Some(AppCommand::RecheckFailedMaps);
                                     }
-                                    UpdatesAction::None | UpdatesAction::RefreshAll => {}
+                                    UpdateAction::None | UpdateAction::RefreshAll => {}
                                 }
                             }
-                            UpdatesField::OsuPath => {}
+                            UpdateField::OsuPath => {}
                         }
                     }
                     Tab::Config => match self.config.focus {
@@ -1721,12 +1723,12 @@ impl App {
                     }
                 }
                 Tab::Updates => {
-                    let in_list = self.updates.selection.in_collection_list
-                        || self.updates.selection.in_beatmap_list;
+                    let in_list = self.home.update.selection.in_collection_list
+                        || self.home.update.selection.in_beatmap_list;
                     if typing {
                         self.library.insert_char(' ');
                     } else if in_list {
-                        self.updates.toggle_list_item();
+                        self.home.update.toggle_list_item();
                     }
                 }
                 Tab::Config => match self.config.focus {
@@ -1752,9 +1754,9 @@ impl App {
             // while the login split is open (it traps every field key).
             KeyCode::Char('c') if !typing && self.login.is_none() => {
                 self.library.switch_client();
-                let action = self.updates.reset_for_client_switch();
+                let action = self.home.update.reset_for_client_switch();
                 self.persist_osu_path_inputs();
-                if action == UpdatesAction::RefreshAll {
+                if action == UpdateAction::RefreshAll {
                     return Some(AppCommand::ScanLocalDatabase);
                 }
                 return None;
@@ -1803,33 +1805,33 @@ impl App {
                     }
                 }
                 Tab::Updates => {
-                    let in_list = self.updates.selection.in_collection_list
-                        || self.updates.selection.in_beatmap_list;
+                    let in_list = self.home.update.selection.in_collection_list
+                        || self.home.update.selection.in_beatmap_list;
                     if typing {
                         // editing the osu! path field → type the char
                         self.library.insert_char(ch);
                     } else if in_list {
                         // list shortcuts (a all / d none / s sort) are not editing
-                        if ch == 'r' && self.updates.can_recheck_failed_maps() {
+                        if ch == 'r' && self.home.update.can_recheck_failed_maps() {
                             return Some(AppCommand::RecheckFailedMaps);
                         }
                         // `i` marks the focused missing set(s) installed; `I` marks
                         // every visible one — both hide them and persist the choice.
-                        if self.updates.selection.in_beatmap_list && matches!(ch, 'i' | 'I') {
+                        if self.home.update.selection.in_beatmap_list && matches!(ch, 'i' | 'I') {
                             let ids = if ch == 'I' {
-                                self.updates.all_visible_missing_ids()
+                                self.home.update.all_visible_missing_ids()
                             } else {
-                                self.updates.focused_missing_ids()
+                                self.home.update.focused_missing_ids()
                             };
                             self.mark_installed(ids);
                             return None;
                         }
-                        self.updates.handle_char(ch);
+                        self.home.update.handle_char(ch);
                     } else if ch == 's' {
                         // Jump to the download button (lists keep `s` = sort above).
-                        self.updates.selection.focus = UpdatesField::Download;
+                        self.home.update.selection.focus = UpdateField::Download;
                         self.editing = false;
-                    } else if ch == 'r' && self.updates.can_recheck_failed_maps() {
+                    } else if ch == 'r' && self.home.update.can_recheck_failed_maps() {
                         return Some(AppCommand::RecheckFailedMaps);
                     }
                 }
@@ -1974,7 +1976,7 @@ impl App {
 
     /// Mark the updates scan as errored and surface the reason as a toast.
     pub fn report_scan_error(&mut self, message: impl Into<String>) {
-        self.updates.mark_scan_error();
+        self.home.update.mark_scan_error();
         self.toast_err(message);
     }
 

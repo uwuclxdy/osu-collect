@@ -1,5 +1,5 @@
 use crate::app::{
-    App, ConfigField, ConfigTab, HomeField, HomeTab, LoginField, Tab, UpdatesField, UpdatesTab,
+    App, ConfigField, ConfigTab, HomeField, HomeTab, LoginField, Tab, UpdateField, UpdateSource,
     messages::AppMessage,
 };
 use crate::download::DownloadStage;
@@ -151,7 +151,7 @@ fn modal_hint(app: &App) -> Option<String> {
 fn current_message(app: &App) -> Option<&AppMessage> {
     match app.active_tab() {
         Tab::Home => app.home.message.as_ref(),
-        Tab::Updates => app.updates.message.as_ref(),
+        Tab::Updates => app.home.update.message.as_ref(),
         // The login split lives on Config and surfaces its in-progress status
         // via `config.message`, so the Config arm covers it too.
         Tab::Config => app.config.message.as_ref(),
@@ -194,7 +194,7 @@ fn tab_hints(app: &App) -> (Vec<&'static str>, Option<&'static str>) {
     }
     match app.active_tab() {
         Tab::Home => (home_hints(&app.home), Some(HINT_QUIT)),
-        Tab::Updates => updates_hints(&app.updates),
+        Tab::Updates => updates_hints(&app.home.update),
         Tab::Config => (config_hints(&app.config), Some(HINT_QUIT)),
         Tab::Download(_) => download_hints(app),
     }
@@ -256,7 +256,7 @@ fn home_hints(form: &HomeTab) -> Vec<&'static str> {
     segments
 }
 
-fn updates_hints(form: &UpdatesTab) -> (Vec<&'static str>, Option<&'static str>) {
+fn updates_hints(form: &UpdateSource) -> (Vec<&'static str>, Option<&'static str>) {
     // `r` rechecks known-bad maps from any non-editing focus (list or settled).
     let can_recheck = form.can_recheck_failed_maps();
     if form.selection.in_collection_list || form.selection.in_beatmap_list {
@@ -274,9 +274,9 @@ fn updates_hints(form: &UpdatesTab) -> (Vec<&'static str>, Option<&'static str>)
 
     let mut segments = vec![HINT_MOVE];
     match form.selection.focus {
-        UpdatesField::Collections | UpdatesField::BeatmapList => segments.push(HINT_ENTER_OPEN),
-        UpdatesField::Download => segments.push(HINT_ENTER_DOWNLOAD),
-        UpdatesField::OsuPath => segments.push(HINT_EDIT),
+        UpdateField::Collections | UpdateField::BeatmapList => segments.push(HINT_ENTER_OPEN),
+        UpdateField::Download => segments.push(HINT_ENTER_DOWNLOAD),
+        UpdateField::OsuPath => segments.push(HINT_EDIT),
     }
     if can_recheck {
         segments.push(HINT_RECHECK);

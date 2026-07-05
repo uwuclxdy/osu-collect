@@ -1,5 +1,5 @@
 use super::{
-    BeatmapSort, CollectionSort, MissingBeatmapset, MissingStatus, ScanStatus, UpdatesTab,
+    BeatmapSort, CollectionSort, MissingBeatmapset, MissingStatus, ScanStatus, UpdateSource,
     scroll_list,
 };
 use crate::osu_db::{LocalCollection, checksum};
@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 #[test]
 fn needs_initial_scan_reflects_cache_state() {
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
     assert!(tab.needs_initial_scan(), "idle tab needs a scan");
 
     tab.scan.scan_status = ScanStatus::ReadingDatabase;
@@ -114,7 +114,7 @@ fn beatmap_sort_cycles_through_all_modes() {
 
 #[test]
 fn collection_sort_name_orders_case_insensitively() {
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
     tab.set_collections(vec![
         local_col("Zebra Maps - 11111", 5),
         local_col("alpha Maps - 22222", 2),
@@ -139,7 +139,7 @@ fn collection_sort_name_orders_case_insensitively() {
 
 #[test]
 fn collection_sort_size_orders_largest_first() {
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
     tab.set_collections(vec![
         local_col("Small - 11111", 2),
         local_col("Large - 22222", 10),
@@ -158,7 +158,7 @@ fn collection_sort_size_orders_largest_first() {
 
 #[test]
 fn collection_sort_default_restores_insertion_order() {
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
     tab.set_collections(vec![
         local_col("Zebra Maps - 11111", 5),
         local_col("Alpha Maps - 22222", 2),
@@ -187,7 +187,7 @@ fn collection_sort_default_restores_insertion_order() {
 
 #[test]
 fn beatmap_sort_name_orders_by_collection_name() {
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
     // collection_id 11111 must match the ID extracted from the collection name
     tab.set_collections(vec![local_col("Maps - 11111", 3)]);
     tab.set_missing_beatmaps(vec![
@@ -212,7 +212,7 @@ fn beatmap_sort_name_orders_by_collection_name() {
 
 #[test]
 fn beatmap_sort_status_puts_previously_deleted_last() {
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
     tab.set_collections(vec![local_col("Collection - 11111", 4)]);
     tab.set_missing_beatmaps(vec![
         missing_beatmap(1, 11111, "col", true),
@@ -242,7 +242,7 @@ fn beatmap_sort_status_puts_previously_deleted_last() {
 
 #[test]
 fn beatmap_sort_default_restores_filter_order() {
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
     tab.set_collections(vec![local_col("Collection - 11111", 3)]);
     tab.set_missing_beatmaps(vec![
         missing_beatmap(10, 11111, "Zebra", false),
@@ -262,7 +262,7 @@ fn beatmap_sort_default_restores_filter_order() {
 
 #[test]
 fn s_key_cycles_collection_sort_in_list() {
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
     tab.set_collections(vec![local_col("Test - 11111", 1)]);
     tab.selection.in_collection_list = true;
     assert_eq!(tab.selection.collection_sort, CollectionSort::Default);
@@ -276,7 +276,7 @@ fn s_key_cycles_collection_sort_in_list() {
 
 #[test]
 fn s_key_does_not_cycle_sort_outside_list() {
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
     tab.set_collections(vec![local_col("Test - 11111", 1)]);
     // Not in any list — `handle_char` only drives list shortcuts, so 's' outside
     // a list is inert here (path typing routes through the app-global library).
@@ -293,7 +293,7 @@ fn s_key_does_not_cycle_sort_outside_list() {
 
 #[test]
 fn set_removed_counts_applies_to_matching_collection() {
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
     tab.set_collections(vec![local_col("Pack - 11111", 3)]);
 
     let mut counts = HashMap::new();
@@ -306,7 +306,7 @@ fn set_removed_counts_applies_to_matching_collection() {
 
 #[test]
 fn set_removed_counts_leaves_unmatched_at_zero() {
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
     tab.set_collections(vec![
         local_col("Alpha - 11111", 2),
         local_col("Beta - 22222", 4),
@@ -330,7 +330,7 @@ fn set_removed_counts_leaves_unmatched_at_zero() {
 fn set_removed_counts_also_updates_default_order_snapshot() {
     // The default-order snapshot must be kept in sync so that cycling back to
     // Default sort restores the correct removed_count values.
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
     tab.set_collections(vec![
         local_col("Alpha - 11111", 2),
         local_col("Beta - 22222", 4),
@@ -359,7 +359,7 @@ fn set_removed_counts_also_updates_default_order_snapshot() {
 
 #[test]
 fn removed_count_is_zero_when_no_counts_provided() {
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
     tab.set_collections(vec![local_col("Pack - 33333", 5)]);
 
     // Apply an empty map — no collection gets a removed_count.
@@ -424,7 +424,7 @@ fn set_removed_counts_applied_to_local_col_with_checksums() {
     // End-to-end: build a tab with a real checksum collection, apply counts,
     // and verify the entry reflects the expected removed_count.
     let checksums = [md5(0xaa), md5(0xbb), md5(0xcc)];
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
     tab.set_collections(vec![local_col_with_checksums("Songs - 55555", &checksums)]);
 
     let mut counts = HashMap::new();

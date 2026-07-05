@@ -1,6 +1,6 @@
 use crate::app::{
     runtime::{FetchCompareSettings, collection_ids_for_scan, should_hide_failed_beatmapset},
-    updates::{MissingBeatmapset, MissingStatus, UpdatesTab},
+    update_source::{MissingBeatmapset, MissingStatus, UpdateSource},
 };
 use crate::osu_db::{LocalBeatmap, LocalBeatmapset, LocalCollection, Md5};
 use std::collections::HashSet;
@@ -24,7 +24,7 @@ fn missing(id: u32, selected: bool, previously_deleted: bool) -> MissingBeatmaps
 
 #[test]
 fn set_collections_hides_entries_without_ids() {
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
     let collections = vec![
         LocalCollection {
             name: "My Collection - 123".to_string(),
@@ -55,7 +55,7 @@ fn extract_id_formats() {
         ("Short - 1", None),
     ];
 
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
     for (name, expected_id) in &cases {
         let collections = vec![LocalCollection {
             name: name.to_string(),
@@ -86,7 +86,7 @@ fn collection_ids_for_scan_skips_ids_outside_u32() {
 
 #[test]
 fn set_local_beatmapsets_stores_sets() {
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
     let sets = vec![
         LocalBeatmapset {
             id: 10,
@@ -116,7 +116,7 @@ fn set_all_checksums_builds_hashset() {
     let abc = test_md5(0xab);
     let def = test_md5(0xde);
     let xyz = test_md5(0xff);
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
     tab.set_all_checksums(vec![abc, def]);
 
     assert!(tab.scan.all_local_checksums.contains(&abc));
@@ -129,7 +129,7 @@ fn installed_beatmapset_not_in_missing() {
     // Simulates: beatmapset id=42 is locally installed; a collection contains it.
     // After set_missing_beatmaps with an empty list (checked upstream), visible_missing is empty.
     let cksum = test_md5(0xd0);
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
     tab.set_local_beatmapsets(vec![LocalBeatmapset {
         id: 42,
         beatmaps: [LocalBeatmap { checksum: cksum }].into(),
@@ -144,7 +144,7 @@ fn installed_beatmapset_not_in_missing() {
 
 #[test]
 fn missing_beatmap_selection_preserved_across_refresh() {
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
 
     let first_batch = vec![missing(1, true, false), missing(2, true, false)];
 
@@ -210,7 +210,7 @@ fn fetch_compare_settings_hides_manually_ignored_ids() {
 
 #[test]
 fn previously_deleted_items_are_deselected_by_default() {
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
 
     tab.set_collections(vec![LocalCollection {
         name: "coll - 100".to_string(),
@@ -240,7 +240,7 @@ fn previously_deleted_items_are_deselected_by_default() {
 
 #[test]
 fn previously_deleted_can_be_reselected_and_survives_refresh() {
-    let mut tab = UpdatesTab::new();
+    let mut tab = UpdateSource::new();
 
     tab.set_collections(vec![LocalCollection {
         name: "coll - 100".to_string(),

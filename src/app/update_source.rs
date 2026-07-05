@@ -12,7 +12,7 @@ use std::sync::OnceLock;
 use tracing::{debug, info};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UpdatesField {
+pub enum UpdateField {
     OsuPath,
     Collections,
     BeatmapList,
@@ -20,15 +20,15 @@ pub enum UpdatesField {
     Download,
 }
 
-const UPDATE_FIELDS: &[UpdatesField] = &[
-    UpdatesField::OsuPath,
-    UpdatesField::Collections,
-    UpdatesField::BeatmapList,
-    UpdatesField::Download,
+const UPDATE_FIELDS: &[UpdateField] = &[
+    UpdateField::OsuPath,
+    UpdateField::Collections,
+    UpdateField::BeatmapList,
+    UpdateField::Download,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UpdatesAction {
+pub enum UpdateAction {
     None,
     Download,
     RefreshAll,
@@ -187,7 +187,7 @@ pub struct SelectionState {
     pub beatmaps_state: Option<usize>,
     pub in_collection_list: bool,
     pub in_beatmap_list: bool,
-    pub focus: UpdatesField,
+    pub focus: UpdateField,
     pub collection_sort: CollectionSort,
     pub beatmap_sort: BeatmapSort,
 }
@@ -205,14 +205,14 @@ impl SelectionState {
             beatmaps_state: None,
             in_collection_list: false,
             in_beatmap_list: false,
-            focus: UpdatesField::OsuPath,
+            focus: UpdateField::OsuPath,
             collection_sort: CollectionSort::Default,
             beatmap_sort: BeatmapSort::Default,
         }
     }
 }
 
-pub struct UpdatesTab {
+pub struct UpdateSource {
     pub scan: ScanState,
     pub selection: SelectionState,
     pub message: Option<AppMessage>,
@@ -221,7 +221,7 @@ pub struct UpdatesTab {
     pub list_offset: std::cell::Cell<usize>,
 }
 
-impl UpdatesTab {
+impl UpdateSource {
     pub fn new() -> Self {
         Self {
             scan: ScanState::new(),
@@ -354,7 +354,7 @@ impl UpdatesTab {
     /// Whether the osu! path text field currently accepts edits — focused and
     /// no list panel is open.
     pub fn osu_path_editable(&self) -> bool {
-        self.selection.focus == UpdatesField::OsuPath
+        self.selection.focus == UpdateField::OsuPath
             && !self.selection.in_collection_list
             && !self.selection.in_beatmap_list
     }
@@ -366,7 +366,7 @@ impl UpdatesTab {
     /// `ScanLocalDatabase`.
     ///
     /// [`LibraryState::switch_client`]: super::LibraryState::switch_client
-    pub fn reset_for_client_switch(&mut self) -> UpdatesAction {
+    pub fn reset_for_client_switch(&mut self) -> UpdateAction {
         // Increment generation to invalidate any in-flight fetch tasks.
         self.scan.scan_generation = self.scan.scan_generation.wrapping_add(1);
         self.selection.local_collections.clear();
@@ -380,7 +380,7 @@ impl UpdatesTab {
         self.selection.in_collection_list = false;
         self.selection.in_beatmap_list = false;
         self.scan.scan_status = ScanStatus::Idle;
-        UpdatesAction::RefreshAll
+        UpdateAction::RefreshAll
     }
 
     /// Toggle the item under the scroll cursor in whichever list is currently
@@ -398,11 +398,11 @@ impl UpdatesTab {
     /// An empty list is not expandable, so enter on it is a no-op.
     pub fn enter_opens_list(&mut self) -> bool {
         match self.selection.focus {
-            UpdatesField::Collections if !self.selection.local_collections.is_empty() => {
+            UpdateField::Collections if !self.selection.local_collections.is_empty() => {
                 self.selection.in_collection_list = true;
                 true
             }
-            UpdatesField::BeatmapList if self.is_scan_ready() && self.total_missing_count() > 0 => {
+            UpdateField::BeatmapList if self.is_scan_ready() && self.total_missing_count() > 0 => {
                 self.selection.in_beatmap_list = true;
                 true
             }
@@ -410,31 +410,31 @@ impl UpdatesTab {
         }
     }
 
-    pub fn handle_enter(&mut self) -> UpdatesAction {
+    pub fn handle_enter(&mut self) -> UpdateAction {
         if self.selected_beatmap_count() == 0 {
-            UpdatesAction::None
+            UpdateAction::None
         } else {
-            UpdatesAction::Download
+            UpdateAction::Download
         }
     }
 
     /// Returns `true` when the focused field accepts character input (i.e. the
     /// osu! path text box), meaning letter keybinds must be suppressed.
     pub fn is_typing(&self) -> bool {
-        self.selection.focus == UpdatesField::OsuPath
+        self.selection.focus == UpdateField::OsuPath
     }
 
-    pub fn handle_escape(&mut self) -> Option<UpdatesAction> {
+    pub fn handle_escape(&mut self) -> Option<UpdateAction> {
         if self.selection.in_collection_list {
             self.selection.in_collection_list = false;
             // Filter cached beatmaps based on newly selected collections
             self.filter_cached();
-            return Some(UpdatesAction::None);
+            return Some(UpdateAction::None);
         }
 
         if self.selection.in_beatmap_list {
             self.selection.in_beatmap_list = false;
-            return Some(UpdatesAction::None);
+            return Some(UpdateAction::None);
         }
 
         None
@@ -872,7 +872,7 @@ pub fn extract_collection_id(name: &str) -> Option<u64> {
     None
 }
 
-impl Default for UpdatesTab {
+impl Default for UpdateSource {
     fn default() -> Self {
         Self::new()
     }

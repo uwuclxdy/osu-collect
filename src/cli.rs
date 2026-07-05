@@ -1,7 +1,7 @@
 use crate::{
     app::{
         collection_state, failed_maps, ignored_maps, runtime, snapshots,
-        updates::extract_collection_id,
+        update_source::extract_collection_id,
     },
     osu_db::{BeatmapReader, LazerReader, LocalBeatmapset, Md5, OsuClient, StableReader},
 };
@@ -137,7 +137,7 @@ pub async fn run_update_collections(
         "phase: read database"
     );
 
-    // Extract collection IDs from names (same logic as UpdatesTab::set_collections)
+    // Extract collection IDs from names (same logic as UpdateSource::set_collections)
     let collection_ids: Vec<u32> = collections
         .iter()
         .filter_map(|c| extract_collection_id(&c.name).and_then(|id| u32::try_from(id).ok()))

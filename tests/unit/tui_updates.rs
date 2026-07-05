@@ -1,6 +1,6 @@
 use super::{SECTION_MISSING, SECTION_NONE, count_selected, updates_section};
-use crate::app::UpdatesField;
-use crate::app::updates::{MissingBeatmapset, MissingStatus};
+use crate::app::UpdateField;
+use crate::app::update_source::{MissingBeatmapset, MissingStatus};
 
 fn beatmap(id: u32, collection_id: u32, selected: bool) -> MissingBeatmapset {
     MissingBeatmapset {
@@ -96,7 +96,7 @@ fn diff_shows_when_removed_is_nonzero() {
 
 #[test]
 fn download_button_underlines_no_section() {
-    let active = updates_section(UpdatesField::Download);
+    let active = updates_section(UpdateField::Download);
     assert_eq!(active, SECTION_NONE, "Download must map to SECTION_NONE");
     assert!(active.is_empty(), "SECTION_NONE must be empty");
     // and it must not match the missing-beatmaps header it used to underline.
@@ -109,5 +109,5 @@ fn download_button_underlines_no_section() {
 #[test]
 fn beatmap_list_still_underlines_missing_section() {
     // The list field keeps its section cue — only the button changed.
-    assert_eq!(updates_section(UpdatesField::BeatmapList), SECTION_MISSING);
+    assert_eq!(updates_section(UpdateField::BeatmapList), SECTION_MISSING);
 }

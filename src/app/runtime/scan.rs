@@ -2,7 +2,7 @@ use super::super::{
     App, Toast, collection_state, failed_maps, ignored_maps,
     messages::{clear_app_message, set_loading_message},
     snapshots,
-    updates::{MissingBeatmapset, MissingStatus, ScanStatus, extract_collection_id},
+    update_source::{MissingBeatmapset, MissingStatus, ScanStatus, extract_collection_id},
 };
 use crate::{
     config::constants::CONCURRENT_REQUESTS,
@@ -69,34 +69,34 @@ pub(super) fn handle_updates_event(
             all_checksums,
         } => {
             // Ignore stale results from previous scan
-            if generation != app.updates.scan.scan_generation {
+            if generation != app.home.update.scan.scan_generation {
                 debug!(
-                    expected = app.updates.scan.scan_generation,
+                    expected = app.home.update.scan.scan_generation,
                     got = generation,
                     "Ignoring stale DatabaseRead event"
                 );
                 return;
             }
 
-            app.updates.set_collections(collections);
-            app.updates.set_local_beatmapsets(beatmapsets);
-            app.updates.set_all_checksums(all_checksums);
+            app.home.update.set_collections(collections);
+            app.home.update.set_local_beatmapsets(beatmapsets);
+            app.home.update.set_all_checksums(all_checksums);
             // Surface what was actually read so a misconfigured path shows up as
             // a low/zero set count instead of a silent all-missing result.
-            let local_set_count = app.updates.scan.local_beatmapsets.len();
+            let local_set_count = app.home.update.scan.local_beatmapsets.len();
             let scan_path = app.library.osu_path.value.clone();
-            app.updates.scan.scan_status = ScanStatus::FetchingCollection;
+            app.home.update.scan.scan_status = ScanStatus::FetchingCollection;
             set_loading_message(
-                &mut app.updates.message,
+                &mut app.home.update.message,
                 format!(
                     "read {local_set_count} local sets from {scan_path} · fetching collections..."
                 ),
             );
 
-            let selected_ids = app.updates.selected_collection_ids();
+            let selected_ids = app.home.update.selected_collection_ids();
             if selected_ids.is_empty() {
-                app.updates.scan.scan_status = ScanStatus::Ready;
-                clear_app_message(&mut app.updates.message);
+                app.home.update.scan.scan_status = ScanStatus::Ready;
+                clear_app_message(&mut app.home.update.message);
                 app.toast_info("no collections with ids found to compare");
                 return;
             }
@@ -107,8 +107,8 @@ pub(super) fn handle_updates_event(
             generation,
             message,
         } => {
-            if generation == app.updates.scan.scan_generation {
-                set_loading_message(&mut app.updates.message, message);
+            if generation == app.home.update.scan.scan_generation {
+                set_loading_message(&mut app.home.update.message, message);
             }
         }
         UpdatesEvent::ScanComplete {
@@ -120,9 +120,9 @@ pub(super) fn handle_updates_event(
             hidden_failed_count,
         } => {
             // Ignore stale results from previous scan
-            if generation != app.updates.scan.scan_generation {
+            if generation != app.home.update.scan.scan_generation {
                 debug!(
-                    expected = app.updates.scan.scan_generation,
+                    expected = app.home.update.scan.scan_generation,
                     got = generation,
                     "Ignoring stale ScanComplete event"
                 );
@@ -131,7 +131,8 @@ pub(super) fn handle_updates_event(
 
             let previously_deleted_count = missing.iter().filter(|m| m.previously_deleted).count();
             let local_ids: HashSet<u32> = app
-                .updates
+                .home
+                .update
                 .scan
                 .local_beatmapsets
                 .iter()
@@ -139,10 +140,14 @@ pub(super) fn handle_updates_event(
                 .collect();
             let local_snapshot: Vec<u32> = local_ids.iter().copied().collect();
             let count = missing.len();
-            app.updates.set_missing_beatmaps(missing);
-            app.updates.set_removed_counts(&collection_removed_counts);
-            app.updates.set_failed_beatmapset_count(hidden_failed_count);
-            app.updates.scan.scan_status = ScanStatus::Ready;
+            app.home.update.set_missing_beatmaps(missing);
+            app.home
+                .update
+                .set_removed_counts(&collection_removed_counts);
+            app.home
+                .update
+                .set_failed_beatmapset_count(hidden_failed_count);
+            app.home.update.scan.scan_status = ScanStatus::Ready;
 
             let (title, detail) = build_scan_summary(
                 count,
@@ -150,7 +155,7 @@ pub(super) fn handle_updates_event(
                 manually_added_count,
                 hidden_failed_count,
             );
-            clear_app_message(&mut app.updates.message);
+            clear_app_message(&mut app.home.update.message);
             let mut toast = if count == 0 {
                 Toast::success(title)
             } else {
@@ -184,9 +189,9 @@ pub(super) fn handle_updates_event(
             checked,
             total,
         } => {
-            if generation == app.updates.scan.scan_generation {
+            if generation == app.home.update.scan.scan_generation {
                 set_loading_message(
-                    &mut app.updates.message,
+                    &mut app.home.update.message,
                     format!("rechecking known bad maps {checked}/{total}..."),
                 );
             }
@@ -196,10 +201,10 @@ pub(super) fn handle_updates_event(
             available,
             unavailable,
         } => {
-            if generation != app.updates.scan.scan_generation {
+            if generation != app.home.update.scan.scan_generation {
                 return;
             }
-            clear_app_message(&mut app.updates.message);
+            clear_app_message(&mut app.home.update.message);
             let mut toast = if available.is_empty() {
                 Toast::info("no bad maps recovered")
             } else {
@@ -209,7 +214,8 @@ pub(super) fn handle_updates_event(
                 toast = toast.with_detail(format!("{} still unavailable", unavailable.len()));
             }
             app.push_toast(toast);
-            app.updates.scan.scan_generation = app.updates.scan.scan_generation.wrapping_add(1);
+            app.home.update.scan.scan_generation =
+                app.home.update.scan.scan_generation.wrapping_add(1);
             spawn_scan_task(app, updates_tx.clone());
         }
         UpdatesEvent::Error(msg) => {
@@ -255,11 +261,11 @@ pub(super) fn spawn_scan_task(app: &mut App, tx: mpsc::UnboundedSender<UpdatesEv
 
     let client_type = app.library.client_type;
     let osu_path = PathBuf::from(app.library.osu_path());
-    let generation = app.updates.scan.scan_generation;
+    let generation = app.home.update.scan.scan_generation;
 
-    app.updates.scan.scan_status = ScanStatus::ReadingDatabase;
-    clear_app_message(&mut app.updates.message);
-    set_loading_message(&mut app.updates.message, "Reading database...");
+    app.home.update.scan.scan_status = ScanStatus::ReadingDatabase;
+    clear_app_message(&mut app.home.update.message);
+    set_loading_message(&mut app.home.update.message, "Reading database...");
 
     let handle = tokio::spawn(async move {
         let result =
@@ -352,7 +358,7 @@ pub(super) fn spawn_failed_map_recheck_task(
         h.abort();
     }
 
-    let generation = app.updates.scan.scan_generation;
+    let generation = app.home.update.scan.scan_generation;
     let Some(path) = failed_maps::failed_maps_path() else {
         app.toast_info("no known bad maps to recheck");
         return;
@@ -363,9 +369,9 @@ pub(super) fn spawn_failed_map_recheck_task(
         return;
     }
 
-    app.updates.scan.scan_status = ScanStatus::CheckingFailedMaps;
+    app.home.update.scan.scan_status = ScanStatus::CheckingFailedMaps;
     set_loading_message(
-        &mut app.updates.message,
+        &mut app.home.update.message,
         format!("rechecking known bad maps 0/{}...", ids.len()),
     );
 
@@ -408,20 +414,21 @@ fn spawn_fetch_task(
 
     let selected_collection_ids = collection_ids_for_scan(selected_ids);
     let local_set_ids: HashSet<u32> = app
-        .updates
+        .home
+        .update
         .scan
         .local_beatmapsets
         .iter()
         .map(|bs| bs.id)
         .collect();
-    let all_local_checksums = std::mem::take(&mut app.updates.scan.all_local_checksums);
-    let local_collections_raw = app.updates.scan.local_collections_raw.clone();
-    let generation = app.updates.scan.scan_generation;
+    let all_local_checksums = std::mem::take(&mut app.home.update.scan.all_local_checksums);
+    let local_collections_raw = app.home.update.scan.local_collections_raw.clone();
+    let generation = app.home.update.scan.scan_generation;
     let client_type = app.library.client_type;
     let current_snapshots = snapshots::current_snapshots(
         client_type,
-        &app.updates.scan.local_collections_raw,
-        app.updates.scan.local_beatmapsets.iter(),
+        &app.home.update.scan.local_collections_raw,
+        app.home.update.scan.local_beatmapsets.iter(),
         |name| extract_collection_id(name).and_then(|id| u32::try_from(id).ok()),
     );
     let snapshot_dir = snapshots::snapshots_dir();
@@ -445,7 +452,7 @@ fn spawn_fetch_task(
         .map(|path| ignored_maps::reconcile_installed(&path, &local_set_ids))
         .unwrap_or_default();
 
-    app.updates.scan.scan_status = ScanStatus::FetchingCollection;
+    app.home.update.scan.scan_status = ScanStatus::FetchingCollection;
 
     let handle = tokio::spawn(async move {
         let result = fetch_missing_beatmapsets(

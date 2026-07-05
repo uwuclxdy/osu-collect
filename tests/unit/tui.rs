@@ -1529,14 +1529,14 @@ fn config_custom_mirror_help_hidden_when_not_focused() {
 
 #[test]
 fn updates_osu_path_help_shows_when_focused() {
-    use crate::app::UpdatesField;
+    use crate::app::UpdateField;
     use crate::osu_db::OsuClient;
 
     let mut config = Config::default();
     config.recent.osu_client = Some(OsuClient::Stable);
     let mut app = App::new(config);
     app.active_tab = Tab::Updates;
-    app.updates.selection.focus = UpdatesField::OsuPath;
+    app.home.update.selection.focus = UpdateField::OsuPath;
 
     let output = render_app(&app, 100, 30);
 
@@ -1548,14 +1548,14 @@ fn updates_osu_path_help_shows_when_focused() {
 
 #[test]
 fn updates_osu_path_help_names_active_client_db() {
-    use crate::app::UpdatesField;
+    use crate::app::UpdateField;
     use crate::osu_db::OsuClient;
 
     let mut config = Config::default();
     config.recent.osu_client = Some(OsuClient::Lazer);
     let mut app = App::new(config);
     app.active_tab = Tab::Updates;
-    app.updates.selection.focus = UpdatesField::OsuPath;
+    app.home.update.selection.focus = UpdateField::OsuPath;
 
     let output = render_app(&app, 100, 30);
 
@@ -1571,11 +1571,11 @@ fn updates_osu_path_help_names_active_client_db() {
 
 #[test]
 fn updates_osu_path_help_hidden_when_not_focused() {
-    use crate::app::UpdatesField;
+    use crate::app::UpdateField;
 
     let mut app = App::new(Config::default());
     app.active_tab = Tab::Updates;
-    app.updates.selection.focus = UpdatesField::Collections;
+    app.home.update.selection.focus = UpdateField::Collections;
 
     let output = render_app(&app, 100, 30);
 

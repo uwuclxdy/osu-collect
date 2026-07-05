@@ -15,7 +15,7 @@ fn right_tab_switch_ignores_stale_updates_list_on_home() {
     app.active_tab = Tab::Home;
     // Focus a non-text field so Right switches tabs rather than moving the caret.
     app.home.focus = HomeField::Video;
-    app.updates.selection.in_collection_list = true;
+    app.home.update.selection.in_collection_list = true;
 
     let cmd = app.handle_key(key(KeyCode::Right));
 
@@ -27,7 +27,7 @@ fn right_tab_switch_ignores_stale_updates_list_on_home() {
 fn left_tab_switch_ignores_stale_updates_list_on_config() {
     let mut app = App::new(Config::default());
     app.active_tab = Tab::Config;
-    app.updates.selection.in_beatmap_list = true;
+    app.home.update.selection.in_beatmap_list = true;
 
     let cmd = app.handle_key(key(KeyCode::Left));
 
@@ -39,7 +39,7 @@ fn left_tab_switch_ignores_stale_updates_list_on_config() {
 fn tab_switch_stays_locked_inside_updates_list() {
     let mut app = App::new(Config::default());
     app.active_tab = Tab::Updates;
-    app.updates.selection.in_collection_list = true;
+    app.home.update.selection.in_collection_list = true;
 
     let cmd = app.handle_key(key(KeyCode::Right));
 

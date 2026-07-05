@@ -1,6 +1,6 @@
 use super::{
     custom_mirrors::CustomMirrorList, first_field, last_field, messages::AppMessage, next_field,
-    prev_field,
+    prev_field, update_source::UpdateSource,
 };
 use crate::{
     app::runtime::ProbeResult,
@@ -290,6 +290,8 @@ pub struct HomeTab {
     /// Persisted list scroll offset so the focused row isn't re-pinned to the
     /// panel's bottom edge every frame (see [`widgets::render_list`]).
     pub list_offset: std::cell::Cell<usize>,
+    /// State for the [`GetMapsSource::Update`] source (the former Updates tab).
+    pub update: UpdateSource,
 }
 
 impl HomeTab {
@@ -361,6 +363,7 @@ impl HomeTab {
             default_threads,
             default_directory,
             list_offset: std::cell::Cell::new(0),
+            update: UpdateSource::new(),
         }
     }
 

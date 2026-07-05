@@ -483,18 +483,19 @@ fn space_inside_collection_list_toggles_focused_item() {
     let mut app = make_app();
     app.next_tab();
     // seed one collection and drop into the list
-    app.updates
+    app.home
+        .update
         .set_collections(vec![osu_collect::osu_db::LocalCollection {
             name: "test - 1234".to_string(),
             beatmap_checksums: Vec::new().into(),
         }]);
-    app.updates.selection.in_collection_list = true;
-    app.updates.selection.collections_state = Some(0);
+    app.home.update.selection.in_collection_list = true;
+    app.home.update.selection.collections_state = Some(0);
 
-    let before = app.updates.selection.local_collections[0].selected;
+    let before = app.home.update.selection.local_collections[0].selected;
     app.handle_key(press(KeyCode::Char(' ')));
     assert_eq!(
-        app.updates.selection.local_collections[0].selected, !before,
+        app.home.update.selection.local_collections[0].selected, !before,
         "space toggles the focused list selection"
     );
 }
@@ -505,7 +506,7 @@ fn space_inside_collection_list_toggles_focused_item() {
 fn recheck_failed_key_dispatches_on_updates_tab() {
     let mut app = make_app();
     app.next_tab();
-    app.updates.set_failed_beatmapset_count(2);
+    app.home.update.set_failed_beatmapset_count(2);
 
     let cmd = app.handle_key(press(KeyCode::Char('r')));
 
@@ -872,12 +873,12 @@ fn vim_i_enters_edit_mode_then_typing_is_literal() {
 fn enter_inside_collection_list_is_no_op() {
     let mut app = make_app();
     app.next_tab();
-    app.updates.selection.in_collection_list = true;
+    app.home.update.selection.in_collection_list = true;
 
     let cmd = app.handle_key(press(KeyCode::Enter));
     assert!(cmd.is_none());
     assert!(
-        app.updates.selection.in_collection_list,
+        app.home.update.selection.in_collection_list,
         "enter must not close the collection list"
     );
 }
@@ -984,13 +985,13 @@ fn c_types_literal_char_while_editing() {
 #[test]
 fn typing_into_updates_path_field_routes_to_library() {
     use osu_collect::app::Tab;
-    use osu_collect::app::UpdatesField;
+    use osu_collect::app::UpdateField;
 
     // The osu! path field lives on the app-global library state now, but it is
     // still edited through the Updates panel. Typing must land on `library`.
     let mut app = make_app();
     app.active_tab = Tab::Updates;
-    app.updates.selection.focus = UpdatesField::OsuPath;
+    app.home.update.selection.focus = UpdateField::OsuPath;
     app.library.osu_path.set_value(String::new());
     app.editing = true;
 

@@ -10,7 +10,7 @@ mod home;
 mod login;
 pub(crate) mod modal;
 mod toast;
-mod updates;
+mod update_source;
 mod widgets;
 
 pub use theme::{Theme, apply_theme, theme};
@@ -285,7 +285,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let editing = app.editing && !overlay_open;
     match app.active_tab() {
         Tab::Home => home::render(frame, body_area, &app.home, editing),
-        Tab::Updates => updates::render(frame, body_area, &app.updates, &app.library, editing),
+        Tab::Updates => {
+            update_source::render(frame, body_area, &app.home.update, &app.library, editing)
+        }
         Tab::Config => {
             let osu_dir = app.library.osu_path();
             let library_db_hint = crate::app::library_cache::db_file_path(

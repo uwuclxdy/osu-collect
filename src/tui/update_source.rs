@@ -1,6 +1,6 @@
 use crate::app::{
-    LibraryState, UpdatesField, UpdatesTab,
-    updates::{
+    LibraryState, UpdateField, UpdateSource,
+    update_source::{
         BeatmapDisplayItem, BeatmapSort, CollectionEntry, CollectionSort, MissingBeatmapset,
         ScanStatus,
     },
@@ -61,7 +61,7 @@ const DIFF_SUFFIX_REMOVED: &str = "removed";
 pub fn render(
     frame: &mut Frame,
     area: Rect,
-    form: &UpdatesTab,
+    form: &UpdateSource,
     library: &LibraryState,
     editing: bool,
 ) {
@@ -79,7 +79,7 @@ pub fn render(
 
     // The download button styles its own focus (KEEP per pending exception), so
     // it is excluded from the row highlight — but it must still scroll into view.
-    let highlight = form.selection.focus != UpdatesField::Download;
+    let highlight = form.selection.focus != UpdateField::Download;
     let start = widgets::render_list(
         frame,
         inner,
@@ -100,7 +100,7 @@ pub fn render(
 /// Compact render: collection list with `[selected] name (+N -M)`.
 ///
 /// Inline beatmap list, sort label, and help text are hidden.
-fn render_compact(frame: &mut Frame, area: Rect, form: &UpdatesTab) {
+fn render_compact(frame: &mut Frame, area: Rect, form: &UpdateSource) {
     let block = widgets::panel_block(PANEL_TITLE, true, true);
     let inner = block.inner(area);
 
@@ -140,7 +140,7 @@ fn render_compact(frame: &mut Frame, area: Rect, form: &UpdatesTab) {
 }
 
 fn build_items(
-    form: &UpdatesTab,
+    form: &UpdateSource,
     library: &LibraryState,
     editing: bool,
 ) -> (Vec<ListItem<'static>>, usize) {
@@ -154,11 +154,11 @@ fn build_items(
         SECTION_SOURCE,
         active_section == SECTION_SOURCE,
     ));
-    if focus == UpdatesField::OsuPath && !in_list {
+    if focus == UpdateField::OsuPath && !in_list {
         focused_index = items.len();
     }
     items.push(osu_path_item(form, library, editing));
-    if focus == UpdatesField::OsuPath && !in_list {
+    if focus == UpdateField::OsuPath && !in_list {
         items.push(widgets::help_item(osu_path_help(library.client_type)));
     }
     items.push(widgets::spacer());
@@ -167,7 +167,7 @@ fn build_items(
         SECTION_COLLECTIONS,
         active_section == SECTION_COLLECTIONS,
     ));
-    if focus == UpdatesField::Collections && !in_list {
+    if focus == UpdateField::Collections && !in_list {
         focused_index = items.len();
     }
     items.push(collections_header(form));
@@ -175,7 +175,7 @@ fn build_items(
         let selected_idx = form.selection.collections_state.unwrap_or(0);
         for (i, collection) in form.selection.local_collections.iter().enumerate() {
             let is_sel = i == selected_idx;
-            if is_sel && focus == UpdatesField::Collections {
+            if is_sel && focus == UpdateField::Collections {
                 focused_index = items.len();
             }
             let counts = collection
@@ -190,7 +190,7 @@ fn build_items(
         SECTION_MISSING,
         active_section == SECTION_MISSING,
     ));
-    if focus == UpdatesField::BeatmapList && !in_list {
+    if focus == UpdateField::BeatmapList && !in_list {
         focused_index = items.len();
     }
     items.push(beatmaps_header(form));
@@ -198,7 +198,7 @@ fn build_items(
         let selected_idx = form.selection.beatmaps_state.unwrap_or(0);
         for (i, item) in form.selection.display_items.iter().enumerate() {
             let is_sel = i == selected_idx;
-            if is_sel && focus == UpdatesField::BeatmapList {
+            if is_sel && focus == UpdateField::BeatmapList {
                 focused_index = items.len();
             }
             items.push(display_item(item, is_sel, form));
@@ -212,7 +212,7 @@ fn build_items(
     } else {
         LABEL_DOWNLOAD_SELECTED.to_string()
     };
-    let download_focused = focus == UpdatesField::Download && !in_list;
+    let download_focused = focus == UpdateField::Download && !in_list;
     if download_focused {
         focused_index = items.len();
     }
@@ -240,8 +240,8 @@ fn build_items(
 ///
 /// The download button sits below all sections, so it maps to no header
 /// (`SECTION_NONE`): focusing it leaves every section title un-underlined.
-fn updates_section(field: UpdatesField) -> &'static str {
-    use UpdatesField::*;
+fn updates_section(field: UpdateField) -> &'static str {
+    use UpdateField::*;
     match field {
         OsuPath => SECTION_SOURCE,
         Collections => SECTION_COLLECTIONS,
@@ -253,7 +253,7 @@ fn updates_section(field: UpdatesField) -> &'static str {
 /// The summary metrics, each rendered on its own line by the caller. Only the
 /// `known bad` count surfaces, and only once a scan has flagged maps no mirror
 /// can serve.
-fn summary_metrics(form: &UpdatesTab) -> Vec<Metric<'static>> {
+fn summary_metrics(form: &UpdateSource) -> Vec<Metric<'static>> {
     let mut metrics = Vec::new();
     if form.scan.failed_beatmapset_count > 0 {
         metrics.push(Metric::muted(
@@ -267,7 +267,7 @@ fn summary_metrics(form: &UpdatesTab) -> Vec<Metric<'static>> {
 fn display_item(
     item: &BeatmapDisplayItem,
     is_scroll_pos: bool,
-    form: &UpdatesTab,
+    form: &UpdateSource,
 ) -> ListItem<'static> {
     match item {
         BeatmapDisplayItem::CollectionHeader { collection_id } => {
@@ -324,8 +324,8 @@ fn display_item(
     }
 }
 
-fn osu_path_item(form: &UpdatesTab, library: &LibraryState, editing: bool) -> ListItem<'static> {
-    let focused = form.selection.focus == UpdatesField::OsuPath
+fn osu_path_item(form: &UpdateSource, library: &LibraryState, editing: bool) -> ListItem<'static> {
+    let focused = form.selection.focus == UpdateField::OsuPath
         && !form.selection.in_collection_list
         && !form.selection.in_beatmap_list;
     let field = &library.osu_path;
@@ -360,8 +360,8 @@ fn osu_path_item(form: &UpdatesTab, library: &LibraryState, editing: bool) -> Li
     ]))
 }
 
-fn collections_header(form: &UpdatesTab) -> ListItem<'static> {
-    let focused = form.selection.focus == UpdatesField::Collections
+fn collections_header(form: &UpdateSource) -> ListItem<'static> {
+    let focused = form.selection.focus == UpdateField::Collections
         && !form.selection.in_collection_list
         && !form.selection.in_beatmap_list;
     let sort = form.selection.collection_sort;
@@ -445,8 +445,8 @@ pub(super) fn count_selected(cached: &[MissingBeatmapset], collection_id: u64) -
     (selected, total)
 }
 
-fn beatmaps_header(form: &UpdatesTab) -> ListItem<'static> {
-    let focused = form.selection.focus == UpdatesField::BeatmapList
+fn beatmaps_header(form: &UpdateSource) -> ListItem<'static> {
+    let focused = form.selection.focus == UpdateField::BeatmapList
         && !form.selection.in_collection_list
         && !form.selection.in_beatmap_list;
     let sort = form.selection.beatmap_sort;
@@ -491,7 +491,7 @@ fn beatmap_item(beatmap: &MissingBeatmapset, is_scroll_pos: bool) -> ListItem<'s
     ListItem::new(Line::from(spans))
 }
 
-fn is_scanning(form: &UpdatesTab) -> bool {
+fn is_scanning(form: &UpdateSource) -> bool {
     matches!(
         form.scan.scan_status,
         ScanStatus::ReadingDatabase

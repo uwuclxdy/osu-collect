@@ -7,7 +7,7 @@
 //! Build: `cargo build --release --example ram_harness`
 //! Run:   `./target/release/examples/ram_harness <cold|updates|download|idle>`
 
-use osu_collect::{app::updates::UpdatesTab, osu_db::OsuClient};
+use osu_collect::{app::update_source::UpdateSource, osu_db::OsuClient};
 use osu_db::{
     Mode,
     collection::{Collection as DbCollection, CollectionList},
@@ -204,7 +204,7 @@ fn main() {
         return;
     }
 
-    // Synthesise DB → read it through the real TUI code path → populate UpdatesTab.
+    // Synthesise DB → read it through the real TUI code path → populate UpdateSource.
     let tmp: TempDir = TempDir::new().expect("tempdir");
     write_synth_db(tmp.path());
 
@@ -233,8 +233,8 @@ fn main() {
 
     print_mem("after-load");
 
-    // Populate the real UpdatesTab via its public setters — same path the TUI takes.
-    let mut tab = UpdatesTab::new();
+    // Populate the real UpdateSource via its public setters — same path the TUI takes.
+    let mut tab = UpdateSource::new();
     tab.set_collections(collections);
     tab.set_local_beatmapsets(beatmapsets);
     tab.set_all_checksums(all_checksums);

@@ -10,9 +10,9 @@ use crate::utils::expand_tilde;
 ///
 /// Owns the osu!-path text field and its editing, so the field survives when
 /// the panel that renders it moves. Scan/selection reset on a client switch
-/// stays on the Updates tab (see [`UpdatesTab::reset_for_client_switch`]).
+/// stays on the Updates tab (see [`UpdateSource::reset_for_client_switch`]).
 ///
-/// [`UpdatesTab::reset_for_client_switch`]: super::UpdatesTab::reset_for_client_switch
+/// [`UpdateSource::reset_for_client_switch`]: super::UpdateSource::reset_for_client_switch
 #[derive(Debug, Clone)]
 pub struct LibraryState {
     pub client_type: OsuClient,
@@ -79,9 +79,9 @@ impl LibraryState {
     /// Switch the active osu! client (stable ↔ lazer). Re-detects the default
     /// install path while the field still holds a placeholder, then updates the
     /// placeholder hint. The prior client's scan data is cleared by the caller
-    /// via [`UpdatesTab::reset_for_client_switch`].
+    /// via [`UpdateSource::reset_for_client_switch`].
     ///
-    /// [`UpdatesTab::reset_for_client_switch`]: super::UpdatesTab::reset_for_client_switch
+    /// [`UpdateSource::reset_for_client_switch`]: super::UpdateSource::reset_for_client_switch
     pub fn switch_client(&mut self) {
         self.client_type.toggle();
         let new_path = Self::detect_default_path(self.client_type);
@@ -92,7 +92,7 @@ impl LibraryState {
     }
 
     // osu!-path text editing. The caller gates these on the Updates panel's path
-    // field being the editable focus (`UpdatesTab::osu_path_editable`).
+    // field being the editable focus (`UpdateSource::osu_path_editable`).
     pub fn insert_char(&mut self, ch: char) {
         self.osu_path.insert_char(ch);
     }

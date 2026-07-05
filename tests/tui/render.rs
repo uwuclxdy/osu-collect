@@ -179,7 +179,7 @@ fn home_cta_scrolls_into_view_on_short_terminal() {
 fn updates_tab_shows_recheck_failed_control() {
     let mut app = make_app();
     app.next_tab();
-    app.updates.set_failed_beatmapset_count(2);
+    app.home.update.set_failed_beatmapset_count(2);
     // use a tall terminal so the summary_metrics row (last in the list) stays visible
     let content = render_content(&app, 120, 60);
 
@@ -195,18 +195,19 @@ fn updates_tab_shows_recheck_failed_control() {
 
 #[test]
 fn updates_focused_list_row_follows_viewport_on_short_terminal() {
-    use osu_collect::app::UpdatesField;
-    use osu_collect::app::updates::CollectionEntry;
+    use osu_collect::app::UpdateField;
+    use osu_collect::app::update_source::CollectionEntry;
 
     // A long expanded collection list with the cursor on the last entry: the
     // `ListState` scroll target must follow the cursor down so the bottom row is
     // visible and the top row has scrolled out of the window.
     let mut app = make_app();
     app.next_tab();
-    app.updates.selection.focus = UpdatesField::Collections;
-    app.updates.selection.in_collection_list = true;
+    app.home.update.selection.focus = UpdateField::Collections;
+    app.home.update.selection.in_collection_list = true;
     for i in 0..20u64 {
-        app.updates
+        app.home
+            .update
             .selection
             .local_collections
             .push(CollectionEntry {
@@ -217,7 +218,7 @@ fn updates_focused_list_row_follows_viewport_on_short_terminal() {
                 removed_count: 0,
             });
     }
-    app.updates.selection.collections_state = Some(19);
+    app.home.update.selection.collections_state = Some(19);
 
     let content = render_content(&app, 120, 18);
     assert!(
@@ -312,7 +313,7 @@ fn updates_footer_shows_recheck_with_failed_maps() {
     let mut app = make_app();
     app.next_tab();
     // scan_status defaults to Idle (a "ready" state) so can_recheck is true.
-    app.updates.set_failed_beatmapset_count(1);
+    app.home.update.set_failed_beatmapset_count(1);
     let content = render_content(&app, 120, 24);
     assert!(
         content.contains("recheck"),
@@ -324,7 +325,7 @@ fn updates_footer_shows_recheck_with_failed_maps() {
 fn updates_footer_in_list_shows_scroll_and_select_hints() {
     let mut app = make_app();
     app.next_tab();
-    app.updates.selection.in_collection_list = true;
+    app.home.update.selection.in_collection_list = true;
     let content = render_content(&app, 120, 24);
     assert!(
         content.contains("scroll"),
@@ -484,7 +485,7 @@ fn updates_footer_not_in_list_has_at_most_five_hints() {
 fn updates_footer_in_list_has_exactly_five_hints() {
     let mut app = make_app();
     app.next_tab();
-    app.updates.selection.in_collection_list = true;
+    app.home.update.selection.in_collection_list = true;
     let footer = render_footer_row(&app, 200, 24);
     assert!(
         footer.contains("switch client"),

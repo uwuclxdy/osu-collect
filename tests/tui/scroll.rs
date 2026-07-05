@@ -3,8 +3,8 @@
 /// These verify that the focused row follows the viewport at small terminal
 /// sizes — the `ListState` scroll target is decoupled from the highlight, so the
 /// focused row scrolls into view even when it styles itself (CTA / auth chip).
-use osu_collect::app::updates::CollectionEntry;
-use osu_collect::app::{App, UpdatesField};
+use osu_collect::app::update_source::CollectionEntry;
+use osu_collect::app::{App, UpdateField};
 use osu_collect::config::Config;
 use osu_collect::tui::draw;
 use ratatui::{Terminal, backend::TestBackend};
@@ -33,10 +33,11 @@ fn updates_tab_renders_at_minimum_size() {
     // A long expanded collection list overflows an 80×18 viewport. With the
     // cursor on the last entry, the `ListState` scroll target follows it: the
     // bottom row is visible and the top row has scrolled out of view.
-    app.updates.selection.focus = UpdatesField::Collections;
-    app.updates.selection.in_collection_list = true;
+    app.home.update.selection.focus = UpdateField::Collections;
+    app.home.update.selection.in_collection_list = true;
     for i in 0..20u64 {
-        app.updates
+        app.home
+            .update
             .selection
             .local_collections
             .push(CollectionEntry {
@@ -47,7 +48,7 @@ fn updates_tab_renders_at_minimum_size() {
                 removed_count: 0,
             });
     }
-    app.updates.selection.collections_state = Some(19);
+    app.home.update.selection.collections_state = Some(19);
 
     let content = render_content(&app, 80, 18);
     assert!(

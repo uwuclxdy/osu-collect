@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use osu_collect::{
-        app::{runtime, updates::extract_collection_id},
+        app::{runtime, update_source::extract_collection_id},
         osu_db::OsuClient,
     };
     use std::{
