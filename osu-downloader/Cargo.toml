@@ -1,6 +1,6 @@
 [package]
 name = "osu-downloader"
-version = "0.16.1"
+version = "0.17.0"
 edition = "2024"
 autotests = false
 publish = false
@@ -44,13 +44,16 @@ tempfile = "3.27.0"
 criterion = { version = "0.8.2", features = ["html_reports"] }
 
 [features]
-default = ["collection", "size-fetch"]
+default = ["collection", "size-fetch", "search"]
 
 # osucollector.com client + Collection types
 collection = []
 
 # Beatmapset size fetching
 size-fetch = []
+
+# osu! API v2 beatmapset search client
+search = []
 
 # Expose test helpers (e.g. Downloader::with_client) for integration tests in dependent crates
 test-helpers = []

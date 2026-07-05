@@ -5,7 +5,7 @@ use std::time::Duration;
 
 pub(crate) const DEFAULT_DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[cfg(any(feature = "collection", feature = "size-fetch"))]
+#[cfg(any(feature = "collection", feature = "size-fetch", feature = "search"))]
 pub(crate) const DEFAULT_API_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub(crate) fn create_download_client(user_agent: Option<String>) -> Result<reqwest::Client> {
@@ -21,7 +21,7 @@ pub(crate) fn create_download_client(user_agent: Option<String>) -> Result<reqwe
     builder.build().map_err(Into::into)
 }
 
-#[cfg(any(feature = "collection", feature = "size-fetch"))]
+#[cfg(any(feature = "collection", feature = "size-fetch", feature = "search"))]
 pub(crate) fn create_api_client() -> Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .timeout(DEFAULT_API_TIMEOUT)
