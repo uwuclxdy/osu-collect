@@ -8,6 +8,7 @@ fn write_toml(dir: &std::path::Path, contents: &str) -> std::path::PathBuf {
 }
 
 #[test]
+#[serial_test::serial(config_env)]
 fn theme_field_roundtrips_through_save_and_load() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");

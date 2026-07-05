@@ -322,6 +322,7 @@ fn osu_official_toggle_blocked_and_notifies_when_logged_out() {
 }
 
 #[test]
+#[serial_test::serial(config_env)]
 fn osu_official_toggle_works_when_logged_in() {
     use osu_collect::app::{AuthLoginState, ConfigField};
     use osu_collect::config::constants::CONFIG_TAB_INDEX;
@@ -365,6 +366,7 @@ fn enter_on_home_mirrors_summary_jumps_to_config_mirrors() {
 }
 
 #[test]
+#[serial_test::serial(config_env)]
 fn config_mirror_toggle_syncs_home_count() {
     use osu_collect::app::ConfigField;
     use osu_collect::config::constants::CONFIG_TAB_INDEX;
@@ -821,6 +823,7 @@ fn enter_inside_collection_list_is_no_op() {
 // ── config tab: mirror reorder ────────────────────────────────────────────────
 
 #[test]
+#[serial_test::serial(config_env)]
 fn shift_arrow_reorders_config_mirror_and_syncs_pipeline() {
     use osu_collect::app::ConfigField;
     use osu_collect::config::constants::CONFIG_TAB_INDEX;
