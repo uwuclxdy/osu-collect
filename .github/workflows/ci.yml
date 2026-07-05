@@ -6,10 +6,92 @@ on:
       - '**'
   pull_request:
 
+# Least-privilege default: read-only token. Build jobs only upload ephemeral
+# artifacts (no GitHub Release publish), which needs no extra scope.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref so rapid pushes don't stack.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Force HTTP/1.1 for registry downloads: curl's HTTP/2 multiplexing against the
+# crates.io CDN intermittently dies with "[16] Error in the HTTP2 framing layer"
+# on the hosted runners. Extra retries cover the remaining transient blips.
 env:
   CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_MULTIPLEXING: "false"
 
 jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: fmt --check
+        run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    env:
+      OSU_CLIENT_ID: ${{ secrets.OSU_CLIENT_ID }}
+      OSU_CLIENT_SECRET: ${{ secrets.OSU_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential zlib1g-dev libssl-dev
+      - uses: Swatinem/rust-cache@v2
+      - name: clippy (-D warnings)
+        run: cargo clippy --all-targets --all-features --release -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    env:
+      OSU_CLIENT_ID: ${{ secrets.OSU_CLIENT_ID }}
+      OSU_CLIENT_SECRET: ${{ secrets.OSU_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential zlib1g-dev libssl-dev
+      - uses: Swatinem/rust-cache@v2
+      - name: test
+        run: cargo test --release --all-targets --all-features
+      - name: test osu-downloader lib
+        run: cargo test --manifest-path osu-downloader/Cargo.toml --all-features
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses bans sources
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: taiki-e/install-action@cargo-audit
+      - name: cargo audit
+        run: cargo audit
+
   build-linux:
     runs-on: ubuntu-latest
     env:
