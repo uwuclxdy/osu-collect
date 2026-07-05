@@ -35,47 +35,6 @@ jobs:
       - name: fmt --check
         run: cargo fmt --all -- --check
 
-  clippy:
-    runs-on: ubuntu-latest
-    env:
-      OSU_CLIENT_ID: ${{ secrets.OSU_CLIENT_ID }}
-      OSU_CLIENT_SECRET: ${{ secrets.OSU_CLIENT_SECRET }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake build-essential zlib1g-dev libssl-dev
-      - uses: Swatinem/rust-cache@v2
-      - name: clippy (-D warnings)
-        run: cargo clippy --all-targets --all-features --release -- -D warnings
-
-  test:
-    runs-on: ubuntu-latest
-    env:
-      OSU_CLIENT_ID: ${{ secrets.OSU_CLIENT_ID }}
-      OSU_CLIENT_SECRET: ${{ secrets.OSU_CLIENT_SECRET }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake build-essential zlib1g-dev libssl-dev
-      - uses: Swatinem/rust-cache@v2
-      - name: test
-        run: cargo test --release --all-targets --all-features
-      - name: test osu-downloader lib
-        run: cargo test --manifest-path osu-downloader/Cargo.toml --all-features
-
   deny:
     runs-on: ubuntu-latest
     steps:
@@ -105,7 +64,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: clippy
           targets: x86_64-unknown-linux-gnu
 
       - name: Install dependencies
@@ -114,9 +73,6 @@ jobs:
           sudo apt-get install -y cmake build-essential zlib1g-dev libssl-dev
 
       - uses: Swatinem/rust-cache@v2
-
-      - name: fmt --check
-        run: cargo fmt --all -- --check
 
       - name: clippy
         run: cargo clippy --all-targets --all-features --release --target x86_64-unknown-linux-gnu -- -D warnings
@@ -160,13 +116,10 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: clippy
           targets: x86_64-pc-windows-msvc
 
       - uses: Swatinem/rust-cache@v2
-
-      - name: fmt --check
-        run: cargo fmt --all -- --check
 
       - name: clippy
         run: cargo clippy --all-targets --all-features --release --target x86_64-pc-windows-msvc -- -D warnings
@@ -208,16 +161,13 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: clippy
           targets: aarch64-apple-darwin
 
       - name: Install dependencies
         run: brew install cmake
 
       - uses: Swatinem/rust-cache@v2
-
-      - name: fmt --check
-        run: cargo fmt --all -- --check
 
       - name: clippy
         run: cargo clippy --all-targets --all-features --release --target aarch64-apple-darwin -- -D warnings
