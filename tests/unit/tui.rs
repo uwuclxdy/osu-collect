@@ -1529,14 +1529,14 @@ fn config_custom_mirror_help_hidden_when_not_focused() {
 
 #[test]
 fn updates_osu_path_help_shows_when_focused() {
-    use crate::app::UpdateField;
+    use crate::app::{GetMapsSource, HomeField};
     use crate::osu_db::OsuClient;
 
     let mut config = Config::default();
     config.recent.osu_client = Some(OsuClient::Stable);
     let mut app = App::new(config);
-    app.active_tab = Tab::Updates;
-    app.home.update.selection.focus = UpdateField::OsuPath;
+    app.home.source = GetMapsSource::Update;
+    app.home.focus = HomeField::UpdateOsuPath;
 
     let output = render_app(&app, 100, 30);
 
@@ -1548,14 +1548,14 @@ fn updates_osu_path_help_shows_when_focused() {
 
 #[test]
 fn updates_osu_path_help_names_active_client_db() {
-    use crate::app::UpdateField;
+    use crate::app::{GetMapsSource, HomeField};
     use crate::osu_db::OsuClient;
 
     let mut config = Config::default();
     config.recent.osu_client = Some(OsuClient::Lazer);
     let mut app = App::new(config);
-    app.active_tab = Tab::Updates;
-    app.home.update.selection.focus = UpdateField::OsuPath;
+    app.home.source = GetMapsSource::Update;
+    app.home.focus = HomeField::UpdateOsuPath;
 
     let output = render_app(&app, 100, 30);
 
@@ -1571,11 +1571,11 @@ fn updates_osu_path_help_names_active_client_db() {
 
 #[test]
 fn updates_osu_path_help_hidden_when_not_focused() {
-    use crate::app::UpdateField;
+    use crate::app::{GetMapsSource, HomeField};
 
     let mut app = App::new(Config::default());
-    app.active_tab = Tab::Updates;
-    app.home.update.selection.focus = UpdateField::Collections;
+    app.home.source = GetMapsSource::Update;
+    app.home.focus = HomeField::UpdateScan;
 
     let output = render_app(&app, 100, 30);
 
@@ -1661,14 +1661,18 @@ fn compact_config_renders_without_panic() {
 
 #[test]
 fn compact_updates_renders_without_panic() {
+    use crate::app::GetMapsSource;
     let mut app = App::new(Config::default());
-    app.active_tab = Tab::Updates;
+    app.home.source = GetMapsSource::Update;
     let output = render_app(&app, 60, 10);
-    assert!(!output.is_empty(), "compact updates must produce output");
-    // source/missing sections are hidden
     assert!(
-        !output.contains("SOURCE"),
-        "source section header must be hidden in compact updates"
+        !output.is_empty(),
+        "compact update source must produce output"
+    );
+    // The scan CTA is the anchor of the compact update form.
+    assert!(
+        output.contains("scan"),
+        "compact update source must show the scan CTA: {output}"
     );
 }
 

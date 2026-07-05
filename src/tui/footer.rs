@@ -1,5 +1,5 @@
 use crate::app::{
-    App, ConfigField, ConfigTab, HomeField, HomeTab, LoginField, Tab, UpdateField, UpdateSource,
+    App, ConfigField, ConfigTab, GetMapsSource, HomeField, HomeTab, LoginField, Tab,
     messages::AppMessage,
 };
 use crate::download::DownloadStage;
@@ -46,12 +46,18 @@ const HINT_ENTER_TOGGLE: &str = "↵ toggle";
 const HINT_ENTER_OPEN: &str = "↵ open";
 const HINT_ENTER_CONFIRM: &str = "↵ confirm";
 const HINT_ENTER_DOWNLOAD: &str = "↵ download";
+/// Update source's scan CTA (form focus): run the scan / descend into the browse.
+const HINT_SCAN: &str = "↵ scan";
+/// Update browse: focus the preview pane / return to the collections list.
+const HINT_FOCUS_PREVIEW: &str = "→ preview";
+const HINT_FOCUS_LIST: &str = "← list";
 /// Text-input row, selected-not-editing: enter descends into edit mode.
 const HINT_EDIT: &str = "↵ edit";
 /// While editing a text field: esc (or enter) exits back to selected.
 const HINT_EDIT_DONE: &str = "esc done";
 const HINT_PLUS_MINUS: &str = "+/- adjust";
-const HINT_ALL_NONE: &str = "a all / d none";
+/// Update browse (list pane): select every collection / none.
+const HINT_SELECT_ALL_NONE: &str = "a all / A none";
 const HINT_RECHECK: &str = "r recheck";
 const HINT_MARK_INSTALLED: &str = "i installed / I all";
 const HINT_QUIT: &str = "q quit";
@@ -150,8 +156,10 @@ fn modal_hint(app: &App) -> Option<String> {
 
 fn current_message(app: &App) -> Option<&AppMessage> {
     match app.active_tab() {
+        // The update source carries the scan-progress loading line; the other
+        // sources use the shared home message.
+        Tab::Home if app.home.source == GetMapsSource::Update => app.home.update.message.as_ref(),
         Tab::Home => app.home.message.as_ref(),
-        Tab::Updates => app.home.update.message.as_ref(),
         // The login split lives on Config and surfaces its in-progress status
         // via `config.message`, so the Config arm covers it too.
         Tab::Config => app.config.message.as_ref(),
@@ -193,8 +201,7 @@ fn tab_hints(app: &App) -> (Vec<&'static str>, Option<&'static str>) {
         return (login_hints(app), Some(HINT_CLOSE));
     }
     match app.active_tab() {
-        Tab::Home => (home_hints(&app.home), Some(HINT_QUIT)),
-        Tab::Updates => updates_hints(&app.home.update),
+        Tab::Home => home_tab_hints(&app.home),
         Tab::Config => (config_hints(&app.config), Some(HINT_QUIT)),
         Tab::Download(_) => download_hints(app),
     }
@@ -242,7 +249,17 @@ fn join(segments: &[&str]) -> String {
     segments.join(HINT_SEPARATOR)
 }
 
-fn home_hints(form: &HomeTab) -> Vec<&'static str> {
+/// Home-tab middle hints + trailing back key. The update source has its own
+/// form / browse hint sets; the other sources use the standard form hints and
+/// trail `q quit`.
+fn home_tab_hints(form: &HomeTab) -> (Vec<&'static str>, Option<&'static str>) {
+    if form.source == GetMapsSource::Update {
+        return update_source_hints(form);
+    }
+    (home_form_hints(form), Some(HINT_QUIT))
+}
+
+fn home_form_hints(form: &HomeTab) -> Vec<&'static str> {
     let mut segments = vec![HINT_MOVE];
     match form.focus {
         HomeField::Source => segments.push(HINT_SOURCE),
@@ -256,27 +273,38 @@ fn home_hints(form: &HomeTab) -> Vec<&'static str> {
     segments
 }
 
-fn updates_hints(form: &UpdateSource) -> (Vec<&'static str>, Option<&'static str>) {
-    // `r` rechecks known-bad maps from any non-editing focus (list or settled).
-    let can_recheck = form.can_recheck_failed_maps();
-    if form.selection.in_collection_list || form.selection.in_beatmap_list {
-        let mut segments = vec![HINT_SCROLL, HINT_ENTER_TOGGLE, HINT_ALL_NONE];
-        if form.selection.in_beatmap_list {
-            segments.push(HINT_MARK_INSTALLED);
-        }
+fn update_source_hints(form: &HomeTab) -> (Vec<&'static str>, Option<&'static str>) {
+    let update = &form.update;
+    // `r` rechecks known-bad maps from any non-editing focus.
+    let can_recheck = update.can_recheck_failed_maps();
+
+    if update.is_browsing() {
+        let mut segments = if update.preview_focused() {
+            vec![HINT_SCROLL, HINT_MARK_INSTALLED, HINT_FOCUS_LIST]
+        } else if update.cursor_on_action() {
+            vec![HINT_SCROLL, HINT_ENTER_DOWNLOAD, HINT_FOCUS_PREVIEW]
+        } else {
+            vec![
+                HINT_SCROLL,
+                HINT_ENTER_TOGGLE,
+                HINT_SELECT_ALL_NONE,
+                HINT_FOCUS_PREVIEW,
+            ]
+        };
         if can_recheck {
             segments.push(HINT_RECHECK);
         }
-        // An open list ascends on esc/q rather than quitting; that back step is
-        // left unadvertised (esc-to-go-back is universal), so no trailing key.
+        // The browse ascends on esc rather than quitting; that back step is left
+        // unadvertised (esc-to-go-back is universal), so no trailing key.
         return (segments, None);
     }
 
     let mut segments = vec![HINT_MOVE];
-    match form.selection.focus {
-        UpdateField::Collections | UpdateField::BeatmapList => segments.push(HINT_ENTER_OPEN),
-        UpdateField::Download => segments.push(HINT_ENTER_DOWNLOAD),
-        UpdateField::OsuPath => segments.push(HINT_EDIT),
+    match form.focus {
+        HomeField::Source => segments.push(HINT_SOURCE),
+        HomeField::UpdateScan => segments.push(HINT_SCAN),
+        HomeField::UpdateOsuPath => segments.push(HINT_EDIT),
+        _ => {}
     }
     if can_recheck {
         segments.push(HINT_RECHECK);

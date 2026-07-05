@@ -207,29 +207,29 @@ fn r_on_selected_not_editing_text_input_probes() {
     );
 }
 
-/// `r` on the updates tab does NOT emit ProbeMirrors from home.
+/// `r` on the update source does NOT emit ProbeMirrors (it rechecks failed maps).
 #[test]
-fn r_on_updates_tab_does_not_emit_probe_mirrors() {
+fn r_on_update_source_does_not_emit_probe_mirrors() {
+    use crate::app::GetMapsSource;
     let mut app = App::new(Config::default());
-    app.active_tab = Tab::Updates;
+    app.home.source = GetMapsSource::Update;
 
     let cmd = app.handle_key(char_key('r'));
 
     assert!(
         !matches!(cmd, Some(AppCommand::ProbeMirrors)),
-        "ProbeMirrors must not fire on updates tab"
+        "ProbeMirrors must not fire on the update source"
     );
 }
 
 // ── tab activation triggers probe ─────────────────────────────────────────────
 
-/// Switching to the home tab via Right arrow emits ProbeMirrors.
+/// Switching to the home tab via Left arrow emits ProbeMirrors.
 #[test]
 fn switching_to_home_tab_emits_probe_mirrors() {
     let mut app = App::new(Config::default());
-    // Start on config tab so that pressing Left wraps back to updates, then home.
-    // Easier: start on updates tab (index 1) and press Left.
-    app.active_tab = Tab::Updates; // updates
+    // Start on config (the only other static tab); Left wraps to home.
+    app.active_tab = Tab::Config;
 
     let cmd = app.handle_key(key(KeyCode::Left));
 
@@ -237,22 +237,5 @@ fn switching_to_home_tab_emits_probe_mirrors() {
     assert!(
         matches!(cmd, Some(AppCommand::ProbeMirrors)),
         "expected ProbeMirrors when switching to home, got {cmd:?}"
-    );
-}
-
-/// Switching away from the home tab to updates emits ScanLocalDatabase, not ProbeMirrors.
-#[test]
-fn switching_to_updates_tab_emits_scan_not_probe() {
-    use crate::app::HomeField;
-    let mut app = App::new(Config::default());
-    app.active_tab = Tab::Home;
-    // Focus a non-text field so Right switches tabs rather than moving the caret.
-    app.home.focus = HomeField::Video;
-
-    let cmd = app.handle_key(key(KeyCode::Right));
-
-    assert!(
-        matches!(cmd, Some(AppCommand::ScanLocalDatabase)),
-        "expected ScanLocalDatabase when switching to updates, got {cmd:?}"
     );
 }

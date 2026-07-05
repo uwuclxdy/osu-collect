@@ -9,41 +9,42 @@ fn key(code: KeyCode) -> KeyEvent {
 }
 
 #[test]
-fn right_tab_switch_ignores_stale_updates_list_on_home() {
+fn right_tab_switch_from_home_off_a_non_text_field() {
     use crate::app::HomeField;
     let mut app = App::new(Config::default());
     app.active_tab = Tab::Home;
     // Focus a non-text field so Right switches tabs rather than moving the caret.
     app.home.focus = HomeField::Video;
-    app.home.update.selection.in_collection_list = true;
 
-    let cmd = app.handle_key(key(KeyCode::Right));
+    app.handle_key(key(KeyCode::Right));
 
-    assert_eq!(app.active_tab, Tab::Updates);
-    assert!(matches!(cmd, Some(AppCommand::ScanLocalDatabase)));
+    // Two static tabs: Home → Config.
+    assert_eq!(app.active_tab, Tab::Config);
 }
 
 #[test]
-fn left_tab_switch_ignores_stale_updates_list_on_config() {
+fn left_tab_switch_to_home_probes_mirrors() {
     let mut app = App::new(Config::default());
     app.active_tab = Tab::Config;
-    app.home.update.selection.in_beatmap_list = true;
 
     let cmd = app.handle_key(key(KeyCode::Left));
 
-    assert_eq!(app.active_tab, Tab::Updates);
-    assert!(matches!(cmd, Some(AppCommand::ScanLocalDatabase)));
+    assert_eq!(app.active_tab, Tab::Home);
+    assert!(matches!(cmd, Some(AppCommand::ProbeMirrors)));
 }
 
 #[test]
-fn tab_switch_stays_locked_inside_updates_list() {
+fn arrow_stays_on_home_while_browsing_updates() {
+    use crate::app::GetMapsSource;
     let mut app = App::new(Config::default());
-    app.active_tab = Tab::Updates;
-    app.home.update.selection.in_collection_list = true;
+    app.active_tab = Tab::Home;
+    app.home.source = GetMapsSource::Update;
+    app.home.update.descend();
 
+    // In browse, → focuses a pane instead of switching tabs.
     let cmd = app.handle_key(key(KeyCode::Right));
 
-    assert_eq!(app.active_tab, Tab::Updates);
+    assert_eq!(app.active_tab, Tab::Home);
     assert!(cmd.is_none());
 }
 

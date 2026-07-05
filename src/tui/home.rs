@@ -1,4 +1,4 @@
-use crate::app::{GetMapsSource, HomeField, HomeTab, ResolveState};
+use crate::app::{GetMapsSource, HomeField, HomeTab, LibraryState, ResolveState};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -8,7 +8,9 @@ use ratatui::{
 };
 
 use super::widgets;
-use super::{accent, danger, focused_label, line, success, text_dim, text_faint, warning};
+use super::{
+    accent, danger, focused_label, line, success, text_dim, text_faint, update_source, warning,
+};
 use crate::utils::pretty_path;
 use std::path::Path;
 
@@ -36,20 +38,46 @@ const HELP_MIRRORS_SUMMARY: &str = "enter to edit mirrors in the config tab";
 ///
 /// System-wide banners are rendered by [`super::draw`] above the body area, so
 /// this receives the already-reduced content area.
-pub fn render(frame: &mut Frame, area: Rect, form: &HomeTab, editing: bool) {
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    form: &HomeTab,
+    library: &LibraryState,
+    editing: bool,
+) {
     if area.height < super::COMPACT_HEIGHT {
-        render_compact(frame, area, form, editing);
+        render_compact(frame, area, form, library, editing);
         return;
     }
-    render_content(frame, area, form, editing);
+    render_content(frame, area, form, library, editing);
+}
+
+/// Caret column for the update source's osu! path input (its value lives on
+/// `library`), or `None` when it isn't the focused, editing row.
+fn update_cursor_col(form: &HomeTab, library: &LibraryState, editing: bool) -> Option<u16> {
+    (editing && form.focus == HomeField::UpdateOsuPath)
+        .then(|| widgets::input_cursor_col(&library.osu_path, 0))
 }
 
 /// Compact render: all focusable fields without section headers, spacers, or help lines.
 ///
 /// Navigation is identical to normal mode — the full `HOME_FIELDS` cycle still applies.
 /// Only decorative chrome is stripped to reclaim vertical space.
-fn render_compact(frame: &mut Frame, area: Rect, form: &HomeTab, editing: bool) {
+fn render_compact(
+    frame: &mut Frame,
+    area: Rect,
+    form: &HomeTab,
+    library: &LibraryState,
+    editing: bool,
+) {
     let focus = form.focus;
+
+    // The update-source browse claims the whole body regardless of density.
+    if form.source == GetMapsSource::Update && form.update.is_browsing() {
+        update_source::render_browse(frame, area, &form.update);
+        return;
+    }
+
     let mut items = widgets::FormItems::new(focus);
 
     items.push_focusable(
@@ -57,22 +85,43 @@ fn render_compact(frame: &mut Frame, area: Rect, form: &HomeTab, editing: bool) 
         source_row_item(form.source, focus == HomeField::Source),
     );
 
-    if form.source != GetMapsSource::Collection {
-        items.push(placeholder_body(form.source));
-        let (items, focused_index) = items.into_parts();
-        widgets::render_scrollable_panel(
-            frame,
-            area,
-            PANEL_TITLE,
-            items,
-            focused_index,
-            true,
-            None,
-            true,
-            true,
-            &form.list_offset,
-        );
-        return;
+    match form.source {
+        GetMapsSource::Collection => {}
+        GetMapsSource::Update => {
+            update_source::push_form_rows(&mut items, &form.update, library, focus, editing);
+            let cursor_col = update_cursor_col(form, library, editing);
+            let (items, focused_index) = items.into_parts();
+            widgets::render_scrollable_panel(
+                frame,
+                area,
+                PANEL_TITLE,
+                items,
+                focused_index,
+                focus != HomeField::UpdateScan,
+                cursor_col,
+                true,
+                true,
+                &form.list_offset,
+            );
+            return;
+        }
+        GetMapsSource::Search => {
+            items.push(placeholder_body(form.source));
+            let (items, focused_index) = items.into_parts();
+            widgets::render_scrollable_panel(
+                frame,
+                area,
+                PANEL_TITLE,
+                items,
+                focused_index,
+                true,
+                None,
+                true,
+                true,
+                &form.list_offset,
+            );
+            return;
+        }
     }
 
     items.push_focusable(
@@ -165,8 +214,21 @@ fn directory_hint(form: &HomeTab) -> String {
     )
 }
 
-fn render_content(frame: &mut Frame, area: Rect, form: &HomeTab, editing: bool) {
+fn render_content(
+    frame: &mut Frame,
+    area: Rect,
+    form: &HomeTab,
+    library: &LibraryState,
+    editing: bool,
+) {
     let focus = form.focus;
+
+    // The update-source browse claims the whole body.
+    if form.source == GetMapsSource::Update && form.update.is_browsing() {
+        update_source::render_browse(frame, area, &form.update);
+        return;
+    }
+
     let mut items = widgets::FormItems::new(focus);
 
     // Source strip is the first focusable row on every source.
@@ -176,24 +238,44 @@ fn render_content(frame: &mut Frame, area: Rect, form: &HomeTab, editing: bool) 
     );
     items.push(widgets::spacer());
 
-    // Search / update render a placeholder until their real forms land; only the
-    // collection source has a functional body today.
-    if form.source != GetMapsSource::Collection {
-        items.push(placeholder_body(form.source));
-        let (items, focused_index) = items.into_parts();
-        widgets::render_scrollable_panel(
-            frame,
-            area,
-            PANEL_TITLE,
-            items,
-            focused_index,
-            true,
-            None,
-            true,
-            true,
-            &form.list_offset,
-        );
-        return;
+    match form.source {
+        GetMapsSource::Collection => {}
+        GetMapsSource::Update => {
+            update_source::push_form_rows(&mut items, &form.update, library, focus, editing);
+            let cursor_col = update_cursor_col(form, library, editing);
+            let (items, focused_index) = items.into_parts();
+            widgets::render_scrollable_panel(
+                frame,
+                area,
+                PANEL_TITLE,
+                items,
+                focused_index,
+                focus != HomeField::UpdateScan,
+                cursor_col,
+                true,
+                true,
+                &form.list_offset,
+            );
+            return;
+        }
+        // Search renders a placeholder until its real form lands.
+        GetMapsSource::Search => {
+            items.push(placeholder_body(form.source));
+            let (items, focused_index) = items.into_parts();
+            widgets::render_scrollable_panel(
+                frame,
+                area,
+                PANEL_TITLE,
+                items,
+                focused_index,
+                true,
+                None,
+                true,
+                true,
+                &form.list_offset,
+            );
+            return;
+        }
     }
 
     let active_section = home_section(focus);
@@ -357,7 +439,9 @@ fn home_section(field: HomeField) -> &'static str {
         Collection => SECTION_COLLECTION,
         Mirrors => SECTION_MIRRORS,
         Threads | AutoOverwrite | Video | Directory => SECTION_DOWNLOAD,
-        Download => SECTION_NONE,
+        // The update-source fields render in their own body, not the collection
+        // sections, so they light no header here.
+        Download | UpdateOsuPath | UpdateScan => SECTION_NONE,
     }
 }
 
@@ -369,15 +453,12 @@ fn source_row_item(active: GetMapsSource, focused: bool) -> ListItem<'static> {
     widgets::cycle_item(LABEL_SOURCE, &options, active.label(), focused, 0)
 }
 
-/// Placeholder body for a not-yet-wired source. Search lands in a later update;
-/// the update source folds the existing Updates tab in, so it points there for
-/// now.
+/// Placeholder body for the search source, which lands in a later update. The
+/// collection and update sources render their real forms, never this.
 fn placeholder_body(source: GetMapsSource) -> ListItem<'static> {
     let msg = match source {
         GetMapsSource::Search => "search lands in a later update",
-        GetMapsSource::Update => "use the updates tab for now",
-        // The collection source renders its real form, never this placeholder.
-        GetMapsSource::Collection => "",
+        GetMapsSource::Collection | GetMapsSource::Update => "",
     };
     ListItem::new(Line::from(Span::styled(
         msg.to_string(),

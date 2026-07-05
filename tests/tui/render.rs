@@ -173,12 +173,13 @@ fn home_cta_scrolls_into_view_on_short_terminal() {
     );
 }
 
-// ── updates view ─────────────────────────────────────────────────────────────
+// ── update source view ───────────────────────────────────────────────────────
 
 #[test]
-fn updates_tab_shows_recheck_failed_control() {
+fn update_source_shows_recheck_failed_control() {
+    use osu_collect::app::GetMapsSource;
     let mut app = make_app();
-    app.next_tab();
+    app.home.source = GetMapsSource::Update;
     app.home.update.set_failed_beatmapset_count(2);
     // use a tall terminal so the summary_metrics row (last in the list) stays visible
     let content = render_content(&app, 120, 60);
@@ -194,17 +195,15 @@ fn updates_tab_shows_recheck_failed_control() {
 }
 
 #[test]
-fn updates_focused_list_row_follows_viewport_on_short_terminal() {
-    use osu_collect::app::UpdateField;
+fn update_browse_collection_row_follows_viewport_on_short_terminal() {
+    use osu_collect::app::GetMapsSource;
     use osu_collect::app::update_source::CollectionEntry;
 
-    // A long expanded collection list with the cursor on the last entry: the
-    // `ListState` scroll target must follow the cursor down so the bottom row is
-    // visible and the top row has scrolled out of the window.
+    // A long collections list with the cursor on the last entry: the `ListState`
+    // scroll target must follow the cursor down so the bottom row is visible and
+    // the top row has scrolled out of the window.
     let mut app = make_app();
-    app.next_tab();
-    app.home.update.selection.focus = UpdateField::Collections;
-    app.home.update.selection.in_collection_list = true;
+    app.home.source = GetMapsSource::Update;
     for i in 0..20u64 {
         app.home
             .update
@@ -218,7 +217,8 @@ fn updates_focused_list_row_follows_viewport_on_short_terminal() {
                 removed_count: 0,
             });
     }
-    app.home.update.selection.collections_state = Some(19);
+    app.home.update.descend();
+    app.home.update.selection.collections_cursor = Some(19);
 
     let content = render_content(&app, 120, 18);
     assert!(
@@ -232,11 +232,12 @@ fn updates_focused_list_row_follows_viewport_on_short_terminal() {
 }
 
 #[test]
-fn updates_tab_shows_client_toggle() {
+fn update_source_shows_client_toggle() {
+    use osu_collect::app::GetMapsSource;
     let mut app = make_app();
-    app.next_tab();
+    app.home.source = GetMapsSource::Update;
     let content = render_content(&app, 120, 40);
-    // client toggle shows either "lazer" or "stable"
+    // The header client chip shows either "lazer" or "stable" on any surface.
     assert!(content.contains("lazer") || content.contains("stable"));
 }
 
@@ -245,7 +246,6 @@ fn updates_tab_shows_client_toggle() {
 #[test]
 fn config_tab_shows_auth_chip() {
     let mut app = make_app();
-    app.next_tab();
     app.next_tab();
     let content = render_content(&app, 120, 40);
     assert!(
@@ -301,17 +301,19 @@ fn home_footer_shows_enter_download_on_button_focus() {
 }
 
 #[test]
-fn updates_footer_hides_recheck_without_failed_maps() {
+fn update_source_footer_hides_recheck_without_failed_maps() {
+    use osu_collect::app::GetMapsSource;
     let mut app = make_app();
-    app.next_tab();
+    app.home.source = GetMapsSource::Update;
     let content = render_content(&app, 120, 24);
     assert!(!content.contains("recheck"));
 }
 
 #[test]
-fn updates_footer_shows_recheck_with_failed_maps() {
+fn update_source_footer_shows_recheck_with_failed_maps() {
+    use osu_collect::app::GetMapsSource;
     let mut app = make_app();
-    app.next_tab();
+    app.home.source = GetMapsSource::Update;
     // scan_status defaults to Idle (a "ready" state) so can_recheck is true.
     app.home.update.set_failed_beatmapset_count(1);
     let content = render_content(&app, 120, 24);
@@ -322,27 +324,35 @@ fn updates_footer_shows_recheck_with_failed_maps() {
 }
 
 #[test]
-fn updates_footer_in_list_shows_scroll_and_select_hints() {
+fn update_browse_footer_shows_scroll_and_select_hints() {
+    use osu_collect::app::GetMapsSource;
     let mut app = make_app();
-    app.next_tab();
-    app.home.update.selection.in_collection_list = true;
+    app.home.source = GetMapsSource::Update;
+    app.home
+        .update
+        .set_collections(vec![osu_collect::osu_db::LocalCollection {
+            name: "coll - 1234".to_string(),
+            beatmap_checksums: Vec::new().into(),
+        }]);
+    app.home.update.descend();
     let content = render_content(&app, 120, 24);
     assert!(
         content.contains("scroll"),
-        "in-list footer must show scroll hint"
+        "browse footer must show scroll hint"
     );
     assert!(
         content.contains("↵ toggle"),
-        "in-list footer must show ↵ toggle hint"
+        "browse footer must show ↵ toggle hint"
     );
     assert!(
         content.contains("all") && content.contains("none"),
-        "in-list footer must show select-all / select-none hint"
+        "browse footer must show select-all / select-none hint"
     );
     assert!(
-        content.contains('?'),
-        "in-list footer must show ? help hint"
+        content.contains("preview"),
+        "browse footer must show the → preview hint"
     );
+    assert!(content.contains('?'), "browse footer must show ? help hint");
 }
 
 #[test]
@@ -353,10 +363,7 @@ fn config_footer_omits_space_on_text_input() {
     let mut app = make_app();
     // Focus a non-text field so Right switches tabs rather than moving the caret.
     app.home.focus = HomeField::Video;
-    app.handle_key(crossterm::event::KeyEvent::new(
-        crossterm::event::KeyCode::Right,
-        crossterm::event::KeyModifiers::empty(),
-    ));
+    // Two static tabs now: a single Right lands on Config.
     app.handle_key(crossterm::event::KeyEvent::new(
         crossterm::event::KeyCode::Right,
         crossterm::event::KeyModifiers::empty(),
@@ -464,37 +471,49 @@ fn home_footer_text_input_focus_has_four_hints_with_edit_and_quit() {
 }
 
 #[test]
-fn updates_footer_not_in_list_has_at_most_five_hints() {
+fn update_source_form_footer_has_at_most_five_hints() {
+    use osu_collect::app::{GetMapsSource, HomeField};
     let mut app = make_app();
-    app.next_tab();
+    app.home.source = GetMapsSource::Update;
+    app.home.focus = HomeField::UpdateScan;
     let footer = render_footer_row(&app, 200, 24);
     assert!(footer.contains("↑↓"), "must show move hint");
+    assert!(footer.contains("↵ scan"), "scan CTA focus shows ↵ scan");
     assert!(footer.contains('?'), "must show ? help");
     assert!(
         footer.contains("switch client"),
         "must show c switch client"
     );
+    // move, scan, switch-client, help, quit
     assert!(
         hint_count(&footer) <= 5,
-        "updates not-in-list footer must show at most 5 hints, got {}",
+        "update form footer must show at most 5 hints, got {}",
         hint_count(&footer)
     );
 }
 
 #[test]
-fn updates_footer_in_list_has_exactly_five_hints() {
+fn update_browse_footer_lists_the_browse_keys() {
+    use osu_collect::app::GetMapsSource;
     let mut app = make_app();
-    app.next_tab();
-    app.home.update.selection.in_collection_list = true;
+    app.home.source = GetMapsSource::Update;
+    app.home
+        .update
+        .set_collections(vec![osu_collect::osu_db::LocalCollection {
+            name: "coll - 1234".to_string(),
+            beatmap_checksums: Vec::new().into(),
+        }]);
+    app.home.update.descend();
     let footer = render_footer_row(&app, 200, 24);
     assert!(
         footer.contains("switch client"),
         "must show c switch client"
     );
+    // scroll, toggle, all/none, preview, switch-client, help
     assert_eq!(
         hint_count(&footer),
-        5,
-        "updates in-list footer must show scroll, toggle, all/none, help, switch-client"
+        6,
+        "browse footer must show scroll, toggle, all/none, preview, switch-client, help"
     );
 }
 
@@ -727,7 +746,6 @@ fn login_split_docks_login_on_the_right_of_config() {
     // any osu! token on the host.
     app.config.login_state = AuthLoginState::LoggedOut;
     app.next_tab();
-    app.next_tab();
     app.config.focus = ConfigField::AuthChip;
     app.handle_key(KeyEvent {
         code: KeyCode::Enter,
@@ -770,7 +788,6 @@ fn login_split_info_lines_wrap_instead_of_clipping() {
     let mut app = make_app();
     app.config.login_state = AuthLoginState::LoggedOut;
     app.next_tab();
-    app.next_tab();
     app.config.focus = ConfigField::AuthChip;
     app.handle_key(KeyEvent {
         code: KeyCode::Enter,
@@ -794,7 +811,6 @@ fn login_split_info_lines_wrap_instead_of_clipping() {
 #[test]
 fn config_tab_shows_mirrors_section_before_download() {
     let mut app = make_app();
-    app.next_tab();
     app.next_tab();
     let content = render_content(&app, 120, 60);
     // both sections should be present

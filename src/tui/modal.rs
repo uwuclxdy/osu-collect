@@ -116,15 +116,11 @@ const VIM: &[HelpRow] = &[
 
 const HOME_TAB: &[HelpRow] = &[
     HelpRow::new("↵", "edit field / activate row"),
-    HelpRow::new("s", "jump to download button"),
-];
-
-const UPDATES_TAB: &[HelpRow] = &[
-    HelpRow::new("↵", "expand list / download"),
-    HelpRow::new("a", "select all"),
-    HelpRow::new("d", "select none"),
-    HelpRow::new("s", "jump to download button"),
-    HelpRow::new("r", "recheck failed"),
+    HelpRow::new("← →", "switch source / browse panes"),
+    HelpRow::new("s", "jump to download / cycle sort"),
+    HelpRow::new("a / A", "select all / none (update)"),
+    HelpRow::new("i / I", "mark installed (update preview)"),
+    HelpRow::new("r", "recheck failed (update)"),
 ];
 
 const CONFIG_TAB: &[HelpRow] = &[HelpRow::new("↵ (auth chip)", "open login")];
@@ -375,7 +371,6 @@ fn build_help_lines(active_tab: Tab, login_open: bool, vim_keys: bool) -> Vec<Li
     } else {
         match active_tab {
             Tab::Home => ("home", HOME_TAB),
-            Tab::Updates => ("updates", UPDATES_TAB),
             Tab::Config => ("config", CONFIG_TAB),
             Tab::Download(_) => ("download", DOWNLOAD_TAB),
         }

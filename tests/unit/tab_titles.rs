@@ -8,7 +8,7 @@ fn make_page(title: &str) -> CollectionPage {
     CollectionPage::new(1, title.to_string(), 1)
 }
 
-/// Return the download tab titles (strips the three static tabs).
+/// Return the download tab titles (strips the static tabs).
 fn download_titles(app: &App) -> Vec<String> {
     app.tab_titles()
         .into_iter()
@@ -22,8 +22,8 @@ fn static_tabs_unchanged() {
     let app = App::new(Config::default());
     let titles = app.tab_titles();
     assert_eq!(titles[0], "home");
-    assert_eq!(titles[1], "updates");
-    assert_eq!(titles[2], "config");
+    assert_eq!(titles[1], "config");
+    assert_eq!(titles.len(), STATIC_TABS, "no download tabs by default");
 }
 
 #[test]

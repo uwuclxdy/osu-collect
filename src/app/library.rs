@@ -10,7 +10,7 @@ use crate::utils::expand_tilde;
 ///
 /// Owns the osu!-path text field and its editing, so the field survives when
 /// the panel that renders it moves. Scan/selection reset on a client switch
-/// stays on the Updates tab (see [`UpdateSource::reset_for_client_switch`]).
+/// stays on the update source (see [`UpdateSource::reset_for_client_switch`]).
 ///
 /// [`UpdateSource::reset_for_client_switch`]: super::UpdateSource::reset_for_client_switch
 #[derive(Debug, Clone)]
@@ -91,8 +91,8 @@ impl LibraryState {
         self.osu_path.placeholder = new_path;
     }
 
-    // osu!-path text editing. The caller gates these on the Updates panel's path
-    // field being the editable focus (`UpdateSource::osu_path_editable`).
+    // osu!-path text editing. The app gates these on the update source's path
+    // field being the focused, editable input (`App::home_update_path_editing`).
     pub fn insert_char(&mut self, ch: char) {
         self.osu_path.insert_char(ch);
     }

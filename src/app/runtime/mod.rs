@@ -303,7 +303,7 @@ fn dispatch_command(
             let handle = download::spawn_selective_download(id, request, download_tx.clone());
             info!(
                 download_id = id,
-                "Spawned selective download from Updates tab"
+                "Spawned selective download from update source"
             );
             downloads.insert(id, handle);
         }

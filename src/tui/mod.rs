@@ -8,6 +8,7 @@ mod footer;
 mod header;
 mod home;
 mod login;
+mod master_detail;
 pub(crate) mod modal;
 mod toast;
 mod update_source;
@@ -284,10 +285,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         || app.update_modal.is_some();
     let editing = app.editing && !overlay_open;
     match app.active_tab() {
-        Tab::Home => home::render(frame, body_area, &app.home, editing),
-        Tab::Updates => {
-            update_source::render(frame, body_area, &app.home.update, &app.library, editing)
-        }
+        Tab::Home => home::render(frame, body_area, &app.home, &app.library, editing),
         Tab::Config => {
             let osu_dir = app.library.osu_path();
             let library_db_hint = crate::app::library_cache::db_file_path(
@@ -321,7 +319,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         }
         tab => match app.download_for_tab(tab) {
             Some(page) => download::render(frame, body_area, page, app.tick_count),
-            None => home::render(frame, body_area, &app.home, editing),
+            None => home::render(frame, body_area, &app.home, &app.library, editing),
         },
     }
 

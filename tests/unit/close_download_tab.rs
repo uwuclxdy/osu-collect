@@ -169,18 +169,6 @@ fn x_on_home_tab_does_not_remove_any_download() {
 }
 
 #[test]
-fn x_on_updates_tab_does_not_remove_any_download() {
-    let mut app = make_app();
-    push_page(&mut app, 1, DownloadStage::Completed);
-    app.active_tab = Tab::Updates;
-
-    app.handle_key(press(KeyCode::Char('x')));
-
-    assert_eq!(app.downloads.len(), 1);
-    assert_eq!(app.active_tab, Tab::Updates);
-}
-
-#[test]
 fn x_on_config_tab_does_not_remove_any_download() {
     let mut app = make_app();
     push_page(&mut app, 1, DownloadStage::Completed);

@@ -21,9 +21,9 @@ pub enum ResolveState {
 }
 
 /// Which get-maps source the tab is showing. The strip is the first focusable
-/// row; `←`/`→` cycle it. Only [`Collection`](GetMapsSource::Collection) is
-/// wired today — `Search` and `Update` render placeholder bodies until their
-/// own phases land.
+/// row; `←`/`→` cycle it. [`Collection`](GetMapsSource::Collection) and
+/// [`Update`](GetMapsSource::Update) are wired; `Search` renders a placeholder
+/// body until its phase lands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GetMapsSource {
     Search,
@@ -205,6 +205,12 @@ pub enum HomeField {
     Video,
     /// The "start download" button; activated with `enter`.
     Download,
+    /// The update source's osu! path input. A text field editing
+    /// [`App.library`](crate::app::App::library)'s path rather than a `HomeTab`
+    /// field, so its text ops route through `library` in the app.
+    UpdateOsuPath,
+    /// The update source's "scan for updates" / "view N updates" CTA button.
+    UpdateScan,
 }
 
 /// Focus order when the collection source is active: the source strip, then the
@@ -222,13 +228,25 @@ const COLLECTION_FIELDS: &[HomeField] = &[
     HomeField::Download,
 ];
 
-/// Focus order for a placeholder source (search / update): only the strip is
-/// focusable until that source's real form lands.
+/// Focus order for the search source: only the strip is focusable until its
+/// real form lands.
 const PLACEHOLDER_FIELDS: &[HomeField] = &[HomeField::Source];
+
+/// Focus order for the update source form: the strip, the osu! path input, then
+/// the scan CTA. Descending into the browse suspends this nav (the app gates it
+/// on `HomeTab.update.is_browsing()`).
+const UPDATE_FIELDS: &[HomeField] = &[
+    HomeField::Source,
+    HomeField::UpdateOsuPath,
+    HomeField::UpdateScan,
+];
 
 impl HomeField {
     pub fn is_text_input(self) -> bool {
-        matches!(self, HomeField::Collection | HomeField::Directory)
+        matches!(
+            self,
+            HomeField::Collection | HomeField::Directory | HomeField::UpdateOsuPath
+        )
     }
 
     pub fn is_stepper(self) -> bool {
@@ -263,9 +281,9 @@ pub struct HomeTab {
     /// Drives the enabled-mirror count and the pipeline try-order.
     pub mirror_order: Vec<MirrorKind>,
     pub video: bool,
-    /// Active get-maps source. Only `Collection` is wired today; `Search` /
-    /// `Update` render placeholder bodies. Per keep-both, switching never clears
-    /// another source's state (all of it lives on this struct).
+    /// Active get-maps source. `Collection` and `Update` are wired; `Search`
+    /// renders a placeholder body. Per keep-both, switching never clears another
+    /// source's state (all of it lives on this struct).
     pub source: GetMapsSource,
     pub focus: HomeField,
     pub message: Option<AppMessage>,
@@ -444,7 +462,8 @@ impl HomeTab {
     fn active_fields(&self) -> &'static [HomeField] {
         match self.source {
             GetMapsSource::Collection => COLLECTION_FIELDS,
-            GetMapsSource::Search | GetMapsSource::Update => PLACEHOLDER_FIELDS,
+            GetMapsSource::Update => UPDATE_FIELDS,
+            GetMapsSource::Search => PLACEHOLDER_FIELDS,
         }
     }
 

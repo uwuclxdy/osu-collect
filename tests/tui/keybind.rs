@@ -80,7 +80,7 @@ fn right_arrow_moves_to_next_tab() {
     app.home.focus = HomeField::Video; // non-text so ←/→ switch screens
     assert_eq!(app.active_tab(), Tab::Home);
     app.handle_key(press(KeyCode::Right));
-    assert_eq!(app.active_tab(), Tab::Updates);
+    assert_eq!(app.active_tab(), Tab::Config);
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn tab_and_backtab_switch_screens() {
     app.home.focus = HomeField::Video;
     assert_eq!(app.active_tab(), Tab::Home);
     app.handle_key(press(KeyCode::Tab));
-    assert_eq!(app.active_tab(), Tab::Updates, "tab cycles to the next tab");
+    assert_eq!(app.active_tab(), Tab::Config, "tab cycles to the next tab");
     app.handle_key(press(KeyCode::BackTab));
     assert_eq!(
         app.active_tab(),
@@ -479,33 +479,34 @@ fn space_on_download_button_does_not_start_download() {
 }
 
 #[test]
-fn space_inside_collection_list_toggles_focused_item() {
+fn space_in_update_browse_toggles_highlighted_collection() {
+    use osu_collect::app::GetMapsSource;
     let mut app = make_app();
-    app.next_tab();
-    // seed one collection and drop into the list
+    app.home.source = GetMapsSource::Update;
+    // seed one collection and descend into the browse
     app.home
         .update
         .set_collections(vec![osu_collect::osu_db::LocalCollection {
             name: "test - 1234".to_string(),
             beatmap_checksums: Vec::new().into(),
         }]);
-    app.home.update.selection.in_collection_list = true;
-    app.home.update.selection.collections_state = Some(0);
+    app.home.update.descend();
 
     let before = app.home.update.selection.local_collections[0].selected;
     app.handle_key(press(KeyCode::Char(' ')));
     assert_eq!(
         app.home.update.selection.local_collections[0].selected, !before,
-        "space toggles the focused list selection"
+        "space toggles the highlighted collection's checkbox"
     );
 }
 
 // ── enter on home tab ─────────────────────────────────────────────────────────
 
 #[test]
-fn recheck_failed_key_dispatches_on_updates_tab() {
+fn recheck_failed_key_dispatches_on_update_source() {
+    use osu_collect::app::GetMapsSource;
     let mut app = make_app();
-    app.next_tab();
+    app.home.source = GetMapsSource::Update;
     app.home.update.set_failed_beatmapset_count(2);
 
     let cmd = app.handle_key(press(KeyCode::Char('r')));
@@ -515,8 +516,9 @@ fn recheck_failed_key_dispatches_on_updates_tab() {
 
 #[test]
 fn recheck_failed_key_ignored_without_failed_maps() {
+    use osu_collect::app::GetMapsSource;
     let mut app = make_app();
-    app.next_tab();
+    app.home.source = GetMapsSource::Update;
 
     let cmd = app.handle_key(press(KeyCode::Char('r')));
 
@@ -562,7 +564,7 @@ fn focus_config_auth_chip() -> osu_collect::app::App {
     app.config.login_state = AuthLoginState::LoggedOut;
     // Focus a non-text field so Right switches tabs rather than moving the caret.
     app.home.focus = HomeField::Video;
-    app.handle_key(press(KeyCode::Right));
+    // Two static tabs now: a single Right lands on Config.
     app.handle_key(press(KeyCode::Right));
     assert_eq!(app.active_tab(), Tab::Config);
     app.config.focus = ConfigField::AuthChip;
@@ -641,7 +643,7 @@ fn space_on_auth_chip_does_nothing() {
     let mut app = make_app();
     // Focus a non-text field so Right switches tabs rather than moving the caret.
     app.home.focus = HomeField::Video;
-    app.handle_key(press(KeyCode::Right));
+    // Two static tabs now: a single Right lands on Config.
     app.handle_key(press(KeyCode::Right));
     assert_eq!(app.active_tab(), Tab::Config);
     app.config.focus = ConfigField::AuthChip;
@@ -810,7 +812,7 @@ fn vim_hl_switch_tabs() {
     use osu_collect::app::Tab;
     let mut app = config_app_vim(true);
     app.handle_key(press(KeyCode::Char('h')));
-    assert_eq!(app.active_tab(), Tab::Updates, "h switches to the prev tab");
+    assert_eq!(app.active_tab(), Tab::Home, "h switches to the prev tab");
     app.handle_key(press(KeyCode::Char('l')));
     assert_eq!(app.active_tab(), Tab::Config, "l switches to the next tab");
 }
@@ -867,19 +869,31 @@ fn vim_i_enters_edit_mode_then_typing_is_literal() {
     );
 }
 
-// ── updates tab: enter does not exit lists ────────────────────────────────────
+// ── update browse: enter toggles, does not ascend ─────────────────────────────
 
 #[test]
-fn enter_inside_collection_list_is_no_op() {
+fn enter_on_collection_toggles_and_stays_in_browse() {
+    use osu_collect::app::GetMapsSource;
     let mut app = make_app();
-    app.next_tab();
-    app.home.update.selection.in_collection_list = true;
+    app.home.source = GetMapsSource::Update;
+    app.home
+        .update
+        .set_collections(vec![osu_collect::osu_db::LocalCollection {
+            name: "test - 1234".to_string(),
+            beatmap_checksums: Vec::new().into(),
+        }]);
+    app.home.update.descend();
+    let before = app.home.update.selection.local_collections[0].selected;
 
     let cmd = app.handle_key(press(KeyCode::Enter));
     assert!(cmd.is_none());
+    assert_eq!(
+        app.home.update.selection.local_collections[0].selected, !before,
+        "enter toggles the highlighted collection"
+    );
     assert!(
-        app.home.update.selection.in_collection_list,
-        "enter must not close the collection list"
+        app.home.update.is_browsing(),
+        "enter on a collection stays in the browse"
     );
 }
 
@@ -984,14 +998,13 @@ fn c_types_literal_char_while_editing() {
 
 #[test]
 fn typing_into_updates_path_field_routes_to_library() {
-    use osu_collect::app::Tab;
-    use osu_collect::app::UpdateField;
+    use osu_collect::app::{GetMapsSource, HomeField};
 
     // The osu! path field lives on the app-global library state now, but it is
-    // still edited through the Updates panel. Typing must land on `library`.
+    // still edited through the update source form. Typing must land on `library`.
     let mut app = make_app();
-    app.active_tab = Tab::Updates;
-    app.home.update.selection.focus = UpdateField::OsuPath;
+    app.home.source = GetMapsSource::Update;
+    app.home.focus = HomeField::UpdateOsuPath;
     app.library.osu_path.set_value(String::new());
     app.editing = true;
 

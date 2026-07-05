@@ -1,6 +1,6 @@
 //! Top-strip tab identity.
 //!
-//! The three static tabs render in declaration order; each active or settled
+//! The two static tabs render in declaration order; each active or settled
 //! download run appends one [`Tab::Download`] after them. Adding or removing a
 //! static tab is an edit here plus the [`Tab::to_index`]/[`Tab::from_index`]
 //! arms, not a hunt for scattered magic indices.
@@ -10,10 +10,8 @@ use crate::config::constants::STATIC_TABS;
 /// One tab in the top strip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
-    /// The `home` / Get Maps tab.
+    /// The `home` / Get Maps tab (search / collection / update sources).
     Home,
-    /// The `updates` tab.
-    Updates,
     /// The `config` tab.
     Config,
     /// A per-run download page; the payload indexes `App.downloads`.
@@ -26,8 +24,7 @@ impl Tab {
     pub fn to_index(self) -> usize {
         match self {
             Tab::Home => 0,
-            Tab::Updates => 1,
-            Tab::Config => 2,
+            Tab::Config => 1,
             Tab::Download(slot) => STATIC_TABS + slot,
         }
     }
@@ -37,8 +34,7 @@ impl Tab {
     pub fn from_index(index: usize) -> Tab {
         match index {
             0 => Tab::Home,
-            1 => Tab::Updates,
-            2 => Tab::Config,
+            1 => Tab::Config,
             n => Tab::Download(n - STATIC_TABS),
         }
     }
