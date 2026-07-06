@@ -721,8 +721,10 @@ impl UpdateSource {
 
 /// Moves the list cursor by `delta`, wrapping at both ends: stepping down past
 /// the last item lands on the first, stepping up past the first lands on the
-/// last (index arithmetic modulo `len`).
-fn scroll_list(state: &mut Option<usize>, len: usize, delta: i64) {
+/// last (index arithmetic modulo `len`). Shared with [`SetBrowse`] scrolling.
+///
+/// [`SetBrowse`]: super::search_source::SetBrowse
+pub(crate) fn scroll_list(state: &mut Option<usize>, len: usize, delta: i64) {
     if len == 0 {
         return;
     }

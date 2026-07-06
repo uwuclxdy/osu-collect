@@ -237,10 +237,10 @@ fn up_from_first_field_wraps_to_last() {
     use osu_collect::app::HomeField;
     let mut app = make_app();
     // The source strip is the first focusable row; Up from it wraps to the last
-    // field (the download button).
+    // collection field (the browse & pick button, added after the download button).
     app.home.focus = HomeField::Source;
     app.handle_key(press(KeyCode::Up));
-    assert_eq!(app.home.focus, HomeField::Download);
+    assert_eq!(app.home.focus, HomeField::CollectionBrowse);
 }
 
 #[test]
@@ -281,17 +281,17 @@ fn arrows_switch_tab_off_the_strip() {
 }
 
 #[test]
-fn placeholder_source_only_exposes_the_strip() {
+fn search_source_down_focuses_query() {
     use osu_collect::app::{GetMapsSource, HomeField};
     let mut app = make_app();
     app.home.source = GetMapsSource::Search;
     app.home.focus = HomeField::Source;
-    // No other focusable field, so field navigation stays on the strip.
+    // The search source has a real form now: Down from the strip focuses the query.
     app.handle_key(press(KeyCode::Down));
-    assert_eq!(app.home.focus, HomeField::Source);
-    // `s` / `d` have no download button or dir field to jump to here.
+    assert_eq!(app.home.focus, HomeField::SearchQuery);
+    // `s` / `d` are collection-only hotkeys; they don't act on the search form.
     app.handle_key(press(KeyCode::Char('s')));
-    assert_eq!(app.home.focus, HomeField::Source);
+    assert_eq!(app.home.focus, HomeField::SearchQuery);
 }
 
 #[test]
@@ -299,7 +299,7 @@ fn switching_source_preserves_collection_input() {
     use osu_collect::app::{GetMapsSource, HomeField};
     let mut app = make_app();
     app.home.collection.set_value("12345");
-    // Cycle away to a placeholder and back; keep-both keeps the input alive.
+    // Cycle away to another source and back; keep-both keeps the input alive.
     app.home.focus = HomeField::Source;
     app.handle_key(press(KeyCode::Right));
     app.handle_key(press(KeyCode::Left));
@@ -1057,4 +1057,53 @@ fn typing_into_updates_path_field_routes_to_library() {
         app.library.osu_path.value, "/o",
         "editing the updates path field must mutate the app-global library state"
     );
+}
+
+#[test]
+fn request_search_download_uses_query_label_and_selected_ids() {
+    use osu_collect::app::{BrowseRow, GetMapsSource};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Search;
+    app.home.search.query.set_value("tekno");
+    app.home.search.browse.set_rows(vec![
+        BrowseRow { id: 10, meta: None },
+        BrowseRow { id: 20, meta: None },
+        BrowseRow { id: 30, meta: None },
+    ]);
+    app.home.search.browse.set_all_selected(true);
+
+    let (_, request) = app
+        .request_search_download()
+        .expect("a selection with mirrors enabled builds a request");
+    // The download folder + page title derive from the query text.
+    assert_eq!(request.label, "tekno");
+    let mut ids = request.beatmapset_ids.clone();
+    ids.sort_unstable();
+    assert_eq!(ids, vec![10, 20, 30]);
+}
+
+#[test]
+fn collection_pick_download_uses_snapshotted_id_not_late_resolve() {
+    use osu_collect::app::{BrowseRow, GetMapsSource};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Collection;
+    // The browse was opened against collection 111 (its sets are the rows).
+    app.home.collection_browse_id = Some(111);
+    app.home.collection_browse.set_rows(vec![
+        BrowseRow { id: 10, meta: None },
+        BrowseRow { id: 20, meta: None },
+    ]);
+    app.home.collection_browse.set_all_selected(true);
+    // A late resolve then moved `resolved_collection` to a different collection.
+    app.home.set_resolved_collection(999, vec![77, 88]);
+
+    let (_, request) = app
+        .request_collection_pick_download()
+        .expect("a selection with mirrors enabled builds a request");
+    // The dispatch pairs the picked rows with 111 (where they came from), not the
+    // 999 a late resolve installed.
+    assert_eq!(request.collection_ids, vec![111]);
+    let mut ids = request.beatmapset_ids.clone();
+    ids.sort_unstable();
+    assert_eq!(ids, vec![10, 20]);
 }

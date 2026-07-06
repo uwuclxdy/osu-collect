@@ -2,6 +2,7 @@ mod auth;
 mod mirror_probe;
 mod resolve;
 mod scan;
+mod search;
 mod update;
 
 pub use mirror_probe::{MirrorProbeEvent, ProbeResult, probe_url};
@@ -12,6 +13,7 @@ pub use scan::{
 };
 
 pub use resolve::{HomeResolveEvent, handle_home_resolve_event};
+pub use search::{HomeSearchEvent, handle_home_search_event};
 
 use super::{App, AppCommand, Tab};
 use crate::{
@@ -32,6 +34,7 @@ use auth::{
 use mirror_probe::{handle_mirror_probe_event, schedule_probe};
 use resolve::schedule_resolve;
 use scan::{handle_updates_event, spawn_failed_map_recheck_task, spawn_scan_task};
+use search::schedule_search;
 use update::{UpdateEvent, handle_update_event, spawn_apply_update, spawn_update_check};
 
 /// Render one frame. A focused text field positions the terminal caret via
@@ -72,6 +75,7 @@ pub async fn run(
     let (auth_tx, mut auth_rx) = mpsc::unbounded_channel::<AuthEvent>();
     let (input_tx, mut input_rx) = mpsc::unbounded_channel::<InputEvent>();
     let (home_resolve_tx, mut home_resolve_rx) = mpsc::unbounded_channel::<HomeResolveEvent>();
+    let (home_search_tx, mut home_search_rx) = mpsc::unbounded_channel::<HomeSearchEvent>();
     let (mirror_probe_tx, mut mirror_probe_rx) = mpsc::unbounded_channel::<MirrorProbeEvent>();
     let (update_tx, mut update_rx) = mpsc::unbounded_channel::<UpdateEvent>();
     let input_handle = spawn_input_thread(input_tx.clone());
@@ -83,6 +87,9 @@ pub async fn run(
         resolve: None,
         resolve_cancel: None,
         home_resolve_tx,
+        search: None,
+        search_cancel: None,
+        home_search_tx,
         mirror_probe: None,
         mirror_probe_cancel: None,
         mirror_probe_tx: mirror_probe_tx.clone(),
@@ -163,6 +170,10 @@ pub async fn run(
                 trace!(?event, "Received home resolve event");
                 handle_home_resolve_event(event, &mut app.home);
             }
+            Some(event) = home_search_rx.recv() => {
+                trace!(?event, "Received home search event");
+                handle_home_search_event(event, &mut app);
+            }
             Some(event) = mirror_probe_rx.recv() => {
                 trace!(?event, "Received mirror probe event");
                 handle_mirror_probe_event(event, &mut app.home);
@@ -179,6 +190,9 @@ pub async fn run(
         handle.abort();
     }
     if let Some(handle) = tasks.resolve.take() {
+        handle.abort();
+    }
+    if let Some(handle) = tasks.search.take() {
         handle.abort();
     }
     if let Some(handle) = tasks.mirror_probe.take() {
@@ -307,6 +321,14 @@ fn dispatch_command(
             );
             downloads.insert(id, handle);
         }
+        Some(AppCommand::StartSearchDownload { id, request }) => {
+            let handle = download::spawn_search_download(id, request, download_tx.clone());
+            info!(
+                download_id = id,
+                "Spawned search download from search source"
+            );
+            downloads.insert(id, handle);
+        }
         Some(AppCommand::CancelDownload { id }) => {
             let was_running = if let Some(handle) = downloads.remove(&id) {
                 handle.request_shutdown();
@@ -364,6 +386,15 @@ fn dispatch_command(
                 &mut tasks.resolve,
                 &mut tasks.resolve_cancel,
                 &tasks.home_resolve_tx,
+            );
+        }
+        Some(AppCommand::RunSearch { query, append }) => {
+            schedule_search(
+                query,
+                append,
+                &mut tasks.search,
+                &mut tasks.search_cancel,
+                &tasks.home_search_tx,
             );
         }
         Some(AppCommand::ProbeMirrors) => {
@@ -478,6 +509,9 @@ struct BackgroundTasks {
     resolve: Option<tokio::task::JoinHandle<()>>,
     resolve_cancel: Option<tokio::sync::watch::Sender<bool>>,
     home_resolve_tx: mpsc::UnboundedSender<HomeResolveEvent>,
+    search: Option<tokio::task::JoinHandle<()>>,
+    search_cancel: Option<tokio::sync::watch::Sender<bool>>,
+    home_search_tx: mpsc::UnboundedSender<HomeSearchEvent>,
     mirror_probe: Option<tokio::task::JoinHandle<()>>,
     mirror_probe_cancel: Option<tokio::sync::watch::Sender<bool>>,
     mirror_probe_tx: mpsc::UnboundedSender<MirrorProbeEvent>,

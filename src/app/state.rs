@@ -8,6 +8,7 @@ use super::{
     ignored_maps,
     library::LibraryState,
     login::{LoginField, LoginPhase, LoginTab},
+    search_source::{BrowseRow, SearchStatusMsg, SetBrowse},
     snapshots,
     tab::Tab,
     toast::{Toast, Toasts},
@@ -20,9 +21,10 @@ use crate::{
         constants::{DISK_CACHE_TTL, STATIC_TABS, TAB_CONFIG_LOWER, TAB_HOME_LOWER},
         save_config,
     },
+    core::search::SearchQuery,
     download::{
         DownloadConfig, DownloadEvent, DownloadId, DownloadRequest, DownloadStage,
-        SelectiveDownloadCollection, SelectiveDownloadRequest,
+        SearchDownloadRequest, SelectiveDownloadCollection, SelectiveDownloadRequest,
     },
     utils,
 };
@@ -151,6 +153,12 @@ pub enum AppCommand {
         id: DownloadId,
         request: SelectiveDownloadRequest,
     },
+    /// Start a fetch-skipping download of raw beatmapset ids picked from search
+    /// results (the ids + checksums are already in hand, so no collection fetch).
+    StartSearchDownload {
+        id: DownloadId,
+        request: SearchDownloadRequest,
+    },
     CancelDownload {
         id: DownloadId,
     },
@@ -187,6 +195,12 @@ pub enum AppCommand {
     /// Collection URL field changed; schedule a debounced metadata resolve.
     ResolveCollectionUrl {
         value: String,
+    },
+    /// Run an osu! API v2 search (the `search` CTA or `load more`). `append` marks
+    /// a `load more` page (append + dedup) versus a fresh search (replace).
+    RunSearch {
+        query: SearchQuery,
+        append: bool,
     },
     /// Probe latency for all built-in mirrors.
     ProbeMirrors,
@@ -589,6 +603,10 @@ impl App {
     fn jump_top(&mut self) {
         if self.update_browsing() {
             self.home.update.scroll_to_edge(true);
+        } else if self.home_set_browsing() {
+            if let Some(browse) = self.active_set_browse_mut() {
+                browse.scroll_to_edge(true);
+            }
         } else if let Some(page) = self.active_download_page_mut() {
             page.jump_top();
         } else {
@@ -600,6 +618,10 @@ impl App {
     fn jump_bottom(&mut self) {
         if self.update_browsing() {
             self.home.update.scroll_to_edge(false);
+        } else if self.home_set_browsing() {
+            if let Some(browse) = self.active_set_browse_mut() {
+                browse.scroll_to_edge(false);
+            }
         } else if let Some(page) = self.active_download_page_mut() {
             page.jump_bottom();
         } else {
@@ -612,6 +634,10 @@ impl App {
     fn page_up(&mut self) {
         if self.update_browsing() {
             self.home.update.page_up();
+        } else if self.home_set_browsing() {
+            if let Some(browse) = self.active_set_browse_mut() {
+                browse.page_up();
+            }
         } else if let Some(page) = self.active_download_page_mut() {
             page.page_up();
         } else {
@@ -623,6 +649,10 @@ impl App {
     fn page_down(&mut self) {
         if self.update_browsing() {
             self.home.update.page_down();
+        } else if self.home_set_browsing() {
+            if let Some(browse) = self.active_set_browse_mut() {
+                browse.page_down();
+            }
         } else if let Some(page) = self.active_download_page_mut() {
             page.page_down();
         } else {
@@ -1110,6 +1140,263 @@ impl App {
         Some((id, request))
     }
 
+    // ── search + collection browse&pick ───────────────────────────────────────
+
+    /// The active source's flat browse (search results / collection browse&pick),
+    /// or `None` for the update source (whose two-level browse is separate).
+    fn active_set_browse(&self) -> Option<&SetBrowse> {
+        match self.home.source {
+            GetMapsSource::Search => Some(&self.home.search.browse),
+            GetMapsSource::Collection => Some(&self.home.collection_browse),
+            GetMapsSource::Update => None,
+        }
+    }
+
+    fn active_set_browse_mut(&mut self) -> Option<&mut SetBrowse> {
+        match self.home.source {
+            GetMapsSource::Search => Some(&mut self.home.search.browse),
+            GetMapsSource::Collection => Some(&mut self.home.collection_browse),
+            GetMapsSource::Update => None,
+        }
+    }
+
+    /// Whether a flat set browse (search results / collection browse&pick) is
+    /// descended on the Get Maps tab, so browse keys own input instead of the
+    /// form-field nav.
+    fn home_set_browsing(&self) -> bool {
+        self.active_tab() == Tab::Home && self.active_set_browse().is_some_and(|b| b.is_browsing())
+    }
+
+    /// Cycle the focused search filter chip (`←`/`→` and `enter`).
+    fn cycle_search_chip(&mut self, forward: bool) {
+        match self.home.focus {
+            HomeField::SearchMode => self.home.search.cycle_mode(forward),
+            HomeField::SearchStatus => self.home.search.cycle_status(forward),
+            HomeField::SearchSort => self.home.search.cycle_sort(forward),
+            _ => {}
+        }
+    }
+
+    /// Build + dispatch a fresh search from the form. The one-shot guest login
+    /// nudge fires on a *successful* guest search (in `handle_home_search_event`),
+    /// not here, so a no-creds build that can't search never shows it.
+    fn request_search(&mut self) -> Option<AppCommand> {
+        self.home.search.status_msg = SearchStatusMsg::Loading;
+        let query = self.home.search.build_query(None);
+        Some(AppCommand::RunSearch {
+            query,
+            append: false,
+        })
+    }
+
+    /// Load the next page of the current search (`m` in the browse). No-op once
+    /// the last page has been reached (`next_cursor` is `None`).
+    fn load_more_search(&mut self) -> Option<AppCommand> {
+        let cursor = self.home.search.next_cursor.clone()?;
+        self.home.search.status_msg = SearchStatusMsg::Loading;
+        let query = self.home.search.build_query(Some(cursor));
+        Some(AppCommand::RunSearch {
+            query,
+            append: true,
+        })
+    }
+
+    /// One-shot "searching as guest" nudge: fires once per logged-out session
+    /// after a guest search actually returns, inviting login for the
+    /// supporter-only filters. Called from `handle_home_search_event` so it only
+    /// shows when a guest search succeeded (never in a no-creds build that errors).
+    pub(crate) fn nudge_guest_search_if_logged_out(&mut self) {
+        let logged_in = matches!(self.config.login_state, AuthLoginState::LoggedIn);
+        if logged_in || self.home.search.login_nudged {
+            return;
+        }
+        self.home.search.login_nudged = true;
+        self.push_toast(
+            Toast::info("searching as guest")
+                .with_detail("log in from the config auth chip for more filters"),
+        );
+    }
+
+    /// Character keys inside a flat set browse: `a`/`A` select-all/clear on the
+    /// list pane, `m` loads the next search page.
+    fn handle_set_browse_char(&mut self, ch: char) -> Option<AppCommand> {
+        match ch {
+            'a' | 'A' => {
+                if let Some(browse) = self.active_set_browse_mut()
+                    && !browse.preview_focused()
+                {
+                    browse.set_all_selected(ch == 'a');
+                }
+            }
+            'm' if self.home.source == GetMapsSource::Search => {
+                return self.load_more_search();
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// Dispatch the download from a flat browse's action bar, routed by source:
+    /// search → fetch-skipping [`SearchDownloadRequest`], collection browse&pick →
+    /// the selective path (it has a collection id to re-fetch checksums from).
+    fn dispatch_set_browse_download(&mut self) -> Option<AppCommand> {
+        match self.home.source {
+            GetMapsSource::Search => {
+                let (id, request) = self.request_search_download()?;
+                Some(AppCommand::StartSearchDownload { id, request })
+            }
+            GetMapsSource::Collection => {
+                let (id, request) = self.request_collection_pick_download()?;
+                Some(AppCommand::StartSelectiveDownload { id, request })
+            }
+            GetMapsSource::Update => None,
+        }
+    }
+
+    /// Open the resolved collection in the checkbox browse (collection
+    /// "browse & pick"), defaulting all sets selected. No-op with a toast until a
+    /// collection has resolved.
+    fn open_collection_browse(&mut self) {
+        let Some((collection_id, ids)) = self.home.resolved_collection.clone() else {
+            self.toast_warn("resolve a collection first");
+            return;
+        };
+        if ids.is_empty() {
+            self.toast_warn("collection has no beatmaps");
+            return;
+        }
+        let rows: Vec<BrowseRow> = ids
+            .into_iter()
+            .map(|id| BrowseRow { id, meta: None })
+            .collect();
+        self.home.collection_browse.set_rows(rows);
+        self.home.collection_browse.set_all_selected(true);
+        self.home.collection_browse.descend();
+        // Snapshot the id so the dispatch stays paired with these rows even if a
+        // late resolve updates `resolved_collection` while the browse is open.
+        self.home.collection_browse_id = Some(collection_id);
+    }
+
+    /// Build a fetch-skipping search download from the picked search results.
+    pub fn request_search_download(&mut self) -> Option<(DownloadId, SearchDownloadRequest)> {
+        let beatmapset_ids = self.home.search.browse.selected_ids();
+        if beatmapset_ids.is_empty() {
+            self.toast_warn("no beatmaps selected for download");
+            return None;
+        }
+        if self.home.mirror_count() == 0 {
+            self.toast_warn("no mirrors enabled (configure in the config tab)");
+            return None;
+        }
+        if self.downloads.len() >= usize::MAX - 1 {
+            self.toast_err("too many downloads queued");
+            return None;
+        }
+
+        let label = self.home.search.run_label();
+        let config = self.build_run_config();
+        let id = self.next_download_id;
+        self.next_download_id += 1;
+
+        let concurrent = usize::from(config.concurrent.max(1));
+        let mut page = CollectionPage::new(id, format!("search \"{label}\""), concurrent);
+        page.stage = DownloadStage::Resolving;
+        page.download_config = Some(config.clone());
+        self.downloads.push(page);
+        self.active_tab = Tab::Download(self.downloads.len() - 1);
+
+        self.push_toast(
+            Toast::success(format!("queued search download #{id}"))
+                .with_detail(format!("{} beatmaps", beatmapset_ids.len())),
+        );
+
+        let request = SearchDownloadRequest {
+            beatmapset_ids,
+            label,
+            config,
+            auto_overwrite: self.home.auto_overwrite,
+            skip_already_imported: self.config.skip_already_imported,
+            osu_client: self.library.client_type,
+            osu_path: self.library.osu_path(),
+        };
+        Some((id, request))
+    }
+
+    /// Build a selective download from the picked collection browse&pick sets.
+    /// Routes through the selective path (a single resolved collection), which
+    /// re-fetches the collection for checksums + writes the selective `collection.db`.
+    pub fn request_collection_pick_download(
+        &mut self,
+    ) -> Option<(DownloadId, SelectiveDownloadRequest)> {
+        let beatmapset_ids = self.home.collection_browse.selected_ids();
+        if beatmapset_ids.is_empty() {
+            self.toast_warn("no beatmaps selected for download");
+            return None;
+        }
+        // Use the id snapshotted at browse-open, not the live `resolved_collection`
+        // (which a late resolve may have moved to a different collection).
+        let Some(collection_id) = self.home.collection_browse_id else {
+            self.toast_warn("resolve a collection first");
+            return None;
+        };
+        if self.home.mirror_count() == 0 {
+            self.toast_warn("no mirrors enabled (configure in the config tab)");
+            return None;
+        }
+        if self.downloads.len() >= usize::MAX - 1 {
+            self.toast_err("too many downloads queued");
+            return None;
+        }
+
+        let config = self.build_run_config();
+        let id = self.next_download_id;
+        self.next_download_id += 1;
+
+        let concurrent = usize::from(config.concurrent.max(1));
+        let title = format!(
+            "collection #{collection_id} ({} picked)",
+            beatmapset_ids.len()
+        );
+        let mut page = CollectionPage::new(id, title, concurrent);
+        page.stage = DownloadStage::Resolving;
+        page.download_config = Some(config.clone());
+        self.downloads.push(page);
+        self.active_tab = Tab::Download(self.downloads.len() - 1);
+
+        self.push_toast(
+            Toast::success(format!("queued collection download #{id}"))
+                .with_detail(format!("{} beatmaps", beatmapset_ids.len())),
+        );
+
+        let collections = vec![SelectiveDownloadCollection {
+            id: collection_id,
+            name: String::new(),
+            beatmapset_ids: beatmapset_ids.clone(),
+        }];
+        let request = SelectiveDownloadRequest {
+            collection_ids: vec![collection_id],
+            beatmapset_ids,
+            collections,
+            config,
+            snapshot_dir: None,
+            snapshots: Vec::new(),
+        };
+        Some((id, request))
+    }
+
+    /// The shared run config (folder / mirrors / threads / validation) both flat
+    /// browses download with — the collection source's fields, per keep-both.
+    fn build_run_config(&self) -> DownloadConfig {
+        DownloadConfig {
+            directory: self.home.resolved_directory(),
+            mirrors: self.home.build_mirror_list(),
+            concurrent: self.home.resolved_threads(),
+            archive_validation: self.config.archive_validation,
+            auto_skip_rate_limited: self.config.auto_skip_rate_limited,
+            rate_limit_skip_secs: self.config.parse_rate_limit_skip_secs().unwrap_or(60),
+        }
+    }
+
     /// Run `mutate` against the home form, then — only when focus is the
     /// collection field AND its value actually changed — return a
     /// `ResolveCollectionUrl` command carrying the new value.
@@ -1148,9 +1435,13 @@ impl App {
             return login.focus.is_text_input();
         }
         match self.active_tab() {
-            // While browsing the update source its keys own input, so no field is
-            // a text input even if `home.focus` still names one.
-            Tab::Home => !self.update_browsing() && self.home.focus.is_text_input(),
+            // While browsing (update or a flat set browse) the browse keys own
+            // input, so no field is a text input even if `home.focus` names one.
+            Tab::Home => {
+                !self.update_browsing()
+                    && !self.home_set_browsing()
+                    && self.home.focus.is_text_input()
+            }
             Tab::Config => self.config.focus.is_text_input(),
             _ => false,
         }
@@ -1519,9 +1810,15 @@ impl App {
                     self.close_login();
                     return None;
                 }
-                // In the update-source browse, esc ascends one level (preview →
-                // list → form) before the back/quit cascade takes over.
+                // In a browse, esc ascends one level (preview → list → form)
+                // before the back/quit cascade takes over.
                 if self.update_browsing() && self.home.update.ascend() {
+                    return None;
+                }
+                if self.home_set_browsing()
+                    && let Some(browse) = self.active_set_browse_mut()
+                    && browse.ascend()
+                {
                     return None;
                 }
                 // esc is purely "back": it cancels an armed quit prompt and backs
@@ -1539,9 +1836,16 @@ impl App {
                     self.caret_left_focused();
                 } else if self.active_tab() == Tab::Home && self.home.focus == HomeField::Source {
                     self.home.cycle_source(false);
+                } else if self.active_tab() == Tab::Home && self.home.focus.is_search_chip() {
+                    // On a search filter chip, ←/→ cycle its value.
+                    self.cycle_search_chip(false);
                 } else if self.update_browsing() {
                     // In browse, ←/h focuses the collections list pane.
                     self.home.update.focus_list();
+                } else if self.home_set_browsing() {
+                    if let Some(browse) = self.active_set_browse_mut() {
+                        browse.focus_list();
+                    }
                 } else if let Some(cmd) = self.prev_tab() {
                     return Some(cmd);
                 }
@@ -1551,9 +1855,15 @@ impl App {
                     self.caret_right_focused();
                 } else if self.active_tab() == Tab::Home && self.home.focus == HomeField::Source {
                     self.home.cycle_source(true);
+                } else if self.active_tab() == Tab::Home && self.home.focus.is_search_chip() {
+                    self.cycle_search_chip(true);
                 } else if self.update_browsing() {
                     // In browse, →/l focuses the preview pane.
                     self.home.update.focus_preview();
+                } else if self.home_set_browsing() {
+                    if let Some(browse) = self.active_set_browse_mut() {
+                        browse.focus_preview();
+                    }
                 } else if let Some(cmd) = self.next_tab() {
                     return Some(cmd);
                 }
@@ -1610,6 +1920,10 @@ impl App {
             KeyCode::Up => {
                 if self.update_browsing() {
                     self.home.update.scroll_up();
+                } else if self.home_set_browsing() {
+                    if let Some(browse) = self.active_set_browse_mut() {
+                        browse.scroll_up();
+                    }
                 } else if let Some(page) = self.active_download_page_mut() {
                     if page.failed_section_expanded && !page.failed_maps.is_empty() {
                         page.failed_focus_prev();
@@ -1623,6 +1937,10 @@ impl App {
             KeyCode::Down => {
                 if self.update_browsing() {
                     self.home.update.scroll_down();
+                } else if self.home_set_browsing() {
+                    if let Some(browse) = self.active_set_browse_mut() {
+                        browse.scroll_down();
+                    }
                 } else if let Some(page) = self.active_download_page_mut() {
                     if page.failed_section_expanded && !page.failed_maps.is_empty() {
                         page.failed_focus_next();
@@ -1677,6 +1995,27 @@ impl App {
                             }
                             return None;
                         }
+                        // Flat set browse (search results / collection browse&pick):
+                        // enter toggles the highlighted row, or dispatches from the
+                        // action bar. Preview rows are read-only.
+                        if self.home_set_browsing() {
+                            if self
+                                .active_set_browse()
+                                .is_some_and(|b| b.preview_focused())
+                            {
+                                return None;
+                            }
+                            if self
+                                .active_set_browse()
+                                .is_some_and(|b| b.cursor_on_action())
+                            {
+                                return self.dispatch_set_browse_download();
+                            }
+                            if let Some(browse) = self.active_set_browse_mut() {
+                                browse.toggle_selected();
+                            }
+                            return None;
+                        }
                         match self.home.focus {
                             // The source picker is a cycle row: `enter` steps it
                             // forward, matching the config cycle fields.
@@ -1686,6 +2025,8 @@ impl App {
                                     return Some(AppCommand::StartDownload { id, request });
                                 }
                             }
+                            // Open the resolved collection in the checkbox browse.
+                            HomeField::CollectionBrowse => self.open_collection_browse(),
                             // The mirrors row is read-only here; hand off to the
                             // Config tab, which owns all mirror editing.
                             HomeField::Mirrors => self.open_config_mirrors(),
@@ -1700,6 +2041,12 @@ impl App {
                                 ScanCta::Descend => self.home.update.descend(),
                                 ScanCta::Busy => {}
                             },
+                            // Search filter chips step forward on enter (like the
+                            // source strip); the `search` CTA runs the query.
+                            HomeField::SearchMode
+                            | HomeField::SearchStatus
+                            | HomeField::SearchSort => self.cycle_search_chip(true),
+                            HomeField::SearchRun => return self.request_search(),
                             field if field.is_toggle() => self.home.toggle_current(),
                             // Text inputs and the threads stepper have nothing to activate.
                             _ => {}
@@ -1757,8 +2104,18 @@ impl App {
                         {
                             self.home.update.toggle_selected_collection();
                         }
+                    } else if self.home_set_browsing() {
+                        // Toggle-alias for the result checkbox (list pane only).
+                        let inert = self
+                            .active_set_browse()
+                            .is_some_and(|b| b.preview_focused() || b.cursor_on_action());
+                        if !inert && let Some(browse) = self.active_set_browse_mut() {
+                            browse.toggle_selected();
+                        }
                     } else if self.home.focus == HomeField::Source {
                         self.home.cycle_source(true);
+                    } else if self.home.focus.is_search_chip() {
+                        self.cycle_search_chip(true);
                     } else if self.home.focus.is_toggle() {
                         self.home.toggle_current();
                     }
@@ -1805,6 +2162,10 @@ impl App {
                     // i/I mark-installed, r recheck).
                     if self.update_browsing() {
                         return self.handle_update_browse_char(ch);
+                    }
+                    // Flat set browse owns a/A select-all/clear + m load-more.
+                    if self.home_set_browsing() {
+                        return self.handle_set_browse_char(ch);
                     }
                     // Stepper: +/- adjust thread count when threads field is focused.
                     if self.home.focus.is_stepper() {

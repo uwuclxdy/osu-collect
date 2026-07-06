@@ -1,6 +1,10 @@
 use super::{
-    custom_mirrors::CustomMirrorList, first_field, last_field, messages::AppMessage, next_field,
-    prev_field, update_source::UpdateSource,
+    custom_mirrors::CustomMirrorList,
+    first_field, last_field,
+    messages::AppMessage,
+    next_field, prev_field,
+    search_source::{SearchSource, SetBrowse},
+    update_source::UpdateSource,
 };
 use crate::{
     app::runtime::ProbeResult,
@@ -205,12 +209,26 @@ pub enum HomeField {
     Video,
     /// The "start download" button; activated with `enter`.
     Download,
+    /// The collection source's "browse & pick" CTA — opens the resolved
+    /// collection in a checkbox browse to download a subset. Enabled only once a
+    /// collection has resolved.
+    CollectionBrowse,
     /// The update source's osu! path input. A text field editing
     /// [`App.library`](crate::app::App::library)'s path rather than a `HomeTab`
     /// field, so its text ops route through `library` in the app.
     UpdateOsuPath,
     /// The update source's "scan for updates" / "view N updates" CTA button.
     UpdateScan,
+    /// The search source's free-text query input.
+    SearchQuery,
+    /// The search source's game-mode filter chip (`←`/`→` or `enter` cycle it).
+    SearchMode,
+    /// The search source's rank-status filter chip.
+    SearchStatus,
+    /// The search source's sort chip (curated field+order presets).
+    SearchSort,
+    /// The search source's `search` CTA button.
+    SearchRun,
 }
 
 /// Focus order when the collection source is active: the source strip, then the
@@ -226,11 +244,23 @@ const COLLECTION_FIELDS: &[HomeField] = &[
     HomeField::AutoOverwrite,
     HomeField::Video,
     HomeField::Download,
+    HomeField::CollectionBrowse,
 ];
 
-/// Focus order for the search source: only the strip is focusable until its
-/// real form lands.
-const PLACEHOLDER_FIELDS: &[HomeField] = &[HomeField::Source];
+/// Focus order for the search source: the strip, the query input, the three
+/// filter chips, then the `search` CTA. Like the update source, the run settings
+/// (folder / mirrors / threads / overwrite) are borrowed silently from the
+/// collection source's shared `self.home.*` fields rather than re-rendered here,
+/// so a search downloads with whatever those are set to. Descending into the
+/// results browse suspends this nav (`SetBrowse::descend`).
+const SEARCH_FIELDS: &[HomeField] = &[
+    HomeField::Source,
+    HomeField::SearchQuery,
+    HomeField::SearchMode,
+    HomeField::SearchStatus,
+    HomeField::SearchSort,
+    HomeField::SearchRun,
+];
 
 /// Focus order for the update source form: the strip, the osu! path input, then
 /// the scan CTA. Descending into the browse suspends this nav (the app gates it
@@ -245,7 +275,10 @@ impl HomeField {
     pub fn is_text_input(self) -> bool {
         matches!(
             self,
-            HomeField::Collection | HomeField::Directory | HomeField::UpdateOsuPath
+            HomeField::Collection
+                | HomeField::Directory
+                | HomeField::UpdateOsuPath
+                | HomeField::SearchQuery
         )
     }
 
@@ -256,6 +289,14 @@ impl HomeField {
     /// Whether `enter` toggles this field (the boolean option checkboxes).
     pub fn is_toggle(self) -> bool {
         matches!(self, HomeField::AutoOverwrite | HomeField::Video)
+    }
+
+    /// Whether this is a search filter chip that `←`/`→` (and `enter`) cycle.
+    pub fn is_search_chip(self) -> bool {
+        matches!(
+            self,
+            HomeField::SearchMode | HomeField::SearchStatus | HomeField::SearchSort
+        )
     }
 }
 
@@ -310,6 +351,17 @@ pub struct HomeTab {
     pub list_offset: std::cell::Cell<usize>,
     /// State for the [`GetMapsSource::Update`] source (the former Updates tab).
     pub update: UpdateSource,
+    /// State for the [`GetMapsSource::Search`] source: the query form + results
+    /// browse. Kept here so it survives source-strip switches (keep-both).
+    pub search: SearchSource,
+    /// Collection browse&pick browse state (the collection source's
+    /// "browse & pick" CTA). Fed from [`resolved_collection`](Self::resolved_collection);
+    /// separate from `search.browse` so each source's selection persists.
+    pub collection_browse: SetBrowse,
+    /// The collection id snapshotted when the browse&pick browse was opened, so
+    /// the download dispatches against the collection the rows came from even if
+    /// an in-flight resolve updates `resolved_collection` mid-browse.
+    pub collection_browse_id: Option<u32>,
 }
 
 impl HomeTab {
@@ -382,6 +434,9 @@ impl HomeTab {
             default_directory,
             list_offset: std::cell::Cell::new(0),
             update: UpdateSource::new(),
+            search: SearchSource::new(),
+            collection_browse: SetBrowse::new(),
+            collection_browse_id: None,
         }
     }
 
@@ -463,7 +518,7 @@ impl HomeTab {
         match self.source {
             GetMapsSource::Collection => COLLECTION_FIELDS,
             GetMapsSource::Update => UPDATE_FIELDS,
-            GetMapsSource::Search => PLACEHOLDER_FIELDS,
+            GetMapsSource::Search => SEARCH_FIELDS,
         }
     }
 
@@ -608,6 +663,7 @@ impl HomeTab {
         match self.focus {
             HomeField::Collection => Some(&self.collection),
             HomeField::Directory => Some(&self.directory),
+            HomeField::SearchQuery => Some(&self.search.query),
             _ => None,
         }
     }
@@ -616,6 +672,7 @@ impl HomeTab {
         match self.focus {
             HomeField::Collection => Some(&mut self.collection),
             HomeField::Directory => Some(&mut self.directory),
+            HomeField::SearchQuery => Some(&mut self.search.query),
             _ => None,
         }
     }

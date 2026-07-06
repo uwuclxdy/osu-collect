@@ -42,6 +42,12 @@ const HINT_SCROLL: &str = "↑↓ scroll";
 /// ⇧↑↓ reorders the focused built-in mirror row in the Config try-order.
 const HINT_REORDER: &str = "⇧↑↓ reorder";
 const HINT_SOURCE: &str = "↵ switch source";
+/// Search filter chip (mode / status / sort): `←`/`→` cycle the value.
+const HINT_CYCLE: &str = "←→ cycle";
+/// Search form's `search` CTA: run the query.
+const HINT_SEARCH: &str = "↵ search";
+/// Search browse (list pane): load the next page of results.
+const HINT_MORE: &str = "m more";
 const HINT_ENTER_TOGGLE: &str = "↵ toggle";
 const HINT_ENTER_OPEN: &str = "↵ open";
 const HINT_ENTER_CONFIRM: &str = "↵ confirm";
@@ -256,7 +262,49 @@ fn home_tab_hints(form: &HomeTab) -> (Vec<&'static str>, Option<&'static str>) {
     if form.source == GetMapsSource::Update {
         return update_source_hints(form);
     }
+    if let Some(browse) = active_set_browse(form) {
+        return set_browse_hints(form, browse);
+    }
     (home_form_hints(form), Some(HINT_QUIT))
+}
+
+/// The active source's flat browse when it is descended, else `None`.
+fn active_set_browse(form: &HomeTab) -> Option<&crate::app::SetBrowse> {
+    match form.source {
+        GetMapsSource::Search if form.search.browse.is_browsing() => Some(&form.search.browse),
+        GetMapsSource::Collection if form.collection_browse.is_browsing() => {
+            Some(&form.collection_browse)
+        }
+        _ => None,
+    }
+}
+
+fn set_browse_hints(
+    form: &HomeTab,
+    browse: &crate::app::SetBrowse,
+) -> (Vec<&'static str>, Option<&'static str>) {
+    // The browse ascends on esc rather than quitting; that back step is left
+    // unadvertised (esc-to-go-back is universal), so no trailing key.
+    if browse.preview_focused() {
+        return (vec![HINT_SCROLL, HINT_FOCUS_LIST], None);
+    }
+    if browse.cursor_on_action() {
+        return (
+            vec![HINT_SCROLL, HINT_ENTER_DOWNLOAD, HINT_FOCUS_PREVIEW],
+            None,
+        );
+    }
+    let mut segments = vec![
+        HINT_SCROLL,
+        HINT_ENTER_TOGGLE,
+        HINT_SELECT_ALL_NONE,
+        HINT_FOCUS_PREVIEW,
+    ];
+    // `m` loads the next page of a search that still has one.
+    if form.source == GetMapsSource::Search && form.search.next_cursor.is_some() {
+        segments.push(HINT_MORE);
+    }
+    (segments, None)
 }
 
 fn home_form_hints(form: &HomeTab) -> Vec<&'static str> {
@@ -264,7 +312,10 @@ fn home_form_hints(form: &HomeTab) -> Vec<&'static str> {
     match form.focus {
         HomeField::Source => segments.push(HINT_SOURCE),
         HomeField::Download => segments.push(HINT_ENTER_DOWNLOAD),
+        HomeField::CollectionBrowse => segments.push(HINT_ENTER_OPEN),
         HomeField::Mirrors => segments.push(HINT_ENTER_OPEN),
+        HomeField::SearchRun => segments.push(HINT_SEARCH),
+        f if f.is_search_chip() => segments.push(HINT_CYCLE),
         f if f.is_stepper() => segments.push(HINT_PLUS_MINUS),
         f if f.is_toggle() => segments.push(HINT_ENTER_TOGGLE),
         f if f.is_text_input() => segments.push(HINT_EDIT),

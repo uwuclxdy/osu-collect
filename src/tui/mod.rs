@@ -10,6 +10,8 @@ mod home;
 mod login;
 mod master_detail;
 pub(crate) mod modal;
+mod search_source;
+mod set_browse;
 mod toast;
 mod update_source;
 mod widgets;

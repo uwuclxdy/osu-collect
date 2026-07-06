@@ -1,4 +1,4 @@
-use crate::app::{GetMapsSource, HomeField, HomeTab, LibraryState, ResolveState};
+use crate::app::{GetMapsSource, HomeField, HomeTab, LibraryState, ResolveState, SetBrowse};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -9,7 +9,8 @@ use ratatui::{
 
 use super::widgets;
 use super::{
-    accent, danger, focused_label, line, success, text_dim, text_faint, update_source, warning,
+    accent, danger, focused_label, line, search_source, set_browse, success, text_dim, text_faint,
+    update_source, warning,
 };
 use crate::utils::pretty_path;
 use std::path::Path;
@@ -28,6 +29,10 @@ const LABEL_OVERWRITE: &str = "overwrite existing";
 const LABEL_VIDEO: &str = "video";
 
 const LABEL_START_DOWNLOAD: &str = "start download";
+const LABEL_BROWSE_PICK: &str = "browse & pick";
+
+/// Left title of the collection browse&pick browse (its left pane).
+const COLLECTION_BROWSE_TITLE: &str = "collection";
 
 /// Focus hint under the mirrors summary: it is read-only here, so `enter` hands
 /// off to the Config tab, which owns all mirror editing.
@@ -59,6 +64,69 @@ fn update_cursor_col(form: &HomeTab, library: &LibraryState, editing: bool) -> O
         .then(|| widgets::input_cursor_col(&library.osu_path, 0))
 }
 
+/// If the active source is in a flat set browse (search results / collection
+/// browse&pick), render it over the whole body and return `true`. The update
+/// source's two-level browse is handled separately by its own render.
+fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab) -> bool {
+    match form.source {
+        GetMapsSource::Search if form.search.browse.is_browsing() => {
+            let status = search_source::browse_status(&form.search);
+            let action = format!(
+                "[ download {} selected ]",
+                form.search.browse.selected_count()
+            );
+            set_browse::render(
+                frame,
+                area,
+                &form.search.browse,
+                search_source::BROWSE_LIST_TITLE,
+                status,
+                action,
+            );
+            true
+        }
+        GetMapsSource::Collection if form.collection_browse.is_browsing() => {
+            let status = collection_browse_status(&form.collection_browse);
+            let action = format!(
+                "[ download {} selected ]",
+                form.collection_browse.selected_count()
+            );
+            set_browse::render(
+                frame,
+                area,
+                &form.collection_browse,
+                COLLECTION_BROWSE_TITLE,
+                status,
+                action,
+            );
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Caret column for the search query input, or `None` when it isn't the focused,
+/// editing row.
+fn search_cursor_col(form: &HomeTab, editing: bool) -> Option<u16> {
+    (editing && form.focus == HomeField::SearchQuery)
+        .then(|| widgets::input_cursor_col(&form.search.query, 0))
+}
+
+/// Status line above the collection browse&pick browse: `N sets · K selected`.
+fn collection_browse_status(browse: &SetBrowse) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            browse.rows.len().to_string(),
+            Style::default().fg(accent()).bold(),
+        ),
+        Span::styled("  sets  ·  ", Style::default().fg(text_dim())),
+        Span::styled(
+            format!("{} selected", browse.selected_count()),
+            Style::default().fg(text_dim()),
+        ),
+    ])
+}
+
 /// Compact render: all focusable fields without section headers, spacers, or help lines.
 ///
 /// Navigation is identical to normal mode — the full `HOME_FIELDS` cycle still applies.
@@ -72,9 +140,12 @@ fn render_compact(
 ) {
     let focus = form.focus;
 
-    // The update-source browse claims the whole body regardless of density.
+    // A browse claims the whole body regardless of density.
     if form.source == GetMapsSource::Update && form.update.is_browsing() {
         update_source::render_browse(frame, area, &form.update);
+        return;
+    }
+    if maybe_render_set_browse(frame, area, form) {
         return;
     }
 
@@ -106,7 +177,8 @@ fn render_compact(
             return;
         }
         GetMapsSource::Search => {
-            items.push(placeholder_body(form.source));
+            search_source::push_form_rows(&mut items, &form.search, focus, editing);
+            let cursor_col = search_cursor_col(form, editing);
             let (items, focused_index) = items.into_parts();
             widgets::render_scrollable_panel(
                 frame,
@@ -114,8 +186,8 @@ fn render_compact(
                 PANEL_TITLE,
                 items,
                 focused_index,
-                true,
-                None,
+                focus != HomeField::SearchRun,
+                cursor_col,
                 true,
                 true,
                 &form.list_offset,
@@ -165,6 +237,15 @@ fn render_compact(
             can_download(form),
         ),
     );
+    // Browse & pick a subset of the resolved collection; enabled once it resolves.
+    items.push_focusable(
+        HomeField::CollectionBrowse,
+        widgets::button_item(
+            LABEL_BROWSE_PICK,
+            focus == HomeField::CollectionBrowse,
+            form.resolved_collection.is_some(),
+        ),
+    );
 
     let cursor_col = editing
         .then(|| {
@@ -179,7 +260,7 @@ fn render_compact(
         PANEL_TITLE,
         items,
         focused_index,
-        focus != HomeField::Download,
+        !matches!(focus, HomeField::Download | HomeField::CollectionBrowse),
         cursor_col,
         true,
         true,
@@ -223,9 +304,12 @@ fn render_content(
 ) {
     let focus = form.focus;
 
-    // The update-source browse claims the whole body.
+    // A browse claims the whole body.
     if form.source == GetMapsSource::Update && form.update.is_browsing() {
         update_source::render_browse(frame, area, &form.update);
+        return;
+    }
+    if maybe_render_set_browse(frame, area, form) {
         return;
     }
 
@@ -258,9 +342,9 @@ fn render_content(
             );
             return;
         }
-        // Search renders a placeholder until its real form lands.
         GetMapsSource::Search => {
-            items.push(placeholder_body(form.source));
+            search_source::push_form_rows(&mut items, &form.search, focus, editing);
+            let cursor_col = search_cursor_col(form, editing);
             let (items, focused_index) = items.into_parts();
             widgets::render_scrollable_panel(
                 frame,
@@ -268,8 +352,8 @@ fn render_content(
                 PANEL_TITLE,
                 items,
                 focused_index,
-                true,
-                None,
+                focus != HomeField::SearchRun,
+                cursor_col,
                 true,
                 true,
                 &form.list_offset,
@@ -344,6 +428,15 @@ fn render_content(
             can_download(form),
         ),
     );
+    // Browse & pick a subset of the resolved collection; enabled once it resolves.
+    items.push_focusable(
+        HomeField::CollectionBrowse,
+        widgets::button_item(
+            LABEL_BROWSE_PICK,
+            focus == HomeField::CollectionBrowse,
+            form.resolved_collection.is_some(),
+        ),
+    );
 
     let cursor_col = editing
         .then(|| {
@@ -358,7 +451,7 @@ fn render_content(
         PANEL_TITLE,
         items,
         focused_index,
-        focus != HomeField::Download,
+        !matches!(focus, HomeField::Download | HomeField::CollectionBrowse),
         cursor_col,
         true,
         true,
@@ -439,9 +532,10 @@ fn home_section(field: HomeField) -> &'static str {
         Collection => SECTION_COLLECTION,
         Mirrors => SECTION_MIRRORS,
         Threads | AutoOverwrite | Video | Directory => SECTION_DOWNLOAD,
-        // The update-source fields render in their own body, not the collection
-        // sections, so they light no header here.
-        Download | UpdateOsuPath | UpdateScan => SECTION_NONE,
+        // The download buttons and the update / search source fields render in
+        // their own bodies, not the collection sections, so they light no header.
+        Download | CollectionBrowse | UpdateOsuPath | UpdateScan => SECTION_NONE,
+        SearchQuery | SearchMode | SearchStatus | SearchSort | SearchRun => SECTION_NONE,
     }
 }
 
@@ -451,19 +545,6 @@ fn home_section(field: HomeField) -> &'static str {
 fn source_row_item(active: GetMapsSource, focused: bool) -> ListItem<'static> {
     let options: Vec<&str> = GetMapsSource::ALL.iter().map(|s| s.label()).collect();
     widgets::cycle_item(LABEL_SOURCE, &options, active.label(), focused, 0)
-}
-
-/// Placeholder body for the search source, which lands in a later update. The
-/// collection and update sources render their real forms, never this.
-fn placeholder_body(source: GetMapsSource) -> ListItem<'static> {
-    let msg = match source {
-        GetMapsSource::Search => "search lands in a later update",
-        GetMapsSource::Collection | GetMapsSource::Update => "",
-    };
-    ListItem::new(Line::from(Span::styled(
-        msg.to_string(),
-        Style::default().fg(text_faint()),
-    )))
 }
 
 const RESOLVE_PREFIX: &str = "  └ ";
