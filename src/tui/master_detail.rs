@@ -120,9 +120,12 @@ fn render_list_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
         view.list_title,
         view.list_items.clone(),
         view.list_selected.unwrap_or(0),
-        // Highlight tint only while this pane owns focus; the row still
-        // scrolls into view either way (see `render_list`'s doc contract).
-        focused,
+        // Highlight tint only while this pane owns focus AND a row is actually
+        // selected — parked on the action bar (`list_selected == None`) nothing
+        // in the list is highlighted, so the tint doesn't double up with the
+        // action bar's. The row still scrolls into view either way (see
+        // `render_list`'s doc contract).
+        focused && view.list_selected.is_some(),
         None,
         focused,
         true,
