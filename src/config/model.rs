@@ -32,10 +32,10 @@ pub struct RecentConfig {
     pub collection: Option<String>,
     /// Last download directory typed into the home form.
     pub directory: Option<String>,
-    /// Last osu! client kind selected on the updates tab.
+    /// Last osu! client kind selected for the app-global library.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub osu_client: Option<OsuClient>,
-    /// Last osu! installation path typed on the updates tab. Persisted verbatim
+    /// Last osu! installation path typed for the app-global library. Persisted verbatim
     /// even when it no longer exists on disk — a stale path surfaces a "no db"
     /// scan rather than silently reverting to auto-detection.
     #[serde(default, skip_serializing_if = "Option::is_none")]

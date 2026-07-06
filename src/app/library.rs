@@ -4,9 +4,9 @@ use crate::osu_db::OsuClient;
 use crate::utils::expand_tilde;
 
 /// App-global "which osu! library are we working against": the selected client
-/// (stable ↔ lazer) and its install-path input. Hoisted off the Updates tab so
+/// (stable ↔ lazer) and its install-path input. Hoisted off per-tab state so
 /// the header chip, the download pipeline, and the library scan share one
-/// backing value ahead of Updates folding into a get-maps source.
+/// backing value; the Get Maps update source (the former Updates tab) reads it too.
 ///
 /// Owns the osu!-path text field and its editing, so the field survives when
 /// the panel that renders it moves. Scan/selection reset on a client switch

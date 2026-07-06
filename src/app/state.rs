@@ -803,7 +803,7 @@ impl App {
         let _ = save_config(&config);
     }
 
-    /// Persist the updates-tab osu! client kind and path so the next launch
+    /// Persist the app-global library osu! client kind and path so the next launch
     /// restores them instead of re-detecting. Reads the on-disk config first so
     /// unsaved config-tab edits are never clobbered; failures are silent.
     fn persist_osu_path_inputs(&self) {
@@ -882,7 +882,7 @@ impl App {
         // Cheap, sync inputs for the pre-skip of already-imported sets. The
         // owned-id set itself is resolved off the UI thread in the pipeline task
         // (`run_collection`), so the blocking db read never stalls the event loop.
-        // Source mirrors the Updates-tab scan (seeded from `[recent]`).
+        // Source mirrors the update-source scan (seeded from `[recent]`).
         request.skip_already_imported = self.config.skip_already_imported;
         request.osu_client = self.library.client_type;
         request.osu_path = self.library.osu_path();

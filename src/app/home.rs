@@ -758,7 +758,7 @@ impl HomeTab {
             // modal under `Ask` before the download is dispatched).
             include_previously_failed: false,
             // Placeholders; `App::request_download` fills these from the live
-            // config + Updates-tab client/path before the request is dispatched.
+            // config + `App.library` client/path before the request is dispatched.
             skip_already_imported: false,
             osu_client: OsuClient::default(),
             osu_path: String::new(),

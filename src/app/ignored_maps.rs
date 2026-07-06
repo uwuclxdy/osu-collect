@@ -13,7 +13,7 @@ const SCHEMA_VERSION: u32 = 1;
 static SAVE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// Beatmapsets the user manually marked as installed. They are hidden from the
-/// updates-tab missing list until a later scan detects a genuine install, at
+/// update-source missing list until a later scan detects a genuine install, at
 /// which point [`reconcile_installed`] un-ignores them.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IgnoredMapsFile {
