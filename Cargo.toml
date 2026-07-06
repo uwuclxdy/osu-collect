@@ -14,7 +14,7 @@ test = false
 doctest = false
 
 [dependencies]
-osu-downloader = { path = "osu-downloader" }
+osu-downloader = { path = "osu-downloader", version = "0.17.0" }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "default-tls", "blocking", "form"] }
 bytes = "1.11.1"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -61,7 +61,7 @@ path = "tests/mod.rs"
 
 [dev-dependencies]
 tempfile = "3.27.0"
-osu-downloader = { path = "osu-downloader", features = ["test-helpers"] }
+osu-downloader = { path = "osu-downloader", version = "0.17.0", features = ["test-helpers"] }
 criterion = { version = "0.8.2", features = ["html_reports"] }
 chrono = "0.4.45"
 serial_test = "3.5.0"
