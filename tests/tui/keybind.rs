@@ -897,6 +897,46 @@ fn enter_on_collection_toggles_and_stays_in_browse() {
     );
 }
 
+#[test]
+fn enter_on_action_bar_dispatches_selective_download() {
+    use osu_collect::app::GetMapsSource;
+    use osu_collect::app::update_source::{MissingBeatmapset, MissingStatus};
+
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Update;
+    app.home
+        .update
+        .set_collections(vec![osu_collect::osu_db::LocalCollection {
+            name: "test - 1234".to_string(),
+            beatmap_checksums: Vec::new().into(),
+        }]);
+    // One missing set in the (selected-by-default) collection, so the
+    // whole-collection selection resolves to a non-empty download set.
+    app.home
+        .update
+        .set_missing_beatmaps(vec![MissingBeatmapset {
+            id: 42,
+            status: MissingStatus::NotInstalled,
+            collection_id: 1234,
+            collection_name: "test - 1234".to_string(),
+            selected: false,
+            previously_deleted: false,
+        }]);
+    app.home.update.descend();
+    // Park the list cursor on the virtual action-bar row.
+    app.home.update.scroll_to_edge(false);
+    assert!(
+        app.home.update.cursor_on_action(),
+        "scrolling to the list end parks the cursor on the action bar"
+    );
+
+    let cmd = app.handle_key(press(KeyCode::Enter));
+    assert!(
+        matches!(cmd, Some(AppCommand::StartSelectiveDownload { .. })),
+        "enter on the action bar dispatches the selective download"
+    );
+}
+
 // ── config tab: mirror reorder ────────────────────────────────────────────────
 
 #[test]
