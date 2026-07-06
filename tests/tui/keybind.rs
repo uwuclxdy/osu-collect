@@ -139,6 +139,24 @@ fn s_jumps_to_download_button_on_home() {
 }
 
 #[test]
+fn s_jumps_to_download_button_on_every_source() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    // Every source's form carries a download button now, so `s` reaches it on
+    // all three — not just the collection source.
+    for source in [GetMapsSource::Search, GetMapsSource::Update] {
+        let mut app = make_app();
+        app.home.source = source;
+        app.home.focus = HomeField::Source;
+        app.handle_key(press(KeyCode::Char('s')));
+        assert_eq!(
+            app.home.focus,
+            HomeField::Download,
+            "s jumps to the download button on the {source:?} source"
+        );
+    }
+}
+
+#[test]
 fn s_types_literally_while_editing() {
     let mut app = make_app();
     app.editing = true;
@@ -302,9 +320,8 @@ fn search_source_down_focuses_query() {
     // The search source has a real form now: Down from the strip focuses the query.
     app.handle_key(press(KeyCode::Down));
     assert_eq!(app.home.focus, HomeField::SearchQuery);
-    // `s` / `d` are collection-only hotkeys; they don't act on the search form.
-    app.handle_key(press(KeyCode::Char('s')));
-    assert_eq!(app.home.focus, HomeField::SearchQuery);
+    // (`s` jumps to the download button on every source — covered by
+    // `s_jumps_to_download_button_on_every_source`. `d` stays collection-only.)
 }
 
 #[test]

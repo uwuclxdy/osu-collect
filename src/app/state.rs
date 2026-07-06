@@ -2217,10 +2217,11 @@ impl App {
                         }
                     } else if ch == 'd' && self.home.source == GetMapsSource::Collection {
                         return Some(AppCommand::FocusOutputDir);
-                    } else if ch == 's' && self.home.source == GetMapsSource::Collection {
-                        // Jump straight to the download button — no arrowing down
-                        // from the just-pasted collection field. Only the
-                        // collection source has a download button to jump to.
+                    } else if ch == 's' {
+                        // Jump straight to the download button — every source's
+                        // form has one now, so no arrowing down through the
+                        // fields. (`d` for the output-dir field stays
+                        // Collection-only: search/update borrow it silently.)
                         self.home.focus = HomeField::Download;
                         self.editing = false;
                     }
