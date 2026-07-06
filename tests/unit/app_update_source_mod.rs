@@ -215,6 +215,32 @@ fn set_removed_counts_survives_sort_round_trip() {
     assert_eq!(entry.removed_count, 5);
 }
 
+#[test]
+fn selection_survives_sort_round_trip() {
+    let mut tab = seeded();
+    // Deselect the collection under the cursor (whole-collection selection is
+    // the sole download determinant now).
+    tab.toggle_selected_collection();
+    let deselected_id = tab.selection.local_collections[0].collection_id;
+    assert!(!tab.selection.local_collections[0].selected);
+
+    // Cycle Default → Name → Size → Default.
+    tab.cycle_collection_sort();
+    tab.cycle_collection_sort();
+    tab.cycle_collection_sort();
+
+    let entry = tab
+        .selection
+        .local_collections
+        .iter()
+        .find(|e| e.collection_id == deselected_id)
+        .expect("the deselected collection must still exist after a sort round-trip");
+    assert!(
+        !entry.selected,
+        "returning to Default sort must not re-select a deselected collection"
+    );
+}
+
 // ── descend / ascend / pane focus ─────────────────────────────────────────────
 
 #[test]

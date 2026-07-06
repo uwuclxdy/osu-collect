@@ -337,7 +337,25 @@ impl UpdateSource {
     fn apply_collection_sort(&mut self) {
         match self.selection.collection_sort {
             CollectionSort::Default => {
-                self.selection.local_collections = self.selection.collections_default_order.clone();
+                // Restore insertion order in place. Cloning the snapshot here
+                // would reset every `selected` flag to its scan-time default,
+                // and since selection is now whole-collection (the sole download
+                // determinant), a sort round-trip would silently re-include
+                // collections the user deselected. Reordering keeps the live
+                // `selected`/`removed_count` on each entry.
+                let order: std::collections::HashMap<(Option<u64>, String), usize> = self
+                    .selection
+                    .collections_default_order
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, c)| ((c.collection_id, c.name.clone()), idx))
+                    .collect();
+                self.selection.local_collections.sort_by_key(|c| {
+                    order
+                        .get(&(c.collection_id, c.name.clone()))
+                        .copied()
+                        .unwrap_or(usize::MAX)
+                });
             }
             CollectionSort::Name => {
                 self.selection
