@@ -991,7 +991,10 @@ impl App {
     pub fn request_selective_download(&mut self) -> Option<(DownloadId, SelectiveDownloadRequest)> {
         let beatmapset_ids = self.home.update.selected_beatmapset_ids();
         if beatmapset_ids.is_empty() {
-            self.report_scan_error("no beatmaps selected for download");
+            // A soft validation block, not a scan failure — don't clobber the
+            // `Ready` scan status (that would drop the CTA back to "scan for
+            // updates" and discard the ready-to-review results still cached).
+            self.toast_warn("no collections selected for download");
             return None;
         }
 
@@ -1004,13 +1007,13 @@ impl App {
             .collect();
 
         if collection_ids.is_empty() {
-            self.report_scan_error("no collections available");
+            self.toast_warn("no collections available");
             return None;
         }
 
         let mirrors = self.home.build_mirror_list();
         if mirrors.is_empty() {
-            self.report_scan_error("no mirrors selected (configure in the home tab)");
+            self.toast_warn("no mirrors selected (configure in the home tab)");
             return None;
         }
 
