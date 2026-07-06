@@ -1,4 +1,4 @@
-use crate::app::{GetMapsSource, HomeField, HomeTab, LibraryState, ResolveState, SetBrowse};
+use crate::app::{GetMapsSource, HomeField, HomeTab, LibraryState, ResolveState};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -70,7 +70,10 @@ fn update_cursor_col(form: &HomeTab, library: &LibraryState, editing: bool) -> O
 fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab) -> bool {
     match form.source {
         GetMapsSource::Search if form.search.browse.is_browsing() => {
-            let status = search_source::browse_status(&form.search);
+            let status = widgets::ratio_line(
+                form.search.browse.selected_count(),
+                form.search.browse.rows.len(),
+            );
             set_browse::render(
                 frame,
                 area,
@@ -81,7 +84,10 @@ fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab) -> boo
             true
         }
         GetMapsSource::Collection if form.collection_browse.is_browsing() => {
-            let status = collection_browse_status(&form.collection_browse);
+            let status = widgets::ratio_line(
+                form.collection_browse.selected_count(),
+                form.collection_browse.rows.len(),
+            );
             set_browse::render(
                 frame,
                 area,
@@ -100,20 +106,6 @@ fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab) -> boo
 fn search_cursor_col(form: &HomeTab, editing: bool) -> Option<u16> {
     (editing && form.focus == HomeField::SearchQuery)
         .then(|| widgets::input_cursor_col(&form.search.query, 0))
-}
-
-/// Status line above the collection browse&pick browse: `N sets · K selected`.
-fn collection_browse_status(browse: &SetBrowse) -> Line<'static> {
-    let n = browse.rows.len();
-    let noun = if n == 1 { "set" } else { "sets" };
-    Line::from(vec![
-        Span::styled(n.to_string(), Style::default().fg(accent()).bold()),
-        Span::styled(format!("  {noun}  ·  "), Style::default().fg(text_dim())),
-        Span::styled(
-            format!("{} selected", browse.selected_count()),
-            Style::default().fg(text_dim()),
-        ),
-    ])
 }
 
 /// Compact render: all focusable fields without section headers, spacers, or help lines.

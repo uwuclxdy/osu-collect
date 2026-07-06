@@ -14,7 +14,7 @@ use ratatui::{
 };
 
 use super::widgets;
-use super::{accent, danger, spinner_str, text_dim, warning};
+use super::{danger, spinner_str, warning};
 
 const LABEL_MODE: &str = "mode";
 const LABEL_STATUS: &str = "status";
@@ -119,28 +119,6 @@ pub fn push_form_rows(
             download_enabled,
         ),
     );
-}
-
-/// The status line drawn above the results browse: `X of TOTAL · K selected`,
-/// plus a `m load more` hint when another page is available.
-pub fn browse_status(search: &SearchSource) -> Line<'static> {
-    let shown = search.browse.rows.len();
-    let selected = search.browse.selected_count();
-    let total = match search.status_msg {
-        SearchStatusMsg::Ready { total } => total,
-        _ => shown as u64,
-    };
-    // The `m load more` keybind lives in the footer hint bar (shown in the same
-    // condition), so it isn't duplicated here — the `X of TOTAL` count already
-    // signals more results exist.
-    Line::from(vec![
-        Span::styled(shown.to_string(), Style::default().fg(accent()).bold()),
-        Span::styled(format!(" of {total}  ·  "), Style::default().fg(text_dim())),
-        Span::styled(
-            format!("{selected} selected"),
-            Style::default().fg(text_dim()),
-        ),
-    ])
 }
 
 /// The inline outcome line for an empty or failed search, or `None` otherwise

@@ -143,10 +143,15 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource) {
         })
         .collect();
 
-    // The grand-total new count rides the COLLECTIONS panel's title-right meta
-    // (hidden at zero, per the zero-count rule) instead of a status line above.
-    let total_new = form.total_new_count();
-    let list_meta = (total_new > 0).then(|| new_maps_meta(total_new));
+    // Selected/total collections rides the COLLECTIONS panel's title-right meta.
+    let total = form.selection.local_collections.len();
+    let selected = form
+        .selection
+        .local_collections
+        .iter()
+        .filter(|c| c.selected)
+        .count();
+    let list_meta = (total > 0).then(|| widgets::ratio_line(selected, total));
 
     let preview_indices = form.preview_missing_indices();
     let preview_items: Vec<ListItem<'static>> = preview_indices
@@ -217,15 +222,6 @@ fn collection_row(selected: bool, name: &str, new: usize, is_cursor: bool) -> Li
         spans.push(Span::styled(format!(" {name}"), focused_label(is_cursor)));
     }
     ListItem::new(Line::from(spans))
-}
-
-/// The COLLECTIONS panel title-right meta: the grand-total new-map count across
-/// every collection. `TEXT_DIM` — a neutral count, never bold/italic.
-fn new_maps_meta(new: usize) -> Line<'static> {
-    Line::from(Span::styled(
-        format!("{new} new {}", if new == 1 { "map" } else { "maps" }),
-        Style::default().fg(text_dim()),
-    ))
 }
 
 /// The preview panel title-right meta for the highlighted collection: `N new`

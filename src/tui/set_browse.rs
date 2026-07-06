@@ -26,13 +26,14 @@ const PREVIEW_TITLE: &str = " PREVIEW ";
 const KV_WIDTH: usize = "favourites".len();
 
 /// Render a set browse over the whole body area. `list_title` names the left
-/// pane, `status` is the line above it. Pure selector — no download button.
+/// pane, `list_meta` renders in the list pane's header border. Pure selector —
+/// no download button.
 pub fn render(
     frame: &mut Frame,
     area: Rect,
     browse: &SetBrowse,
     list_title: &'static str,
-    status: Line<'static>,
+    list_meta: Line<'static>,
 ) {
     // Caret + label promotion render only while the list pane owns focus (the
     // contract's per-pane cursor rule); a descended preview drops both.
@@ -57,9 +58,9 @@ pub fn render(
         .unwrap_or_default();
 
     let view = MasterDetail {
-        status: Some(status),
+        status: None,
         list_title: list_title.into(),
-        list_meta: None,
+        list_meta: Some(list_meta),
         list_items,
         list_selected: cursor,
         list_offset: &browse.list_offset,

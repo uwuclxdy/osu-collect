@@ -777,6 +777,17 @@ pub fn summary_line(metrics: &[Metric<'_>]) -> Line<'static> {
     Line::from(spans)
 }
 
+/// A `selected/total` ratio line for header-border meta. Selected is accent
+/// when > 0, neutral otherwise; total is always neutral.
+pub fn ratio_line(selected: usize, total: usize) -> Line<'static> {
+    let selected_color = if selected > 0 { accent() } else { text_dim() };
+    Line::from(vec![
+        Span::styled(selected.to_string(), Style::default().fg(selected_color)),
+        Span::styled("/", Style::default().fg(text_faint())),
+        Span::styled(total.to_string(), Style::default().fg(text_dim())),
+    ])
+}
+
 /// [`summary_line`] as a list item, for form / list render paths.
 pub fn summary_item(metrics: &[Metric<'_>]) -> ListItem<'static> {
     ListItem::new(summary_line(metrics))
