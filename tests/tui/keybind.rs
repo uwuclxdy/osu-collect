@@ -237,10 +237,10 @@ fn up_from_first_field_wraps_to_last() {
     use osu_collect::app::HomeField;
     let mut app = make_app();
     // The source strip is the first focusable row; Up from it wraps to the last
-    // collection field (the `view N maps` button, after the download button).
+    // collection field (the download button, after `view N maps`).
     app.home.focus = HomeField::Source;
     app.handle_key(press(KeyCode::Up));
-    assert_eq!(app.home.focus, HomeField::CollectionBrowse);
+    assert_eq!(app.home.focus, HomeField::Download);
 }
 
 #[test]
@@ -1132,6 +1132,8 @@ fn search_view_button_reopens_results_without_re_searching() {
         BrowseRow { id: 10, meta: None },
         BrowseRow { id: 20, meta: None },
     ]);
+    // Mirror the Ready handler: the loaded rows are for the current inputs.
+    app.home.search.mark_results_current();
     // On the form (not descended into the browse).
     assert!(!app.home.search.browse.is_browsing());
 
@@ -1150,6 +1152,33 @@ fn search_view_button_reopens_results_without_re_searching() {
         app.home.search.status_msg,
         SearchStatusMsg::Ready { total: 2 },
         "the view button must not flip status back to Loading"
+    );
+}
+
+#[test]
+fn search_view_button_is_inert_once_the_query_diverges() {
+    use crossterm::event::KeyCode;
+    use osu_collect::app::{BrowseRow, GetMapsSource, HomeField, SearchStatusMsg};
+
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Search;
+    app.home.search.query.set_value("tekno");
+    app.home.search.status_msg = SearchStatusMsg::Ready { total: 2 };
+    app.home.search.browse.set_rows(vec![
+        BrowseRow { id: 10, meta: None },
+        BrowseRow { id: 20, meta: None },
+    ]);
+    app.home.search.mark_results_current();
+
+    // Edit the query after results loaded: the snapshot no longer matches, so the
+    // view button must go inert (no opening the now-stale results).
+    app.home.search.query.set_value("teknoz");
+    app.home.focus = HomeField::SearchBrowse;
+    let cmd = app.handle_key(press(KeyCode::Enter));
+    assert!(cmd.is_none(), "stale view button fires nothing");
+    assert!(
+        !app.home.search.browse.is_browsing(),
+        "a stale view button must not reopen the old results"
     );
 }
 

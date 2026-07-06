@@ -136,6 +136,9 @@ pub fn handle_home_search_event(event: HomeSearchEvent, app: &mut App) {
                     search.browse.append_rows(rows);
                 } else {
                     search.browse.set_rows(rows);
+                    // These rows are for the current inputs; snapshot them so the
+                    // `view N maps` button stays accurate after a later edit.
+                    search.mark_results_current();
                     // Open the results immediately on a fresh search.
                     search.browse.descend();
                 }
@@ -149,9 +152,11 @@ pub fn handle_home_search_event(event: HomeSearchEvent, app: &mut App) {
             search.status_msg = SearchStatusMsg::Empty;
             search.next_cursor = None;
             search.browse.set_rows(Vec::new());
+            search.clear_results_snapshot();
         }
         HomeSearchEvent::Failed { reason } => {
             app.home.search.status_msg = SearchStatusMsg::Error(reason);
+            app.home.search.clear_results_snapshot();
         }
     }
 }

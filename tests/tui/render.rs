@@ -206,6 +206,8 @@ fn search_view_maps_button_shows_when_results_loaded() {
         BrowseRow { id: 1, meta: None },
         BrowseRow { id: 2, meta: None },
     ]);
+    // Mirror the Ready handler, which snapshots the inputs the rows are for.
+    app.home.search.mark_results_current();
     let content = render_content(&app, 80, 26);
     assert!(
         content.contains("view 2 maps"),

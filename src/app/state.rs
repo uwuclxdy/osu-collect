@@ -2041,11 +2041,13 @@ impl App {
                                 }
                             }
                             // Reopen the search results browse without re-running
-                            // the query. Inert until results are loaded — guard the
-                            // descend so an unloaded view button never opens an
-                            // empty browse.
+                            // the query. Inert until fresh results are loaded and
+                            // still match the current inputs — guard the descend so
+                            // an unloaded / stale view button never opens the browse.
                             HomeField::SearchBrowse => {
-                                if !self.home.search.browse.rows.is_empty() {
+                                if !self.home.search.browse.rows.is_empty()
+                                    && self.home.search.results_current()
+                                {
                                     self.home.search.browse.descend();
                                 }
                             }
@@ -2152,6 +2154,12 @@ impl App {
                 self.library.switch_client();
                 self.home.update.reset_for_client_switch();
                 self.persist_osu_path_inputs();
+                // The scan was cleared; nudge the user to re-scan against the new
+                // library so the empty update form isn't a dead end.
+                self.push_toast(
+                    Toast::info(format!("switched to {}", self.library.client_type.label()))
+                        .with_detail("scan to find updates"),
+                );
                 return None;
             }
             // Login split traps chars: no non-typing hotkeys, just type the field.

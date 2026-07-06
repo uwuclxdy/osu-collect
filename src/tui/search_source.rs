@@ -90,18 +90,20 @@ pub fn push_form_rows(
     );
 
     // `view N maps` reopens the results browse without re-running the query.
-    // Always rendered (disabled `view maps` until results load) so focus always
-    // lands on a real row; an empty / failed search adds a one-line outcome
-    // beneath it.
+    // Always rendered (disabled `view maps` until fresh results load — or once
+    // the inputs drift from the loaded ones, so it never offers stale results)
+    // so focus always lands on a real row; an empty / failed search adds a
+    // one-line outcome beneath it.
     let loaded = search.browse.rows.len();
-    let view_label = if loaded > 0 {
+    let view_current = loaded > 0 && search.results_current();
+    let view_label = if view_current {
         widgets::view_maps_label(loaded)
     } else {
         "view maps".to_string()
     };
     items.push_focusable(
         HomeField::SearchBrowse,
-        widgets::button_item(&view_label, focus == HomeField::SearchBrowse, loaded > 0),
+        widgets::button_item(&view_label, focus == HomeField::SearchBrowse, view_current),
     );
     if let Some(row) = status_row(&search.status_msg) {
         items.push(row);

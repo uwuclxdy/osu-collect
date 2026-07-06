@@ -213,15 +213,6 @@ fn render_compact(
     );
     push_toggle_rows(&mut items, form, focus);
 
-    let (download_label, download_enabled) = collection_download_button(form);
-    items.push_focusable(
-        HomeField::Download,
-        widgets::button_item(
-            &download_label,
-            focus == HomeField::Download,
-            download_enabled,
-        ),
-    );
     // `view N maps` opens the resolved collection in the checkbox browse.
     let (browse_label, browse_enabled) = collection_browse_button(form);
     items.push_focusable(
@@ -230,6 +221,15 @@ fn render_compact(
             &browse_label,
             focus == HomeField::CollectionBrowse,
             browse_enabled,
+        ),
+    );
+    let (download_label, download_enabled) = collection_download_button(form);
+    items.push_focusable(
+        HomeField::Download,
+        widgets::button_item(
+            &download_label,
+            focus == HomeField::Download,
+            download_enabled,
         ),
     );
 
@@ -437,15 +437,6 @@ fn render_content(
     push_toggle_rows(&mut items, form, focus);
     items.push(widgets::spacer());
 
-    let (download_label, download_enabled) = collection_download_button(form);
-    items.push_focusable(
-        HomeField::Download,
-        widgets::button_item(
-            &download_label,
-            focus == HomeField::Download,
-            download_enabled,
-        ),
-    );
     // `view N maps` opens the resolved collection in the checkbox browse.
     let (browse_label, browse_enabled) = collection_browse_button(form);
     items.push_focusable(
@@ -454,6 +445,15 @@ fn render_content(
             &browse_label,
             focus == HomeField::CollectionBrowse,
             browse_enabled,
+        ),
+    );
+    let (download_label, download_enabled) = collection_download_button(form);
+    items.push_focusable(
+        HomeField::Download,
+        widgets::button_item(
+            &download_label,
+            focus == HomeField::Download,
+            download_enabled,
         ),
     );
 

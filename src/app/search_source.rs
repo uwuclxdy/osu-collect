@@ -325,6 +325,10 @@ pub struct SearchSource {
     /// One-shot login-nudge gate: the guest-search nudge toast fires at most once
     /// per logged-out session.
     pub login_nudged: bool,
+    /// Snapshot of the inputs `(query, mode, status, sort)` that produced the
+    /// loaded `browse` rows, so the `view N maps` button can tell fresh results
+    /// from stale ones left over after an input edit. `None` until results land.
+    results_inputs: Option<(String, usize, usize, usize)>,
     pub browse: SetBrowse,
 }
 
@@ -338,8 +342,36 @@ impl SearchSource {
             status_msg: SearchStatusMsg::Idle,
             next_cursor: None,
             login_nudged: false,
+            results_inputs: None,
             browse: SetBrowse::new(),
         }
+    }
+
+    /// The current search inputs as a comparable key `(query, mode, status, sort)`.
+    fn current_inputs(&self) -> (String, usize, usize, usize) {
+        (
+            self.query.value.clone(),
+            self.mode_idx,
+            self.status_idx,
+            self.sort_idx,
+        )
+    }
+
+    /// Whether the loaded results still match the current inputs (so the
+    /// `view N maps` button offers the right results, not stale ones).
+    pub fn results_current(&self) -> bool {
+        self.results_inputs.as_ref() == Some(&self.current_inputs())
+    }
+
+    /// Record the current inputs as the ones the loaded results are for (called
+    /// when fresh results land).
+    pub fn mark_results_current(&mut self) {
+        self.results_inputs = Some(self.current_inputs());
+    }
+
+    /// Drop the results snapshot (the loaded rows no longer apply).
+    pub fn clear_results_snapshot(&mut self) {
+        self.results_inputs = None;
     }
 
     // ── chips ─────────────────────────────────────────────────────────────────

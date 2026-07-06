@@ -251,8 +251,8 @@ const COLLECTION_FIELDS: &[HomeField] = &[
     HomeField::Threads,
     HomeField::AutoOverwrite,
     HomeField::Video,
-    HomeField::Download,
     HomeField::CollectionBrowse,
+    HomeField::Download,
 ];
 
 /// Focus order for the search source: the strip, the query input, the three
