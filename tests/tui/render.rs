@@ -198,6 +198,49 @@ fn collection_form_cta_reads_download_all() {
 }
 
 #[test]
+fn search_view_maps_button_shows_when_results_loaded() {
+    use osu_collect::app::{BrowseRow, GetMapsSource};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Search;
+    app.home.search.browse.set_rows(vec![
+        BrowseRow { id: 1, meta: None },
+        BrowseRow { id: 2, meta: None },
+    ]);
+    let content = render_content(&app, 80, 26);
+    assert!(
+        content.contains("view 2 maps"),
+        "search renders a `view N maps` button once results are loaded: {content}"
+    );
+}
+
+#[test]
+fn update_view_maps_button_is_disabled_until_a_scan_finds_updates() {
+    use osu_collect::app::GetMapsSource;
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Update;
+    let content = render_content(&app, 80, 22);
+    // Idle (no scan): the view button reads the bare `view maps`, sitting under
+    // the scan CTA. It gains a count only after a scan finds updates.
+    assert!(
+        content.contains("scan for updates") && content.contains("view maps"),
+        "update idle form shows the scan CTA + a disabled `view maps`: {content}"
+    );
+}
+
+#[test]
+fn collection_view_maps_button_shows_when_resolved() {
+    use osu_collect::app::GetMapsSource;
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Collection;
+    app.home.set_resolved_collection(7, vec![10, 20, 30]);
+    let content = render_content(&app, 80, 30);
+    assert!(
+        content.contains("view 3 maps"),
+        "resolved collection renders a `view N maps` button: {content}"
+    );
+}
+
+#[test]
 fn collection_browse_shows_focus_caret_and_uppercase_title() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use osu_collect::app::{GetMapsSource, HomeField};

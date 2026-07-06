@@ -723,6 +723,13 @@ pub fn download_button_label(selected: usize) -> (String, bool) {
     }
 }
 
+/// Label for a source's "open the results browse" button: `view N map(s)`. The
+/// count is what the browse will show, so each source passes its own
+/// (loaded rows / new count / resolved set count). Singular at 1.
+pub fn view_maps_label(n: usize) -> String {
+    format!("view {n} {}", if n == 1 { "map" } else { "maps" })
+}
+
 /// A `label value` metric line separated by [`SEPARATOR`].
 ///
 /// Metric styling: each label is lowercase `TEXT_FAINT` (a recessive

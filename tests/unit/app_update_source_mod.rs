@@ -387,22 +387,23 @@ fn scan_cta_label_follows_state_machine() {
     assert_eq!(tab.scan_cta(), ScanCta::Scan);
     assert_eq!(tab.scan_cta_label(), "rescan");
 
-    // Ready with updates: descend.
+    // Ready with updates: the scan button still only scans (opening the browse
+    // is the separate view button's job), so it reads `rescan`.
     let mut ready = seeded();
     ready.scan.scan_status = ScanStatus::Ready;
-    assert_eq!(ready.scan_cta(), ScanCta::Descend);
-    assert_eq!(ready.scan_cta_label(), "view 3 updates");
+    assert_eq!(ready.scan_cta(), ScanCta::Scan);
+    assert_eq!(ready.scan_cta_label(), "rescan");
 }
 
 #[test]
-fn client_switch_reset_clears_scan() {
+fn client_switch_reset_clears_scan_without_auto_scanning() {
     let mut tab = seeded();
     tab.descend();
     tab.scan.scan_status = ScanStatus::Ready;
-    let action = tab.reset_for_client_switch();
-    assert_eq!(action, super::UpdateAction::RefreshAll);
+    tab.reset_for_client_switch();
     assert!(tab.selection.local_collections.is_empty());
     assert!(tab.selection.cached_missing_sets.is_empty());
     assert!(!tab.is_browsing());
+    // Cleared back to Idle — the user scans manually; no auto-scan on switch.
     assert_eq!(tab.scan.scan_status, ScanStatus::Idle);
 }

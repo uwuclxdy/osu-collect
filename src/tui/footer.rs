@@ -306,7 +306,7 @@ fn home_form_hints(form: &HomeTab) -> Vec<&'static str> {
     match form.focus {
         HomeField::Source => segments.push(HINT_SOURCE),
         HomeField::Download => segments.push(HINT_ENTER_DOWNLOAD),
-        HomeField::CollectionBrowse => segments.push(HINT_ENTER_OPEN),
+        HomeField::CollectionBrowse | HomeField::SearchBrowse => segments.push(HINT_ENTER_OPEN),
         HomeField::Mirrors => segments.push(HINT_ENTER_OPEN),
         HomeField::SearchRun => segments.push(HINT_SEARCH),
         f if f.is_search_chip() => segments.push(HINT_CYCLE),
@@ -346,6 +346,7 @@ fn update_source_hints(form: &HomeTab) -> (Vec<&'static str>, Option<&'static st
     match form.focus {
         HomeField::Source => segments.push(HINT_SOURCE),
         HomeField::UpdateScan => segments.push(HINT_SCAN),
+        HomeField::UpdateBrowse => segments.push(HINT_ENTER_OPEN),
         HomeField::UpdateOsuPath => segments.push(HINT_EDIT),
         HomeField::Download => segments.push(HINT_ENTER_DOWNLOAD),
         _ => {}

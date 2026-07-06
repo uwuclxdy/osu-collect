@@ -211,16 +211,19 @@ pub enum HomeField {
     /// `dispatch_form_download`: collection downloads all (or the browse&pick
     /// subset), search the picked results, update the checked collections.
     Download,
-    /// The collection source's "browse & pick" CTA — opens the resolved
-    /// collection in a checkbox browse to download a subset. Enabled only once a
-    /// collection has resolved.
+    /// The collection source's `view N maps` CTA — opens the resolved collection
+    /// in a checkbox browse to download a subset. Enabled only once a collection
+    /// has resolved.
     CollectionBrowse,
     /// The update source's osu! path input. A text field editing
     /// [`App.library`](crate::app::App::library)'s path rather than a `HomeTab`
     /// field, so its text ops route through `library` in the app.
     UpdateOsuPath,
-    /// The update source's "scan for updates" / "view N updates" CTA button.
+    /// The update source's scan CTA (`scan for updates` / `rescan`).
     UpdateScan,
+    /// The update source's `view N maps` button — opens the two-pane browse over
+    /// the scan's missing sets. Enabled once a scan finds updates.
+    UpdateBrowse,
     /// The search source's free-text query input.
     SearchQuery,
     /// The search source's game-mode filter chip (`space`/`enter` cycle it).
@@ -231,6 +234,9 @@ pub enum HomeField {
     SearchSort,
     /// The search source's `search` CTA button.
     SearchRun,
+    /// The search source's `view N maps` button — reopens the results browse
+    /// without re-running the query. Enabled once results are loaded.
+    SearchBrowse,
 }
 
 /// Focus order when the collection source is active: the source strip, then the
@@ -263,17 +269,20 @@ const SEARCH_FIELDS: &[HomeField] = &[
     HomeField::SearchStatus,
     HomeField::SearchSort,
     HomeField::SearchRun,
+    HomeField::SearchBrowse,
     HomeField::Download,
 ];
 
 /// Focus order for the update source form: the strip, the osu! path input, the
-/// scan CTA, then the `download N selected` button. Descending into the browse
-/// suspends this nav (the app gates it on `HomeTab.update.is_browsing()`); the
-/// download fires from `Download` on the form.
+/// scan CTA, the `view N maps` button, then the `download N selected` button.
+/// Descending into the browse suspends this nav (the app gates it on
+/// `HomeTab.update.is_browsing()`); the download fires from `Download` on the
+/// form.
 const UPDATE_FIELDS: &[HomeField] = &[
     HomeField::Source,
     HomeField::UpdateOsuPath,
     HomeField::UpdateScan,
+    HomeField::UpdateBrowse,
     HomeField::Download,
 ];
 
@@ -361,7 +370,7 @@ pub struct HomeTab {
     /// browse. Kept here so it survives source-strip switches (keep-both).
     pub search: SearchSource,
     /// Collection browse&pick browse state (the collection source's
-    /// "browse & pick" CTA). Fed from [`resolved_collection`](Self::resolved_collection);
+    /// `view N maps` CTA). Fed from [`resolved_collection`](Self::resolved_collection);
     /// separate from `search.browse` so each source's selection persists.
     pub collection_browse: SetBrowse,
     /// The collection id snapshotted when the browse&pick browse was opened, so

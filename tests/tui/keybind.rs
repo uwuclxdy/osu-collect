@@ -237,7 +237,7 @@ fn up_from_first_field_wraps_to_last() {
     use osu_collect::app::HomeField;
     let mut app = make_app();
     // The source strip is the first focusable row; Up from it wraps to the last
-    // collection field (the browse & pick button, added after the download button).
+    // collection field (the `view N maps` button, after the download button).
     app.home.focus = HomeField::Source;
     app.handle_key(press(KeyCode::Up));
     assert_eq!(app.home.focus, HomeField::CollectionBrowse);
@@ -1009,7 +1009,7 @@ fn shift_arrow_off_mirror_row_falls_through_to_focus_move() {
 // ── global client switch ──────────────────────────────────────────────────────
 
 #[test]
-fn c_switches_client_and_rescans_from_any_tab() {
+fn c_switches_client_and_clears_scan_without_auto_scanning() {
     use osu_collect::app::Tab;
 
     let mut app = make_app();
@@ -1023,8 +1023,12 @@ fn c_switches_client_and_rescans_from_any_tab() {
         "c must flip the osu! client from any tab"
     );
     assert!(
-        matches!(cmd, Some(AppCommand::ScanLocalDatabase)),
-        "switching client must kick off a fresh local scan"
+        cmd.is_none(),
+        "switching client must not auto-scan; the user scans manually"
+    );
+    assert!(
+        app.home.update.selection.local_collections.is_empty(),
+        "the prior client's scan data is cleared on switch"
     );
 }
 
@@ -1091,6 +1095,40 @@ fn request_search_download_uses_query_label_and_selected_ids() {
     let mut ids = request.beatmapset_ids.clone();
     ids.sort_unstable();
     assert_eq!(ids, vec![10, 20, 30]);
+}
+
+#[test]
+fn search_view_button_reopens_results_without_re_searching() {
+    use crossterm::event::KeyCode;
+    use osu_collect::app::{BrowseRow, GetMapsSource, HomeField, SearchStatusMsg};
+
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Search;
+    app.home.search.query.set_value("tekno");
+    app.home.search.status_msg = SearchStatusMsg::Ready { total: 2 };
+    app.home.search.browse.set_rows(vec![
+        BrowseRow { id: 10, meta: None },
+        BrowseRow { id: 20, meta: None },
+    ]);
+    // On the form (not descended into the browse).
+    assert!(!app.home.search.browse.is_browsing());
+
+    app.home.focus = HomeField::SearchBrowse;
+    let cmd = app.handle_key(press(KeyCode::Enter));
+
+    assert!(
+        cmd.is_none(),
+        "the view button must not re-run the search query"
+    );
+    assert!(
+        app.home.search.browse.is_browsing(),
+        "the view button reopens the results browse"
+    );
+    assert_eq!(
+        app.home.search.status_msg,
+        SearchStatusMsg::Ready { total: 2 },
+        "the view button must not flip status back to Loading"
+    );
 }
 
 #[test]

@@ -7,14 +7,6 @@ use std::collections::HashSet;
 use std::sync::OnceLock;
 use tracing::{debug, info};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UpdateAction {
-    None,
-    Download,
-    RefreshAll,
-    RecheckFailedMaps,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ScanStatus {
     #[default]
@@ -33,8 +25,6 @@ pub enum ScanStatus {
 pub enum ScanCta {
     /// Start (or restart) a local scan.
     Scan,
-    /// Descend into the two-pane browse (updates are ready to review).
-    Descend,
     /// A scan is in flight; the button is inert.
     Busy,
 }
@@ -275,13 +265,14 @@ impl UpdateSource {
 
     // ── scan CTA state machine ────────────────────────────────────────────────
 
-    /// The action the scan CTA should take right now.
+    /// The action the scan CTA should take right now. The scan button only ever
+    /// scans (or is inert while one runs); opening the browse is the separate
+    /// `UpdateBrowse` button's job.
     pub fn scan_cta(&self) -> ScanCta {
         match self.scan.scan_status {
             ScanStatus::ReadingDatabase
             | ScanStatus::FetchingCollection
             | ScanStatus::CheckingFailedMaps => ScanCta::Busy,
-            ScanStatus::Ready if self.total_new_count() > 0 => ScanCta::Descend,
             _ => ScanCta::Scan,
         }
     }
@@ -290,9 +281,8 @@ impl UpdateSource {
     pub fn scan_cta_label(&self) -> String {
         match self.scan_cta() {
             ScanCta::Busy => "scanning…".to_string(),
-            ScanCta::Descend => format!("view {} updates", self.total_new_count()),
-            // A completed scan that found nothing invites a re-scan; a fresh /
-            // errored one is the first scan.
+            // A completed scan offers to re-scan; a fresh / errored one is the
+            // first scan.
             ScanCta::Scan if self.scan.scan_status == ScanStatus::Ready => "rescan".to_string(),
             ScanCta::Scan => "scan for updates".to_string(),
         }
@@ -689,10 +679,11 @@ impl UpdateSource {
 
     /// Reset the scan for a fresh library after the app-global client switch
     /// (the client kind + path change lives on [`LibraryState::switch_client`]).
-    /// Returns `RefreshAll` so the caller kicks off a `ScanLocalDatabase`.
+    /// Clears the prior client's scan data but does NOT auto-scan — the user
+    /// scans manually from the update form.
     ///
     /// [`LibraryState::switch_client`]: super::LibraryState::switch_client
-    pub fn reset_for_client_switch(&mut self) -> UpdateAction {
+    pub fn reset_for_client_switch(&mut self) {
         // Increment generation to invalidate any in-flight fetch tasks.
         self.scan.scan_generation = self.scan.scan_generation.wrapping_add(1);
         self.selection.local_collections.clear();
@@ -705,7 +696,6 @@ impl UpdateSource {
         self.selection.descended = false;
         self.selection.preview_focused = false;
         self.scan.scan_status = ScanStatus::Idle;
-        UpdateAction::RefreshAll
     }
 }
 

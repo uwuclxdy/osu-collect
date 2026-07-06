@@ -12,7 +12,7 @@ use super::{
     snapshots,
     tab::Tab,
     toast::{Toast, Toasts},
-    update_source::{ScanCta, UpdateAction, extract_collection_id},
+    update_source::{ScanCta, extract_collection_id},
 };
 use crate::auto_update::AvailableUpdate;
 use crate::{
@@ -1264,8 +1264,8 @@ impl App {
         }
     }
 
-    /// Open the resolved collection in the checkbox browse (collection
-    /// "browse & pick"). A fresh collection defaults all sets selected;
+    /// Open the resolved collection in the checkbox browse (the collection
+    /// source's `view N maps` button). A fresh collection defaults all sets selected;
     /// re-opening the same collection preserves the prior picks. No-op with a
     /// toast until a collection has resolved.
     fn open_collection_browse(&mut self) {
@@ -2021,17 +2021,22 @@ impl App {
                             // The mirrors row is read-only here; hand off to the
                             // Config tab, which owns all mirror editing.
                             HomeField::Mirrors => self.open_config_mirrors(),
-                            // The scan CTA drives the scan → descend → re-scan
-                            // state machine.
+                            // The scan button only ever scans (re-scan after a
+                            // completed one); inert while a scan is in flight.
                             HomeField::UpdateScan => match self.home.update.scan_cta() {
                                 ScanCta::Scan => {
                                     self.home.update.scan.scan_generation =
                                         self.home.update.scan.scan_generation.wrapping_add(1);
                                     return Some(AppCommand::ScanLocalDatabase);
                                 }
-                                ScanCta::Descend => self.home.update.descend(),
                                 ScanCta::Busy => {}
                             },
+                            // Open the two-pane browse over the scan's missing
+                            // sets (the dedicated `view N maps` button).
+                            HomeField::UpdateBrowse => self.home.update.descend(),
+                            // Reopen the search results browse without re-running
+                            // the query (the dedicated `view N maps` button).
+                            HomeField::SearchBrowse => self.home.search.browse.descend(),
                             // Search filter chips step forward on enter (like the
                             // source strip); the `search` CTA runs the query.
                             HomeField::SearchMode
@@ -2127,16 +2132,14 @@ impl App {
                 }
             },
             // `c` switches the osu! client (stable ↔ lazer) from any tab. It
-            // changes the owned library, so it clears the prior scan and kicks a
-            // fresh one. Suppressed while typing so `c` types a literal char, and
-            // while the login split is open (it traps every field key).
+            // changes the owned library, so it clears the prior scan — but does
+            // not auto-scan; the user scans manually from the update form.
+            // Suppressed while typing so `c` types a literal char, and while the
+            // login split is open (it traps every field key).
             KeyCode::Char('c') if !typing && self.login.is_none() => {
                 self.library.switch_client();
-                let action = self.home.update.reset_for_client_switch();
+                self.home.update.reset_for_client_switch();
                 self.persist_osu_path_inputs();
-                if action == UpdateAction::RefreshAll {
-                    return Some(AppCommand::ScanLocalDatabase);
-                }
                 return None;
             }
             // Login split traps chars: no non-typing hotkeys, just type the field.

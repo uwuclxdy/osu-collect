@@ -58,16 +58,26 @@ pub fn push_form_rows(
     }
     items.push(widgets::spacer());
 
-    // A completed scan with pending updates gets a one-line summary above the CTA.
+    // Scan result block — the headline + any caveats — grouped together above
+    // the actions and split from them by a spacer, so the figures don't blur
+    // into the buttons.
+    let mut have_result = false;
     if form.scan.scan_status == ScanStatus::Ready && form.total_new_count() > 0 {
         items.push(new_summary_row(
             form.total_new_count(),
             form.collections_with_new_count(),
         ));
+        have_result = true;
+    }
+    for metric in summary_metrics(form) {
+        items.push(widgets::summary_item(std::slice::from_ref(&metric)));
+        have_result = true;
+    }
+    if have_result {
+        items.push(widgets::spacer());
     }
 
-    // A running scan is indeterminate work, so the CTA animates: swap the static
-    // label for an inline braille spinner and hold the button inert until done.
+    // Action block: the scan CTA, the `view N maps` browse button, then download.
     let busy = form.scan_cta() == ScanCta::Busy;
     let cta_label = if busy {
         format!("{} scanning", spinner_str(tick).trim())
@@ -79,11 +89,22 @@ pub fn push_form_rows(
         widgets::button_item(&cta_label, focus == HomeField::UpdateScan, !busy),
     );
 
+    // `view N maps` opens the two-pane browse over the scan's missing sets;
+    // enabled once a scan actually found something (bare `view maps` while
+    // empty so it doesn't read as a zero count).
+    let new_count = form.total_new_count();
+    let view_label = if new_count > 0 {
+        widgets::view_maps_label(new_count)
+    } else {
+        "view maps".to_string()
+    };
+    items.push_focusable(
+        HomeField::UpdateBrowse,
+        widgets::button_item(&view_label, focus == HomeField::UpdateBrowse, new_count > 0),
+    );
+
     // The download button dispatches every missing set of the checked
-    // collections; disabled until a scan selects at least one. Grouped tight
-    // under the scan CTA — the collection source stacks its two action buttons
-    // the same way — so the actions read as one block instead of split by a
-    // lone spacer.
+    // collections; disabled until a scan selects at least one.
     let selected = form.selected_new_count();
     let (download_label, download_enabled) = widgets::download_button_label(selected);
     items.push_focusable(
@@ -94,10 +115,6 @@ pub fn push_form_rows(
             download_enabled,
         ),
     );
-
-    for metric in summary_metrics(form) {
-        items.push(widgets::summary_item(std::slice::from_ref(&metric)));
-    }
 }
 
 /// Render the two-pane browse over the whole body area.

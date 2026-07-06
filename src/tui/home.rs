@@ -29,7 +29,6 @@ const LABEL_OVERWRITE: &str = "overwrite existing";
 const LABEL_VIDEO: &str = "video";
 
 const LABEL_DOWNLOAD_ALL: &str = "download all";
-const LABEL_BROWSE_PICK: &str = "browse & pick";
 
 /// Left title of the collection browse&pick browse (its left pane).
 const COLLECTION_BROWSE_TITLE: &str = " COLLECTION ";
@@ -229,13 +228,14 @@ fn render_compact(
             download_enabled,
         ),
     );
-    // Browse & pick a subset of the resolved collection; enabled once it resolves.
+    // `view N maps` opens the resolved collection in the checkbox browse.
+    let (browse_label, browse_enabled) = collection_browse_button(form);
     items.push_focusable(
         HomeField::CollectionBrowse,
         widgets::button_item(
-            LABEL_BROWSE_PICK,
+            &browse_label,
             focus == HomeField::CollectionBrowse,
-            form.resolved_collection.is_some(),
+            browse_enabled,
         ),
     );
 
@@ -281,6 +281,16 @@ fn collection_download_button(form: &HomeTab) -> (String, bool) {
         // `download all` (vs a source's bare `download`) names that this
         // dispatches the whole resolved collection, not a picked subset.
         (LABEL_DOWNLOAD_ALL.to_string(), can_download(form))
+    }
+}
+
+/// The collection source's `view N maps` button — opens the resolved collection
+/// in the checkbox browse. Labelled with the set count once resolved (and
+/// non-empty); disabled otherwise.
+fn collection_browse_button(form: &HomeTab) -> (String, bool) {
+    match form.resolved_collection.as_ref() {
+        Some((_, ids)) if !ids.is_empty() => (widgets::view_maps_label(ids.len()), true),
+        _ => ("view maps".to_string(), false),
     }
 }
 
@@ -439,13 +449,14 @@ fn render_content(
             download_enabled,
         ),
     );
-    // Browse & pick a subset of the resolved collection; enabled once it resolves.
+    // `view N maps` opens the resolved collection in the checkbox browse.
+    let (browse_label, browse_enabled) = collection_browse_button(form);
     items.push_focusable(
         HomeField::CollectionBrowse,
         widgets::button_item(
-            LABEL_BROWSE_PICK,
+            &browse_label,
             focus == HomeField::CollectionBrowse,
-            form.resolved_collection.is_some(),
+            browse_enabled,
         ),
     );
 
@@ -545,8 +556,10 @@ fn home_section(field: HomeField) -> &'static str {
         Threads | AutoOverwrite | Video | Directory => SECTION_DOWNLOAD,
         // The download buttons and the update / search source fields render in
         // their own bodies, not the collection sections, so they light no header.
-        Download | CollectionBrowse | UpdateOsuPath | UpdateScan => SECTION_NONE,
-        SearchQuery | SearchMode | SearchStatus | SearchSort | SearchRun => SECTION_NONE,
+        Download | CollectionBrowse | UpdateOsuPath | UpdateScan | UpdateBrowse => SECTION_NONE,
+        SearchQuery | SearchMode | SearchStatus | SearchSort | SearchRun | SearchBrowse => {
+            SECTION_NONE
+        }
     }
 }
 

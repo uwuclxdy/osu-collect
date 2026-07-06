@@ -14,7 +14,7 @@ use ratatui::{
 };
 
 use super::widgets;
-use super::{accent, danger, spinner_str, success, text_dim, warning};
+use super::{accent, danger, spinner_str, text_dim, warning};
 
 const LABEL_MODE: &str = "mode";
 const LABEL_STATUS: &str = "status";
@@ -89,13 +89,25 @@ pub fn push_form_rows(
         widgets::button_item(&cta_label, focus == HomeField::SearchRun, !loading),
     );
 
-    if let Some(row) = status_row(&search.status_msg) {
+    // `view N maps` reopens the results browse without re-running the query —
+    // shown once results are loaded. An empty / failed search instead surfaces
+    // a one-line outcome (no button, since there's nothing to view).
+    let loaded = search.browse.rows.len();
+    if loaded > 0 {
+        items.push_focusable(
+            HomeField::SearchBrowse,
+            widgets::button_item(
+                &widgets::view_maps_label(loaded),
+                focus == HomeField::SearchBrowse,
+                true,
+            ),
+        );
+    } else if let Some(row) = status_row(&search.status_msg) {
         items.push(row);
     }
-    items.push(widgets::spacer());
 
     // The download button dispatches the picked results; disabled until at least
-    // one set is checked in the results browse. Shares the update source's label.
+    // one set is checked in the results browse. Grouped with the actions above.
     let (download_label, download_enabled) =
         widgets::download_button_label(search.browse.selected_count());
     items.push_focusable(
@@ -130,17 +142,16 @@ pub fn browse_status(search: &SearchSource) -> Line<'static> {
     ])
 }
 
-/// The inline status line for the last search's outcome, or `None` while idle or
-/// in flight (the in-flight spinner lives on the CTA itself).
+/// The inline outcome line for an empty or failed search, or `None` otherwise
+/// (idle / in flight / results loaded — the loaded case has its own `view N
+/// maps` button, the in-flight spinner lives on the search CTA).
 fn status_row(msg: &SearchStatusMsg) -> Option<ListItem<'static>> {
     let (label, color) = match msg {
-        SearchStatusMsg::Idle | SearchStatusMsg::Loading => return None,
-        SearchStatusMsg::Ready { total } => {
-            let word = if *total == 1 { "result" } else { "results" };
-            (format!("{total} {word}"), success())
-        }
         SearchStatusMsg::Empty => ("no results".to_string(), warning()),
         SearchStatusMsg::Error(reason) => (reason.clone(), danger()),
+        SearchStatusMsg::Idle | SearchStatusMsg::Loading | SearchStatusMsg::Ready { .. } => {
+            return None;
+        }
     };
     Some(ListItem::new(Line::from(vec![
         Span::raw("  "),
