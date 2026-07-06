@@ -28,7 +28,7 @@ const LABEL_SOURCE: &str = "source";
 const LABEL_OVERWRITE: &str = "overwrite existing";
 const LABEL_VIDEO: &str = "video";
 
-const LABEL_START_DOWNLOAD: &str = "start download";
+const LABEL_DOWNLOAD_ALL: &str = "download all";
 const LABEL_BROWSE_PICK: &str = "browse & pick";
 
 /// Left title of the collection browse&pick browse (its left pane).
@@ -71,33 +71,23 @@ fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab) -> boo
     match form.source {
         GetMapsSource::Search if form.search.browse.is_browsing() => {
             let status = search_source::browse_status(&form.search);
-            let action = format!(
-                "[ download {} selected ]",
-                form.search.browse.selected_count()
-            );
             set_browse::render(
                 frame,
                 area,
                 &form.search.browse,
                 search_source::BROWSE_LIST_TITLE,
                 status,
-                action,
             );
             true
         }
         GetMapsSource::Collection if form.collection_browse.is_browsing() => {
             let status = collection_browse_status(&form.collection_browse);
-            let action = format!(
-                "[ download {} selected ]",
-                form.collection_browse.selected_count()
-            );
             set_browse::render(
                 frame,
                 area,
                 &form.collection_browse,
                 COLLECTION_BROWSE_TITLE,
                 status,
-                action,
             );
             true
         }
@@ -168,7 +158,7 @@ fn render_compact(
                 PANEL_TITLE,
                 items,
                 focused_index,
-                focus != HomeField::UpdateScan,
+                !matches!(focus, HomeField::UpdateScan | HomeField::Download),
                 cursor_col,
                 true,
                 true,
@@ -186,7 +176,7 @@ fn render_compact(
                 PANEL_TITLE,
                 items,
                 focused_index,
-                focus != HomeField::SearchRun,
+                !matches!(focus, HomeField::SearchRun | HomeField::Download),
                 cursor_col,
                 true,
                 true,
@@ -229,12 +219,13 @@ fn render_compact(
     );
     push_toggle_rows(&mut items, form, focus);
 
+    let (download_label, download_enabled) = collection_download_button(form);
     items.push_focusable(
         HomeField::Download,
         widgets::button_item(
-            LABEL_START_DOWNLOAD,
+            &download_label,
             focus == HomeField::Download,
-            can_download(form),
+            download_enabled,
         ),
     );
     // Browse & pick a subset of the resolved collection; enabled once it resolves.
@@ -273,6 +264,24 @@ fn render_compact(
 /// final validation still happens in `HomeTab::build_request` on activation.
 fn can_download(form: &HomeTab) -> bool {
     !form.collection.value.trim().is_empty() && form.mirror_count() > 0
+}
+
+/// The collection source's download-button label + enabled state. Reads
+/// `download all` (the whole resolved collection) until a proper nonempty subset
+/// is checked in browse&pick, then flips to `download N selected` (dispatched via
+/// the selective path in `dispatch_form_download`).
+fn collection_download_button(form: &HomeTab) -> (String, bool) {
+    if form.collection_subset_picked() {
+        (
+            format!(
+                "download {} selected",
+                form.collection_browse.selected_count()
+            ),
+            true,
+        )
+    } else {
+        (LABEL_DOWNLOAD_ALL.to_string(), can_download(form))
+    }
 }
 
 /// Tooltip text for the focused download-directory field: the per-collection
@@ -334,7 +343,7 @@ fn render_content(
                 PANEL_TITLE,
                 items,
                 focused_index,
-                focus != HomeField::UpdateScan,
+                !matches!(focus, HomeField::UpdateScan | HomeField::Download),
                 cursor_col,
                 true,
                 true,
@@ -352,7 +361,7 @@ fn render_content(
                 PANEL_TITLE,
                 items,
                 focused_index,
-                focus != HomeField::SearchRun,
+                !matches!(focus, HomeField::SearchRun | HomeField::Download),
                 cursor_col,
                 true,
                 true,
@@ -420,12 +429,13 @@ fn render_content(
     push_toggle_rows(&mut items, form, focus);
     items.push(widgets::spacer());
 
+    let (download_label, download_enabled) = collection_download_button(form);
     items.push_focusable(
         HomeField::Download,
         widgets::button_item(
-            LABEL_START_DOWNLOAD,
+            &download_label,
             focus == HomeField::Download,
-            can_download(form),
+            download_enabled,
         ),
     );
     // Browse & pick a subset of the resolved collection; enabled once it resolves.
@@ -540,8 +550,8 @@ fn home_section(field: HomeField) -> &'static str {
 }
 
 /// The source strip: `‹active›  other  other`, the active source bracketed in
-/// accent, the rest dim. The first focusable row on the Get Maps tab; `enter`/
-/// `space` cycle it (the config-cycle convention), `←`/`→` step it while focused.
+/// accent, the rest dim. The first focusable row on the Get Maps tab; `space`/
+/// `enter` cycle it (the config-cycle convention); arrows switch tabs.
 fn source_row_item(active: GetMapsSource, focused: bool) -> ListItem<'static> {
     let options: Vec<&str> = GetMapsSource::ALL.iter().map(|s| s.label()).collect();
     widgets::cycle_item(LABEL_SOURCE, &options, active.label(), focused, 0)

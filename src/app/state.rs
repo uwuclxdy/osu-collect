@@ -1236,20 +1236,31 @@ impl App {
         None
     }
 
-    /// Dispatch the download from a flat browse's action bar, routed by source:
-    /// search → fetch-skipping [`SearchDownloadRequest`], collection browse&pick →
-    /// the selective path (it has a collection id to re-fetch checksums from).
-    fn dispatch_set_browse_download(&mut self) -> Option<AppCommand> {
+    /// Dispatch the download from the active source's form `Download` button,
+    /// routed by source:
+    /// - collection: the whole resolved collection, or — when a proper subset is
+    ///   checked in browse&pick — the picked sets via the selective path.
+    /// - search: the picked results via the fetch-skipping [`SearchDownloadRequest`].
+    /// - update: every missing set of the checked collections via the selective path.
+    fn dispatch_form_download(&mut self) -> Option<AppCommand> {
         match self.home.source {
+            GetMapsSource::Collection => {
+                if self.home.collection_subset_picked() {
+                    let (id, request) = self.request_collection_pick_download()?;
+                    Some(AppCommand::StartSelectiveDownload { id, request })
+                } else {
+                    let (id, request) = self.request_download()?;
+                    Some(AppCommand::StartDownload { id, request })
+                }
+            }
             GetMapsSource::Search => {
                 let (id, request) = self.request_search_download()?;
                 Some(AppCommand::StartSearchDownload { id, request })
             }
-            GetMapsSource::Collection => {
-                let (id, request) = self.request_collection_pick_download()?;
+            GetMapsSource::Update => {
+                let (id, request) = self.request_selective_download()?;
                 Some(AppCommand::StartSelectiveDownload { id, request })
             }
-            GetMapsSource::Update => None,
         }
     }
 
@@ -1828,17 +1839,13 @@ impl App {
                 }
                 return self.handle_quit_key();
             }
-            // In a focused text field, ←/→ move the caret. On the get-maps source
-            // strip they cycle the active source. Everywhere else they switch
-            // tabs. Home/End jump to the field edges (text-field only).
+            // In a focused text field, ←/→ move the caret; in a descended browse
+            // they focus the list / preview pane. Everywhere else they switch
+            // tabs — the source strip + search chips cycle on space/enter, not
+            // arrows. Home/End jump to the field edges (text-field only).
             KeyCode::Left => {
                 if typing {
                     self.caret_left_focused();
-                } else if self.active_tab() == Tab::Home && self.home.focus == HomeField::Source {
-                    self.home.cycle_source(false);
-                } else if self.active_tab() == Tab::Home && self.home.focus.is_search_chip() {
-                    // On a search filter chip, ←/→ cycle its value.
-                    self.cycle_search_chip(false);
                 } else if self.update_browsing() {
                     // In browse, ←/h focuses the collections list pane.
                     self.home.update.focus_list();
@@ -1853,10 +1860,6 @@ impl App {
             KeyCode::Right => {
                 if typing {
                     self.caret_right_focused();
-                } else if self.active_tab() == Tab::Home && self.home.focus == HomeField::Source {
-                    self.home.cycle_source(true);
-                } else if self.active_tab() == Tab::Home && self.home.focus.is_search_chip() {
-                    self.cycle_search_chip(true);
                 } else if self.update_browsing() {
                     // In browse, →/l focuses the preview pane.
                     self.home.update.focus_preview();
@@ -1976,40 +1979,24 @@ impl App {
                 }
                 match self.active_tab() {
                     Tab::Home => {
-                        // Update-source browse: enter toggles the highlighted
-                        // collection, or dispatches the download from the action
-                        // bar. Preview rows are read-only.
+                        // Update-source browse is a pure selector: enter toggles
+                        // the highlighted collection (preview rows are read-only).
+                        // The download fires from the form's `Download` button.
                         if self.update_browsing() {
-                            if self.home.update.preview_focused() {
-                                return None;
-                            }
-                            if self.home.update.cursor_on_action() {
-                                if let Some((id, request)) = self.request_selective_download() {
-                                    return Some(AppCommand::StartSelectiveDownload {
-                                        id,
-                                        request,
-                                    });
-                                }
-                            } else {
+                            if !self.home.update.preview_focused() {
                                 self.home.update.toggle_selected_collection();
                             }
                             return None;
                         }
-                        // Flat set browse (search results / collection browse&pick):
-                        // enter toggles the highlighted row, or dispatches from the
-                        // action bar. Preview rows are read-only.
+                        // Flat set browse (search results / collection browse&pick)
+                        // is a pure selector too: enter toggles the highlighted row
+                        // (preview rows are read-only).
                         if self.home_set_browsing() {
                             if self
                                 .active_set_browse()
                                 .is_some_and(|b| b.preview_focused())
                             {
                                 return None;
-                            }
-                            if self
-                                .active_set_browse()
-                                .is_some_and(|b| b.cursor_on_action())
-                            {
-                                return self.dispatch_set_browse_download();
                             }
                             if let Some(browse) = self.active_set_browse_mut() {
                                 browse.toggle_selected();
@@ -2020,11 +2007,8 @@ impl App {
                             // The source picker is a cycle row: `enter` steps it
                             // forward, matching the config cycle fields.
                             HomeField::Source => self.home.cycle_source(true),
-                            HomeField::Download => {
-                                if let Some((id, request)) = self.request_download() {
-                                    return Some(AppCommand::StartDownload { id, request });
-                                }
-                            }
+                            // Per-source download button; routed by active source.
+                            HomeField::Download => return self.dispatch_form_download(),
                             // Open the resolved collection in the checkbox browse.
                             HomeField::CollectionBrowse => self.open_collection_browse(),
                             // The mirrors row is read-only here; hand off to the
@@ -2097,18 +2081,16 @@ impl App {
                             return Some(cmd);
                         }
                     } else if self.update_browsing() {
-                        // Toggle-alias for the collection checkbox (list pane only,
-                        // not the action bar); the preview is read-only.
-                        if !self.home.update.preview_focused()
-                            && !self.home.update.cursor_on_action()
-                        {
+                        // Toggle-alias for the collection checkbox (list pane only);
+                        // the preview is read-only.
+                        if !self.home.update.preview_focused() {
                             self.home.update.toggle_selected_collection();
                         }
                     } else if self.home_set_browsing() {
                         // Toggle-alias for the result checkbox (list pane only).
                         let inert = self
                             .active_set_browse()
-                            .is_some_and(|b| b.preview_focused() || b.cursor_on_action());
+                            .is_some_and(|b| b.preview_focused());
                         if !inert && let Some(browse) = self.active_set_browse_mut() {
                             browse.toggle_selected();
                         }

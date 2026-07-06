@@ -254,20 +254,33 @@ fn up_from_collection_focuses_source_strip() {
 }
 
 #[test]
-fn arrows_cycle_source_when_strip_focused() {
+fn space_and_enter_cycle_source_when_strip_focused() {
     use osu_collect::app::{GetMapsSource, HomeField, Tab};
     let mut app = make_app();
     app.home.focus = HomeField::Source;
     assert_eq!(app.home.source, GetMapsSource::Collection);
-    // Right cycles forward, Left back, both wrapping; the tab never changes.
-    app.handle_key(press(KeyCode::Right));
+    // space / enter cycle forward, wrapping; the tab never changes. Arrows no
+    // longer touch the source.
+    app.handle_key(press(KeyCode::Char(' ')));
     assert_eq!(app.home.source, GetMapsSource::Update);
-    assert_eq!(app.active_tab(), Tab::Home);
-    app.handle_key(press(KeyCode::Left));
-    assert_eq!(app.home.source, GetMapsSource::Collection);
-    app.handle_key(press(KeyCode::Left));
+    app.handle_key(press(KeyCode::Enter));
     assert_eq!(app.home.source, GetMapsSource::Search);
     assert_eq!(app.active_tab(), Tab::Home);
+}
+
+#[test]
+fn arrows_switch_tab_from_the_strip() {
+    use osu_collect::app::{GetMapsSource, HomeField, Tab};
+    let mut app = make_app();
+    // On the strip, ←/→ switch tabs (they no longer cycle the source).
+    app.home.focus = HomeField::Source;
+    app.handle_key(press(KeyCode::Right));
+    assert_ne!(app.active_tab(), Tab::Home);
+    assert_eq!(
+        app.home.source,
+        GetMapsSource::Collection,
+        "arrows leave the source unchanged"
+    );
 }
 
 #[test]
@@ -299,10 +312,11 @@ fn switching_source_preserves_collection_input() {
     use osu_collect::app::{GetMapsSource, HomeField};
     let mut app = make_app();
     app.home.collection.set_value("12345");
-    // Cycle away to another source and back; keep-both keeps the input alive.
+    // Cycle all the way around with space; keep-both keeps the input alive.
     app.home.focus = HomeField::Source;
-    app.handle_key(press(KeyCode::Right));
-    app.handle_key(press(KeyCode::Left));
+    app.handle_key(press(KeyCode::Char(' '))); // collection → update
+    app.handle_key(press(KeyCode::Char(' '))); // update → search
+    app.handle_key(press(KeyCode::Char(' '))); // search → collection
     assert_eq!(app.home.source, GetMapsSource::Collection);
     assert_eq!(app.home.collection.value, "12345");
 }
@@ -898,8 +912,9 @@ fn enter_on_collection_toggles_and_stays_in_browse() {
 }
 
 #[test]
-fn enter_on_action_bar_dispatches_selective_download() {
+fn enter_on_update_download_button_dispatches_selective() {
     use osu_collect::app::GetMapsSource;
+    use osu_collect::app::HomeField;
     use osu_collect::app::update_source::{MissingBeatmapset, MissingStatus};
 
     let mut app = make_app();
@@ -922,18 +937,14 @@ fn enter_on_action_bar_dispatches_selective_download() {
             selected: false,
             previously_deleted: false,
         }]);
-    app.home.update.descend();
-    // Park the list cursor on the virtual action-bar row.
-    app.home.update.scroll_to_edge(false);
-    assert!(
-        app.home.update.cursor_on_action(),
-        "scrolling to the list end parks the cursor on the action bar"
-    );
+    // The download now fires from the form's `download N selected` button, not an
+    // in-browse action bar.
+    app.home.focus = HomeField::Download;
 
     let cmd = app.handle_key(press(KeyCode::Enter));
     assert!(
         matches!(cmd, Some(AppCommand::StartSelectiveDownload { .. })),
-        "enter on the action bar dispatches the selective download"
+        "enter on the update download button dispatches the selective download"
     );
 }
 

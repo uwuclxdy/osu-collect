@@ -1,6 +1,7 @@
 //! Reusable two-pane master-detail browse view: a selection/checkbox list on
-//! the left, a read-only preview of the highlighted row on the right, an
-//! optional status line above, and an action bar below.
+//! the left, a read-only preview of the highlighted row on the right, and an
+//! optional status line above. It is a pure selector — the download action
+//! lives on the source form, not inside the browse.
 //!
 //! Pure view: the caller builds every row and owns all state (selection,
 //! scroll offsets, focus); this module only lays out and draws. Narrow
@@ -9,7 +10,6 @@
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::Style,
     text::Line,
     widgets::{ListItem, Paragraph},
 };
@@ -54,42 +54,27 @@ pub struct MasterDetail<'a> {
     pub preview_selected: Option<usize>,
     pub preview_offset: &'a Cell<usize>,
     pub focused: Pane,
-    pub action: Line<'static>,
-    pub action_selected: bool,
 }
 
-/// Renders the view: status row (if any), the split or single pane body, a
-/// blank spacer row, then the action bar.
+/// Renders the view: status row (if any), then the split or single pane body.
 pub fn render(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
-    let (status_area, middle_area, action_area) = split_area(area, view.status.is_some());
+    let (status_area, middle_area) = split_area(area, view.status.is_some());
 
     if let (Some(status_area), Some(status)) = (status_area, view.status.clone()) {
         frame.render_widget(Paragraph::new(status), status_area);
     }
 
     render_panes(frame, middle_area, view);
-    render_action(frame, action_area, view);
 }
 
-/// Carves `area` into `(status?, middle, action)` top-to-bottom. The bottom 2
-/// rows are always reserved for the action bar: a blank spacer, then the
-/// action row itself — the spacer is never returned since nothing draws
-/// there (the app-wide background already shows through).
-fn split_area(area: Rect, has_status: bool) -> (Option<Rect>, Rect, Rect) {
-    let mut constraints = Vec::with_capacity(4);
-    if has_status {
-        constraints.push(Constraint::Length(1));
+/// Carves `area` into `(status?, middle)` top-to-bottom: an optional 1-row
+/// status line, then the panes fill the rest.
+fn split_area(area: Rect, has_status: bool) -> (Option<Rect>, Rect) {
+    if !has_status {
+        return (None, area);
     }
-    constraints.push(Constraint::Min(0));
-    constraints.push(Constraint::Length(1)); // spacer
-    constraints.push(Constraint::Length(1)); // action
-    let chunks = Layout::vertical(constraints).split(area);
-
-    if has_status {
-        (Some(chunks[0]), chunks[1], chunks[3])
-    } else {
-        (None, chunks[0], chunks[2])
-    }
+    let chunks = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(area);
+    (Some(chunks[0]), chunks[1])
 }
 
 /// Splits the middle area into list+preview when there's room for both,
@@ -147,15 +132,6 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
         false,
         view.preview_offset,
     );
-}
-
-fn render_action(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
-    let style = if view.action_selected {
-        widgets::highlight_style()
-    } else {
-        Style::default()
-    };
-    frame.render_widget(Paragraph::new(view.action.clone()).style(style), area);
 }
 
 #[cfg(test)]

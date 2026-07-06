@@ -42,8 +42,6 @@ fn sample_view<'a>(
         preview_selected: Some(0),
         preview_offset,
         focused: Pane::List,
-        action: Line::from("download"),
-        action_selected: false,
     }
 }
 
@@ -87,8 +85,6 @@ fn empty_list_items_does_not_panic() {
         preview_selected: None,
         preview_offset: &preview_offset,
         focused: Pane::List,
-        action: Line::from("download"),
-        action_selected: true,
     };
 
     // Only asserting no panic; the empty-list scroll/highlight path is the

@@ -43,7 +43,7 @@ const HINT_SCROLL: &str = "↑↓ scroll";
 const HINT_REORDER: &str = "⇧↑↓ reorder";
 const HINT_SOURCE: &str = "↵ switch source";
 /// Search filter chip (mode / status / sort): `←`/`→` cycle the value.
-const HINT_CYCLE: &str = "←→ cycle";
+const HINT_CYCLE: &str = "space cycle";
 /// Search form's `search` CTA: run the query.
 const HINT_SEARCH: &str = "↵ search";
 /// Search browse (list pane): load the next page of results.
@@ -288,12 +288,6 @@ fn set_browse_hints(
     if browse.preview_focused() {
         return (vec![HINT_SCROLL, HINT_FOCUS_LIST], None);
     }
-    if browse.cursor_on_action() {
-        return (
-            vec![HINT_SCROLL, HINT_ENTER_DOWNLOAD, HINT_FOCUS_PREVIEW],
-            None,
-        );
-    }
     let mut segments = vec![
         HINT_SCROLL,
         HINT_ENTER_TOGGLE,
@@ -332,8 +326,6 @@ fn update_source_hints(form: &HomeTab) -> (Vec<&'static str>, Option<&'static st
     if update.is_browsing() {
         let mut segments = if update.preview_focused() {
             vec![HINT_SCROLL, HINT_MARK_INSTALLED, HINT_FOCUS_LIST]
-        } else if update.cursor_on_action() {
-            vec![HINT_SCROLL, HINT_ENTER_DOWNLOAD, HINT_FOCUS_PREVIEW]
         } else {
             vec![
                 HINT_SCROLL,
@@ -355,6 +347,7 @@ fn update_source_hints(form: &HomeTab) -> (Vec<&'static str>, Option<&'static st
         HomeField::Source => segments.push(HINT_SOURCE),
         HomeField::UpdateScan => segments.push(HINT_SCAN),
         HomeField::UpdateOsuPath => segments.push(HINT_EDIT),
+        HomeField::Download => segments.push(HINT_ENTER_DOWNLOAD),
         _ => {}
     }
     if can_recheck {

@@ -74,6 +74,19 @@ pub fn push_form_rows(
     if let Some(row) = status_row(&search.status_msg) {
         items.push(row);
     }
+
+    // The download button dispatches the picked results; disabled until at least
+    // one set is checked in the results browse. Shares the update source's label.
+    let (download_label, download_enabled) =
+        super::update_source::download_button(search.browse.selected_count());
+    items.push_focusable(
+        HomeField::Download,
+        widgets::button_item(
+            &download_label,
+            focus == HomeField::Download,
+            download_enabled,
+        ),
+    );
 }
 
 /// The status line drawn above the results browse: `X of TOTAL · K selected`,
@@ -104,7 +117,7 @@ pub fn browse_status(search: &SearchSource) -> Line<'static> {
 
 /// A compact single-value filter chip: `label  value`, the value bracketed +
 /// accent while focused (matching the source strip / config cycle convention).
-/// `←`/`→` (and `enter`) cycle it in the controller.
+/// `space`/`enter` cycle it in the controller.
 fn chip_row(label: &str, value: &str, focused: bool) -> ListItem<'static> {
     let value_span = if focused {
         Span::styled(format!("[{value}]"), Style::default().fg(accent()))

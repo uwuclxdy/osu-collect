@@ -172,8 +172,7 @@ pub struct SelectionState {
     pub collections_default_order: Vec<CollectionEntry>,
     /// Every missing beatmapset across all collections.
     pub cached_missing_sets: Vec<MissingBeatmapset>,
-    /// Cursor in the left collections list. Its last position (`== len`) parks
-    /// on the download action bar.
+    /// Cursor in the left collections list (an index into `local_collections`).
     pub collections_cursor: Option<usize>,
     /// Cursor within the highlighted collection's preview list.
     pub preview_cursor: Option<usize>,
@@ -319,13 +318,6 @@ impl UpdateSource {
         }
     }
 
-    /// Whether the collections-list cursor is parked on the download action bar
-    /// (its virtual last row) rather than a collection.
-    pub fn cursor_on_action(&self) -> bool {
-        !self.selection.preview_focused
-            && self.selection.collections_cursor == Some(self.selection.local_collections.len())
-    }
-
     // ── sorts ─────────────────────────────────────────────────────────────────
 
     /// Advance the collection sort mode and re-sort `local_collections` in place.
@@ -378,7 +370,7 @@ impl UpdateSource {
 
     // ── highlighted collection / preview derivation ───────────────────────────
 
-    /// The collection under the list cursor, or `None` on the action bar.
+    /// The collection under the list cursor, or `None` when the list is empty.
     pub fn highlighted_collection(&self) -> Option<&CollectionEntry> {
         self.selection
             .collections_cursor
@@ -558,9 +550,9 @@ impl UpdateSource {
         }
     }
 
-    /// Collections list length including the virtual action-bar row.
+    /// Number of navigable rows in the collections list.
     fn list_nav_len(&self) -> usize {
-        self.selection.local_collections.len() + 1
+        self.selection.local_collections.len()
     }
 
     fn scroll_by(&mut self, delta: i64) {

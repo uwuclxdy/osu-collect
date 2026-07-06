@@ -75,8 +75,32 @@ pub fn push_form_rows(
         ),
     );
 
+    // The download button dispatches every missing set of the checked
+    // collections; disabled until a scan selects at least one.
+    let selected = form.selected_new_count();
+    let (download_label, download_enabled) = download_button(selected);
+    items.push_focusable(
+        HomeField::Download,
+        widgets::button_item(
+            &download_label,
+            focus == HomeField::Download,
+            download_enabled,
+        ),
+    );
+
     for metric in summary_metrics(form) {
         items.push(widgets::summary_item(std::slice::from_ref(&metric)));
+    }
+}
+
+/// A `download N selected` button label + enabled state, shared by the update
+/// and search source forms. Disabled (and dropping the count) when nothing is
+/// selected, per the cloudy zero-count rule.
+pub(super) fn download_button(selected: usize) -> (String, bool) {
+    if selected > 0 {
+        (format!("download {selected} selected"), true)
+    } else {
+        ("download selected".to_string(), false)
     }
 }
 
@@ -100,14 +124,7 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource) {
         })
         .collect();
 
-    let on_action = form.cursor_on_action();
-    // The action bar is the list cursor's virtual last row; parked there the
-    // list has no selected collection.
-    let list_selected = if on_action {
-        None
-    } else {
-        form.selection.collections_cursor
-    };
+    let list_selected = form.selection.collections_cursor;
 
     let preview_indices = form.preview_missing_indices();
     let preview_items: Vec<ListItem<'static>> = preview_indices
@@ -124,11 +141,6 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource) {
         })
         .flatten();
 
-    let action = Line::from(Span::styled(
-        format!("[ download {} selected ]", form.selected_new_count()),
-        Style::default().fg(accent()).bold(),
-    ));
-
     let view = MasterDetail {
         status,
         list_title: LIST_TITLE,
@@ -144,8 +156,6 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource) {
         } else {
             Pane::List
         },
-        action,
-        action_selected: on_action,
     };
     master_detail::render(frame, area, &view);
 }

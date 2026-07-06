@@ -2,9 +2,10 @@
 //! search-results surface and collection browse&pick. Builds a
 //! [`MasterDetail`](super::master_detail::MasterDetail) from the owned state —
 //! a checkbox list of beatmapsets on the left, a read-only detail of the
-//! highlighted row on the right, a status line above, and a `[ download N
-//! selected ]` action bar below. Rows with [`BeatmapSetMeta`] render rich (title
-//! / artist / mapper); id-only rows (collection browse&pick) render as `#id`.
+//! highlighted row on the right, and a status line above. It is a pure
+//! selector; the download button lives on the source form, not the browse.
+//! Rows with [`BeatmapSetMeta`] render rich (title / artist / mapper); id-only
+//! rows (collection browse&pick) render as `#id`.
 
 use crate::app::search_source::{BrowseRow, SetBrowse};
 use osu_downloader::search::BeatmapSetMeta;
@@ -23,15 +24,13 @@ use super::{accent, success, text, text_dim, text_faint, warning};
 const PREVIEW_TITLE: &str = "preview";
 
 /// Render a set browse over the whole body area. `list_title` names the left
-/// pane, `status` is the line above it, and `action_label` is the download
-/// button text.
+/// pane, `status` is the line above it. Pure selector — no download button.
 pub fn render(
     frame: &mut Frame,
     area: Rect,
     browse: &SetBrowse,
     list_title: &'static str,
     status: Line<'static>,
-    action_label: String,
 ) {
     let list_items: Vec<ListItem<'static>> = browse
         .rows
@@ -39,29 +38,16 @@ pub fn render(
         .map(|row| list_row(row, browse.is_selected(row.id)))
         .collect();
 
-    let on_action = browse.cursor_on_action();
-    // Parked on the action bar the list has no highlighted row.
-    let list_selected = if on_action {
-        None
-    } else {
-        browse.list_cursor()
-    };
-
     let preview_items = browse
         .highlighted_row()
         .map(preview_rows)
         .unwrap_or_default();
 
-    let action = Line::from(Span::styled(
-        action_label,
-        Style::default().fg(accent()).bold(),
-    ));
-
     let view = MasterDetail {
         status: Some(status),
         list_title,
         list_items,
-        list_selected,
+        list_selected: browse.list_cursor(),
         list_offset: &browse.list_offset,
         preview_title: PREVIEW_TITLE,
         preview_items,
@@ -74,8 +60,6 @@ pub fn render(
         } else {
             Pane::List
         },
-        action,
-        action_selected: on_action,
     };
     master_detail::render(frame, area, &view);
 }

@@ -270,25 +270,14 @@ fn ascend_steps_preview_then_form() {
 
 #[test]
 fn focus_preview_noop_without_missing() {
-    let mut tab = seeded();
+    // No collections → nothing highlighted → nothing to preview.
+    let mut tab = UpdateSource::new();
     tab.descend();
-    // Move onto the action bar: no highlighted collection, nothing to preview.
-    tab.selection.collections_cursor = Some(tab.selection.local_collections.len());
     tab.focus_preview();
     assert!(
         !tab.preview_focused(),
-        "no preview when parked on the action bar"
+        "focus_preview is a no-op when there's no highlighted collection to preview"
     );
-}
-
-#[test]
-fn cursor_on_action_at_virtual_last_row() {
-    let mut tab = seeded();
-    tab.descend();
-    assert!(!tab.cursor_on_action());
-    tab.selection.collections_cursor = Some(tab.selection.local_collections.len());
-    assert!(tab.cursor_on_action());
-    assert!(tab.highlighted_collection().is_none());
 }
 
 // ── whole-collection selection ────────────────────────────────────────────────

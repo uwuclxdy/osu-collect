@@ -168,7 +168,7 @@ fn home_cta_scrolls_into_view_on_short_terminal() {
     app.home.focus = HomeField::Download;
     let content = render_content(&app, 120, 18);
     assert!(
-        content.contains("start download"),
+        content.contains("download all"),
         "focused CTA must scroll into view on a short terminal: {content}"
     );
 }

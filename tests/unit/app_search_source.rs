@@ -69,28 +69,17 @@ fn toggle_selected_flips_row_under_cursor() {
 }
 
 #[test]
-fn cursor_on_action_at_virtual_last_row() {
+fn scroll_wraps_within_rows() {
     let mut browse = SetBrowse::new();
     browse.set_rows(rows(&[1, 2]));
     browse.descend();
-    assert!(!browse.cursor_on_action());
-    // 2 rows + the action bar = 3 nav positions; step down past both rows.
-    browse.scroll_down();
-    browse.scroll_down();
-    assert!(browse.cursor_on_action());
-    // The action bar has no highlighted row.
-    assert!(browse.highlighted_row().is_none());
-}
-
-#[test]
-fn toggle_on_action_bar_is_noop() {
-    let mut browse = SetBrowse::new();
-    browse.set_rows(rows(&[1]));
-    browse.descend();
-    browse.scroll_down(); // onto the action bar
-    assert!(browse.cursor_on_action());
-    browse.toggle_selected();
-    assert!(browse.selected_ids().is_empty());
+    // A pure selector: every list position is a real row (no action bar), so a
+    // row is always highlighted.
+    assert!(browse.highlighted_row().is_some());
+    browse.scroll_down(); // → row 1
+    browse.scroll_down(); // wraps back to row 0
+    assert_eq!(browse.list_cursor(), Some(0));
+    assert!(browse.highlighted_row().is_some());
 }
 
 #[test]
@@ -109,16 +98,6 @@ fn ascend_steps_preview_then_list_then_form() {
     assert!(!browse.is_browsing());
 
     assert!(!browse.ascend()); // already on the form
-}
-
-#[test]
-fn focus_preview_noop_on_action_bar() {
-    let mut browse = SetBrowse::new();
-    browse.set_rows(rows(&[1]));
-    browse.descend();
-    browse.scroll_down(); // action bar, no highlighted row
-    browse.focus_preview();
-    assert!(!browse.preview_focused());
 }
 
 #[test]

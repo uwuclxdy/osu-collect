@@ -26,8 +26,8 @@ pub struct BrowseRow {
 }
 
 /// A reusable flat checkbox-list browse over beatmapsets: a selectable list on
-/// the left, a read-only detail preview of the highlighted row on the right, and
-/// a `[ download N selected ]` action bar (the list cursor's virtual last row).
+/// the left and a read-only detail preview of the highlighted row on the right.
+/// A pure selector — the download button lives on the source form, not here.
 ///
 /// Shared by the search-results browse ([`SearchSource::browse`]) and the
 /// collection browse&pick surface (`HomeTab::collection_browse`); each consumer
@@ -41,8 +41,7 @@ pub struct SetBrowse {
     descended: bool,
     /// `false` = list pane focused; `true` = preview pane focused.
     preview_focused: bool,
-    /// Cursor in the list. Its last position (`== rows.len()`) parks on the
-    /// download action bar.
+    /// Cursor in the list (a row index into `rows`).
     list_cursor: Option<usize>,
     pub list_offset: Cell<usize>,
     pub preview_offset: Cell<usize>,
@@ -138,13 +137,7 @@ impl SetBrowse {
         }
     }
 
-    /// Whether the list cursor is parked on the download action bar (its virtual
-    /// last row) rather than a result row.
-    pub fn cursor_on_action(&self) -> bool {
-        !self.preview_focused && self.list_cursor == Some(self.rows.len())
-    }
-
-    /// The row under the list cursor, or `None` on the action bar.
+    /// The row under the list cursor.
     pub fn highlighted_row(&self) -> Option<&BrowseRow> {
         self.list_cursor.and_then(|i| self.rows.get(i))
     }
@@ -195,23 +188,17 @@ impl SetBrowse {
         if self.preview_focused {
             return;
         }
-        let len = self.list_nav_len();
+        let len = self.rows.len();
         if len > 0 {
             self.list_cursor = Some(if top { 0 } else { len - 1 });
         }
-    }
-
-    /// List length including the virtual action-bar row.
-    fn list_nav_len(&self) -> usize {
-        self.rows.len() + 1
     }
 
     fn scroll_by(&mut self, delta: i64) {
         if self.preview_focused {
             return;
         }
-        let len = self.list_nav_len();
-        scroll_list(&mut self.list_cursor, len, delta);
+        scroll_list(&mut self.list_cursor, self.rows.len(), delta);
     }
 }
 

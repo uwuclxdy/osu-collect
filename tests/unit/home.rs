@@ -381,3 +381,41 @@ fn latency_range_excludes_disabled_mirror() {
     home.set_mirror_latency(MirrorKind::Nekoha, ProbeResult::Ms(5));
     assert_eq!(home.mirror_latency_range(), Some((50, 50)));
 }
+
+/// The adaptive collection download button reads `download N selected` only for
+/// a proper nonempty subset of the *currently-resolved* collection; all/none
+/// picked, or a browse left over from a different collection, reads `download all`.
+#[test]
+fn collection_subset_picked_gates_on_current_collection() {
+    use crate::app::BrowseRow;
+    let config = Config::default();
+    let mut home = HomeTab::new(&config);
+
+    // No browse opened yet → whole-collection download.
+    assert!(!home.collection_subset_picked());
+
+    // Browse&pick collection 42 and uncheck one of its two sets → subset.
+    home.set_resolved_collection(42, vec![10, 20]);
+    home.collection_browse.set_rows(vec![
+        BrowseRow { id: 10, meta: None },
+        BrowseRow { id: 20, meta: None },
+    ]);
+    home.collection_browse.set_all_selected(true);
+    home.collection_browse_id = Some(42);
+    assert!(
+        !home.collection_subset_picked(),
+        "all selected is download-all"
+    );
+    home.collection_browse.toggle_selected(); // drop the row under the cursor
+    assert!(
+        home.collection_subset_picked(),
+        "a proper subset flips the label"
+    );
+
+    // A resolve to a different collection makes the left-over pick stale.
+    home.set_resolved_collection(99, vec![30, 40, 50]);
+    assert!(
+        !home.collection_subset_picked(),
+        "a pick from collection 42 must not label/dispatch collection 99"
+    );
+}

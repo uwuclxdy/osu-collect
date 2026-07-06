@@ -197,7 +197,7 @@ fn char_to_byte(s: &str, idx: usize) -> usize {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HomeField {
     /// The source strip (search / collection / update). First focusable row;
-    /// `←`/`→` cycle the active source.
+    /// `space`/`enter` cycle the active source (arrows switch tabs).
     Source,
     Collection,
     /// Read-only count of enabled mirrors; `enter` jumps to the Config tab's
@@ -207,7 +207,9 @@ pub enum HomeField {
     Threads,
     AutoOverwrite,
     Video,
-    /// The "start download" button; activated with `enter`.
+    /// The per-source download button; activated with `enter`. Dispatched by
+    /// `dispatch_form_download`: collection downloads all (or the browse&pick
+    /// subset), search the picked results, update the checked collections.
     Download,
     /// The collection source's "browse & pick" CTA — opens the resolved
     /// collection in a checkbox browse to download a subset. Enabled only once a
@@ -221,7 +223,7 @@ pub enum HomeField {
     UpdateScan,
     /// The search source's free-text query input.
     SearchQuery,
-    /// The search source's game-mode filter chip (`←`/`→` or `enter` cycle it).
+    /// The search source's game-mode filter chip (`space`/`enter` cycle it).
     SearchMode,
     /// The search source's rank-status filter chip.
     SearchStatus,
@@ -248,11 +250,12 @@ const COLLECTION_FIELDS: &[HomeField] = &[
 ];
 
 /// Focus order for the search source: the strip, the query input, the three
-/// filter chips, then the `search` CTA. Like the update source, the run settings
-/// (folder / mirrors / threads / overwrite) are borrowed silently from the
-/// collection source's shared `self.home.*` fields rather than re-rendered here,
-/// so a search downloads with whatever those are set to. Descending into the
-/// results browse suspends this nav (`SetBrowse::descend`).
+/// filter chips, the `search` CTA, then the `download N selected` button. Like
+/// the update source, the run settings (folder / mirrors / threads / overwrite)
+/// are borrowed silently from the collection source's shared `self.home.*` fields
+/// rather than re-rendered here, so a search downloads with whatever those are
+/// set to. Descending into the results browse suspends this nav
+/// (`SetBrowse::descend`); the download itself fires from `Download` on the form.
 const SEARCH_FIELDS: &[HomeField] = &[
     HomeField::Source,
     HomeField::SearchQuery,
@@ -260,15 +263,18 @@ const SEARCH_FIELDS: &[HomeField] = &[
     HomeField::SearchStatus,
     HomeField::SearchSort,
     HomeField::SearchRun,
+    HomeField::Download,
 ];
 
-/// Focus order for the update source form: the strip, the osu! path input, then
-/// the scan CTA. Descending into the browse suspends this nav (the app gates it
-/// on `HomeTab.update.is_browsing()`).
+/// Focus order for the update source form: the strip, the osu! path input, the
+/// scan CTA, then the `download N selected` button. Descending into the browse
+/// suspends this nav (the app gates it on `HomeTab.update.is_browsing()`); the
+/// download fires from `Download` on the form.
 const UPDATE_FIELDS: &[HomeField] = &[
     HomeField::Source,
     HomeField::UpdateOsuPath,
     HomeField::UpdateScan,
+    HomeField::Download,
 ];
 
 impl HomeField {
@@ -291,7 +297,7 @@ impl HomeField {
         matches!(self, HomeField::AutoOverwrite | HomeField::Video)
     }
 
-    /// Whether this is a search filter chip that `←`/`→` (and `enter`) cycle.
+    /// Whether this is a search filter chip that `space`/`enter` cycle.
     pub fn is_search_chip(self) -> bool {
         matches!(
             self,
@@ -466,6 +472,23 @@ impl HomeTab {
     /// by `App::request_download` to intersect with persisted failures.
     pub fn set_resolved_collection(&mut self, collection_id: u32, beatmapset_ids: Vec<u32>) {
         self.resolved_collection = Some((collection_id, beatmapset_ids));
+    }
+
+    /// Whether browse&pick holds a proper nonempty subset (some sets checked,
+    /// but not all) **of the currently-resolved collection**. Drives the
+    /// collection download button between `download all` (the whole resolved
+    /// collection) and `download N selected` (the picked subset, via the
+    /// selective path). Returns `false` when the browse is stale — its snapshot
+    /// id no longer matches the resolved collection (a resolve moved on), so a
+    /// left-over pick never mislabels or misdispatches the new collection.
+    pub fn collection_subset_picked(&self) -> bool {
+        let current = self.resolved_collection.as_ref().map(|(id, _)| *id);
+        if self.collection_browse_id != current {
+            return false;
+        }
+        let total = self.collection_browse.rows.len();
+        let selected = self.collection_browse.selected_count();
+        total > 0 && selected > 0 && selected < total
     }
 
     /// The download directory to persist as "last used" — the raw typed value,
