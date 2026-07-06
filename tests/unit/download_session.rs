@@ -1,8 +1,11 @@
-use super::{partition_pending, resolve_selective_with};
+use super::{
+    OutputPreparation, SessionTarget, partition_pending, resolve_selective_with, search_folder_name,
+};
 use crate::core::collection::{Beatmap, Beatmapset, Collection, CollectionService, Uploader};
 use crate::download::{DownloadEvent, SelectiveDownloadCollection};
 use crate::utils;
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 struct MockService {
@@ -181,4 +184,72 @@ fn partition_pending_empty_owned_is_noop() {
     assert_eq!(skipped_owned, 0);
     // no owned ids → unverified untouched.
     assert_eq!(unverified, HashSet::from([1]));
+}
+
+#[test]
+fn search_folder_name_derives_from_query() {
+    // A plain query becomes `search-<query>`; different queries → different dirs,
+    // so two concurrent searches never collide on the per-output-dir lock.
+    assert_eq!(search_folder_name("tekno"), "search-tekno");
+    assert_eq!(search_folder_name("blue zenith"), "search-blue zenith");
+}
+
+#[test]
+fn search_folder_name_sanitizes_forbidden_chars() {
+    // Path separators / reserved chars can't leak into the folder name.
+    assert_eq!(search_folder_name("a/b:c*?"), "search-a_b_c__");
+    assert_eq!(search_folder_name("../etc"), "search-.._etc");
+}
+
+#[test]
+fn search_folder_name_blank_falls_back() {
+    // An empty or whitespace-only label still yields a valid, recognizable dir.
+    assert_eq!(search_folder_name(""), "search");
+    assert_eq!(search_folder_name("   "), "search");
+}
+
+#[test]
+fn session_target_search_has_no_collection() {
+    let target = SessionTarget::Search {
+        label: "tekno".to_string(),
+    };
+    // A search run carries no collection metadata (skips `collection.db`).
+    assert!(target.collection().is_none());
+    assert!(target.selective_collections().is_none());
+    // The expectation index is the requested id set, not a collection's contents.
+    let ids = [10u32, 20, 30];
+    let index = target.expectation_index(&ids);
+    assert_eq!(*index, HashSet::from([10, 20, 30]));
+}
+
+#[test]
+fn session_target_search_announces_label_and_count() {
+    let target = SessionTarget::Search {
+        label: "blue zenith".to_string(),
+    };
+    let output = OutputPreparation {
+        output_dir: PathBuf::from("/tmp/search-blue zenith"),
+        display: "/tmp/search-blue zenith".to_string(),
+    };
+    let events = Mutex::new(Vec::new());
+    target.announce_ready(
+        &|event| events.lock().unwrap().push(event),
+        7,
+        &output,
+        &[1, 2, 3],
+    );
+    let events = events.into_inner().unwrap();
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        DownloadEvent::CollectionReady {
+            collection_name,
+            total_maps,
+            ..
+        } => {
+            assert_eq!(collection_name, "blue zenith");
+            // Count comes from the id list (no collection to read a length off).
+            assert_eq!(*total_maps, 3);
+        }
+        other => panic!("expected CollectionReady, got {other:?}"),
+    }
 }

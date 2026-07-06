@@ -1,6 +1,6 @@
 use super::{
     DownloadConfig, DownloadError, DownloadEvent, DownloadHandle, DownloadId, DownloadRequest,
-    DownloadStage, Emit, SelectiveDownloadRequest,
+    DownloadStage, Emit, SearchDownloadRequest, SelectiveDownloadRequest,
     collection_db::{write_collection_db, write_selective_collection_db},
     events::{Tally, emit_finish, translate_event},
     fetch_collection_sizes,
@@ -71,6 +71,28 @@ pub fn spawn_selective_download(
         tx,
         move |cancel_rx, defer_rx, skip_rx, emit| async move {
             run_selective(id, request, cancel_rx, defer_rx, skip_rx, emit).await
+        },
+    )
+}
+
+pub fn spawn_search_download(
+    id: DownloadId,
+    request: SearchDownloadRequest,
+    tx: UnboundedSender<DownloadEvent>,
+) -> DownloadHandle {
+    let span = info_span!(
+        "search_download_task",
+        download_id = id,
+        mirror_count = request.config.mirrors.len(),
+        concurrent = request.config.concurrent,
+        beatmapset_count = request.beatmapset_ids.len()
+    );
+    spawn(
+        id,
+        span,
+        tx,
+        move |cancel_rx, defer_rx, skip_rx, emit| async move {
+            run_search(id, request, cancel_rx, defer_rx, skip_rx, emit).await
         },
     )
 }
@@ -175,7 +197,7 @@ async fn run_collection(
         });
     }
 
-    let collection = session.target.collection().clone();
+    let collection = session.target.collection().cloned();
     let output_dir = session.output.output_dir.clone();
 
     let Some(tally) = run_pipeline_core(
@@ -197,8 +219,12 @@ async fn run_collection(
 
     // collection.db reflects the full collection regardless of partial failures so that
     // saved state matches the user's intent even when some maps couldn't be downloaded.
-    let db_collection_name = format!("{}-{}", collection.name, collection.id);
-    write_collection_db(collection, db_collection_name, output_dir).await?;
+    // Always `Some` here (a collection run), but the accessor is `Option` since a
+    // search run has no collection.
+    if let Some(collection) = collection {
+        let db_collection_name = format!("{}-{}", collection.name, collection.id);
+        write_collection_db(collection, db_collection_name, output_dir).await?;
+    }
 
     // Clear any now-on-disk ids from the persisted failed-maps file (so a
     // successful re-download stops showing as previously failed) and record this
@@ -288,7 +314,8 @@ async fn run_selective(
         return Ok(());
     };
 
-    let collection = session.target.collection().clone();
+    // Always `Some` here (a selective run); the accessor is `Option` for search.
+    let collection = session.target.collection().cloned();
     let selective_collections = session
         .target
         .selective_collections()
@@ -322,7 +349,9 @@ async fn run_selective(
         .chain(tally.successful.iter().copied())
         .collect();
 
-    if !verified_now.is_empty() {
+    if !verified_now.is_empty()
+        && let Some(collection) = collection
+    {
         write_selective_collection_db(
             collection,
             selective_collections,
@@ -340,6 +369,92 @@ async fn run_selective(
     // A retry / selective run is exactly where stale previously-failed entries get
     // cleared: drop every id now on disk and record this run's fresh failures.
     reconcile_failed_maps(verified_now, failure_ids(&tally)).await;
+
+    emit_finish(id, emit.as_ref(), tally.to_summary());
+    Ok(())
+}
+
+async fn run_search(
+    id: DownloadId,
+    request: SearchDownloadRequest,
+    cancel_rx: watch::Receiver<bool>,
+    defer_rx: watch::Receiver<u64>,
+    skip_rx: watch::Receiver<u64>,
+    emit: EmitArc,
+) -> Result<(), DownloadError> {
+    let SearchDownloadRequest {
+        beatmapset_ids,
+        label,
+        config,
+        auto_overwrite,
+        skip_already_imported,
+        osu_client,
+        osu_path,
+    } = request;
+
+    if beatmapset_ids.is_empty() {
+        return Err(DownloadError::NoBeatmapsets);
+    }
+
+    emit_resolving(id, emit.as_ref());
+
+    // Same off-thread owned-library resolve as `run_collection`; best-effort.
+    let owned_ids = resolve_owned_ids(skip_already_imported, osu_client, osu_path).await;
+
+    let Some(session) = DownloadSession::prepare(PrepareParams {
+        id,
+        cancel_rx: cancel_rx.clone(),
+        config: &config,
+        registry: &DOWNLOAD_REGISTRY,
+        emit: emit.as_ref(),
+        target: PrepareTarget::Search {
+            beatmapset_ids: &beatmapset_ids,
+            label: &label,
+        },
+        overwrite: auto_overwrite,
+        owned_ids,
+    })
+    .await?
+    else {
+        return Ok(());
+    };
+
+    if session.skipped_owned > 0 {
+        emit(DownloadEvent::SkippedImported {
+            id,
+            count: session.skipped_owned as usize,
+        });
+    }
+
+    let output_dir = session.output.output_dir.clone();
+
+    let Some(tally) = run_pipeline_core(
+        id,
+        &session,
+        &config,
+        auto_overwrite,
+        cancel_rx,
+        defer_rx,
+        skip_rx,
+        emit.as_ref(),
+    )
+    .await?
+    else {
+        drop(session);
+        try_remove_empty_output_dir(&output_dir).await;
+        return Ok(());
+    };
+
+    // A search run has no collection identity, so it writes no `collection.db`.
+    // The persisted failed-maps file is still reconciled: a re-download clears
+    // stale failures and this run's fresh failures are recorded.
+    let resolved: HashSet<u32> = session
+        .initial_satisfied
+        .iter()
+        .copied()
+        .chain(tally.successful.iter().copied())
+        .collect();
+    reconcile_failed_maps(resolved, failure_ids(&tally)).await;
 
     emit_finish(id, emit.as_ref(), tally.to_summary());
     Ok(())

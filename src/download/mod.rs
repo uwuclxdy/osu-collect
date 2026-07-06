@@ -10,7 +10,9 @@ pub use collection_db::create_selective_collection_db;
 pub use error::DownloadError;
 pub use events::{Tally, translate_event};
 pub use lock::ActiveDownloadRegistry;
-pub use pipeline::{spawn_download, spawn_selective_download, try_remove_empty_output_dir};
+pub use pipeline::{
+    spawn_download, spawn_search_download, spawn_selective_download, try_remove_empty_output_dir,
+};
 
 pub use crate::config::constants::status;
 pub use osu_downloader::ArchiveValidation;
@@ -126,6 +128,26 @@ pub struct SelectiveDownloadRequest {
     pub config: DownloadConfig,
     pub snapshot_dir: Option<std::path::PathBuf>,
     pub snapshots: Vec<crate::app::snapshots::CollectionSnapshotFile>,
+}
+
+/// A fetch-skipping download of raw beatmapset ids from a search. Unlike
+/// [`DownloadRequest`] / [`SelectiveDownloadRequest`] there is no collection to
+/// resolve — search results already carry the ids, so the pipeline skips the
+/// osu!collector fetch and the `collection.db` write. `label` names the run: it
+/// derives the page title and the per-run output subdir (`search-<label>`, so
+/// different query texts land in different dirs).
+#[derive(Debug, Clone)]
+pub struct SearchDownloadRequest {
+    pub beatmapset_ids: Vec<u32>,
+    pub label: String,
+    pub config: DownloadConfig,
+    pub auto_overwrite: bool,
+    /// Pre-skip beatmapsets already in the osu! library (they still count toward
+    /// the run tally). The owned-id set is resolved off the UI thread in the
+    /// pipeline task, exactly like [`DownloadRequest`].
+    pub skip_already_imported: bool,
+    pub osu_client: OsuClient,
+    pub osu_path: String,
 }
 
 /// A beatmapset that failed during a download run. Carried both in the
