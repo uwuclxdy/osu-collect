@@ -1132,6 +1132,41 @@ fn search_view_button_reopens_results_without_re_searching() {
 }
 
 #[test]
+fn search_view_button_is_inert_until_results_load() {
+    use crossterm::event::KeyCode;
+    use osu_collect::app::{GetMapsSource, HomeField};
+
+    // Idle (no results): the view button renders disabled, so focus can land on
+    // it — Enter must be a no-op, never opening an empty browse.
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Search;
+    app.home.focus = HomeField::SearchBrowse;
+    let cmd = app.handle_key(press(KeyCode::Enter));
+    assert!(cmd.is_none(), "disabled view button fires nothing");
+    assert!(
+        !app.home.search.browse.is_browsing(),
+        "an unloaded view button must not open an empty browse"
+    );
+}
+
+#[test]
+fn update_view_button_is_inert_until_a_scan_finds_updates() {
+    use crossterm::event::KeyCode;
+    use osu_collect::app::{GetMapsSource, HomeField};
+
+    // No scan yet: the view button renders disabled; Enter is a no-op.
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Update;
+    app.home.focus = HomeField::UpdateBrowse;
+    let cmd = app.handle_key(press(KeyCode::Enter));
+    assert!(cmd.is_none(), "disabled view button fires nothing");
+    assert!(
+        !app.home.update.is_browsing(),
+        "a pre-scan view button must not open an empty browse"
+    );
+}
+
+#[test]
 fn collection_pick_download_uses_snapshotted_id_not_late_resolve() {
     use osu_collect::app::{BrowseRow, GetMapsSource};
     let mut app = make_app();

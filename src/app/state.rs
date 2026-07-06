@@ -2032,11 +2032,23 @@ impl App {
                                 ScanCta::Busy => {}
                             },
                             // Open the two-pane browse over the scan's missing
-                            // sets (the dedicated `view N maps` button).
-                            HomeField::UpdateBrowse => self.home.update.descend(),
+                            // sets. Inert until a scan finds updates — the button
+                            // renders disabled meanwhile, and focus can still land
+                            // on it, so guard the descend (disabled rows are no-ops).
+                            HomeField::UpdateBrowse => {
+                                if self.home.update.total_new_count() > 0 {
+                                    self.home.update.descend();
+                                }
+                            }
                             // Reopen the search results browse without re-running
-                            // the query (the dedicated `view N maps` button).
-                            HomeField::SearchBrowse => self.home.search.browse.descend(),
+                            // the query. Inert until results are loaded — guard the
+                            // descend so an unloaded view button never opens an
+                            // empty browse.
+                            HomeField::SearchBrowse => {
+                                if !self.home.search.browse.rows.is_empty() {
+                                    self.home.search.browse.descend();
+                                }
+                            }
                             // Search filter chips step forward on enter (like the
                             // source strip); the `search` CTA runs the query.
                             HomeField::SearchMode
