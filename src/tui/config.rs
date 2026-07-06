@@ -124,6 +124,7 @@ pub fn render(
         frame,
         area,
         PANEL_TITLE,
+        None,
         items,
         focused_index,
         form.focus != ConfigField::AuthChip,

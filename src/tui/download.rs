@@ -260,7 +260,7 @@ fn tally_line(page: &CollectionPage) -> Line<'static> {
 fn render_overview(frame: &mut Frame, area: Rect, lines: Vec<Line<'_>>) {
     frame.render_widget(
         Paragraph::new(lines)
-            .block(widgets::panel_block(PANEL_OVERVIEW, false, true))
+            .block(widgets::panel_block(PANEL_OVERVIEW, None, false, true))
             .wrap(Wrap { trim: true }),
         area,
     );
@@ -531,7 +531,7 @@ fn render_threads(frame: &mut Frame, area: Rect, page: &CollectionPage) {
         return;
     }
 
-    let block = widgets::panel_block(PANEL_ACTIVE, true, false);
+    let block = widgets::panel_block(PANEL_ACTIVE, None, true, false);
     let inner = block.inner(area);
 
     let row_width = inner.width;
@@ -586,7 +586,7 @@ fn render_threads(frame: &mut Frame, area: Rect, page: &CollectionPage) {
 fn render_failed_section(frame: &mut Frame, area: Rect, page: &CollectionPage) {
     // Focused (LINE_STRONG): on the completed view this is the section the
     // cursor lives in (↑↓ navigate the failed rows, r/R retries).
-    let block = widgets::panel_block(PANEL_FAILED, true, false);
+    let block = widgets::panel_block(PANEL_FAILED, None, true, false);
     let inner = block.inner(area);
     let mut items: Vec<ListItem> = Vec::new();
     push_failed_rows(&mut items, page);
@@ -691,7 +691,7 @@ fn render_results_block(frame: &mut Frame, area: Rect, summary: &DownloadSummary
 
     frame.render_widget(
         Paragraph::new(lines)
-            .block(widgets::panel_block(PANEL_RESULTS, focused, false))
+            .block(widgets::panel_block(PANEL_RESULTS, None, focused, false))
             .wrap(Wrap { trim: true }),
         area,
     );

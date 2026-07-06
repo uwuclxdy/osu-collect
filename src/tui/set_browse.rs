@@ -58,11 +58,13 @@ pub fn render(
 
     let view = MasterDetail {
         status: Some(status),
-        list_title,
+        list_title: list_title.into(),
+        list_meta: None,
         list_items,
         list_selected: cursor,
         list_offset: &browse.list_offset,
-        preview_title: PREVIEW_TITLE,
+        preview_title: PREVIEW_TITLE.into(),
+        preview_meta: None,
         preview_items,
         // The preview is a read-only detail of the highlighted row, not a
         // selectable list, so no row is marked selected.

@@ -51,6 +51,7 @@ pub fn render(
         frame,
         area,
         PANEL_TITLE,
+        None,
         items,
         focused_index,
         // Text rows tint on focus; the action chips style themselves.

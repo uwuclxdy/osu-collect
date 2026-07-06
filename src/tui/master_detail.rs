@@ -13,6 +13,7 @@ use ratatui::{
     text::Line,
     widgets::{ListItem, Paragraph},
 };
+use std::borrow::Cow;
 use std::cell::Cell;
 
 use super::widgets;
@@ -37,19 +38,23 @@ const LIST_WIDTH_MAX: u16 = 52;
 /// A prepared two-pane master-detail browse view. See the module docs for the
 /// layout contract.
 ///
-/// List/preview titles and rows are `'static` because the panel/list helpers
-/// they're drawn through ([`widgets::render_scrollable_panel`],
-/// [`widgets::panel_block`]) are `'static`-only throughout this crate (every
-/// row is built fresh each frame from owned `String`s, never borrowed). `'a`
-/// covers only the scroll-offset cells, which genuinely borrow the caller's
-/// persisted state.
+/// Titles are `Cow<'static, str>` — a `&'static str` panel constant for a fixed
+/// section title, or an owned `String` for a proper-noun title (the preview
+/// named after the highlighted item). Rows carry `'static` content (built fresh
+/// each frame from owned `String`s, never borrowed). `'a` covers only the
+/// scroll-offset cells, which genuinely borrow the caller's persisted state.
+///
+/// Each pane takes an optional title-right `*_meta` line (a short count / state
+/// in the top border break — see [`widgets::panel_block`]).
 pub struct MasterDetail<'a> {
     pub status: Option<Line<'static>>,
-    pub list_title: &'static str,
+    pub list_title: Cow<'static, str>,
+    pub list_meta: Option<Line<'static>>,
     pub list_items: Vec<ListItem<'static>>,
     pub list_selected: Option<usize>,
     pub list_offset: &'a Cell<usize>,
-    pub preview_title: &'static str,
+    pub preview_title: Cow<'static, str>,
+    pub preview_meta: Option<Line<'static>>,
     pub preview_items: Vec<ListItem<'static>>,
     pub preview_selected: Option<usize>,
     pub preview_offset: &'a Cell<usize>,
@@ -102,7 +107,8 @@ fn render_list_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
     widgets::render_scrollable_panel(
         frame,
         area,
-        view.list_title,
+        view.list_title.clone(),
+        view.list_meta.clone(),
         view.list_items.clone(),
         view.list_selected.unwrap_or(0),
         // Highlight tint only while this pane owns focus AND a row is actually
@@ -126,7 +132,8 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
     widgets::render_scrollable_panel(
         frame,
         area,
-        view.preview_title,
+        view.preview_title.clone(),
+        view.preview_meta.clone(),
         view.preview_items.clone(),
         view.preview_selected.unwrap_or(0),
         focused && view.preview_selected.is_some(),

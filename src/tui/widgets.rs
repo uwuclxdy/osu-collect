@@ -12,6 +12,7 @@ use ratatui::{
         ScrollbarState,
     },
 };
+use std::borrow::Cow;
 use std::cell::Cell;
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -214,7 +215,8 @@ pub(crate) fn render_scrollbar(frame: &mut Frame, inner: Rect, start: usize, tot
 pub fn render_scrollable_panel(
     frame: &mut Frame,
     area: Rect,
-    title: &'static str,
+    title: impl Into<Cow<'static, str>>,
+    meta: Option<Line<'static>>,
     items: Vec<ListItem<'static>>,
     focused_index: usize,
     highlight: bool,
@@ -223,7 +225,7 @@ pub fn render_scrollable_panel(
     first_panel: bool,
     offset: &Cell<usize>,
 ) {
-    let block = panel_block(title, focused, first_panel);
+    let block = panel_block(title, meta, focused, first_panel);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -279,10 +281,22 @@ pub fn set_panel_cursor(
 /// `ACCENT_2` (orange); subsequent panels use `TEXT_DIM`.  Both always italic;
 /// title is bold only while the panel is focused.
 ///
-/// Callers must pass an already-uppercased, space-padded title constant
-/// (e.g. `" OVERVIEW "`). This avoids per-call allocation; use the module-level
-/// `PANEL_*` constants defined in each view module.
-pub fn panel_block(title: &'static str, focused: bool, first_panel: bool) -> Block<'static> {
+/// Callers pass an already-uppercased, space-padded title (e.g. `" OVERVIEW "`),
+/// usually a module-level `PANEL_*` constant (`&'static str`, no allocation). A
+/// dynamic proper-noun title — a master-detail preview named after the selected
+/// item — passes an owned, original-case `String` (case preserved, per the
+/// proper-noun title exception).
+///
+/// `meta`: an optional title-right meta line drawn in the border break just
+/// before the top-right corner (`╭─ TITLE ─── meta ─╮`). Its spans carry their
+/// own color (`TEXT_DIM` or a semantic — never bold/italic); the flanking `─`
+/// cells keep the border token so chrome owns every dash.
+pub fn panel_block(
+    title: impl Into<Cow<'static, str>>,
+    meta: Option<Line<'static>>,
+    focused: bool,
+    first_panel: bool,
+) -> Block<'static> {
     let border_color = if focused { line_strong() } else { line() };
     let title_color = if first_panel {
         accent_alt()
@@ -293,15 +307,27 @@ pub fn panel_block(title: &'static str, focused: bool, first_panel: bool) -> Blo
     if focused {
         title_style = title_style.bold();
     }
-    Block::bordered()
+    let border_style = Style::default().fg(border_color);
+    let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(border_color))
+        .border_style(border_style)
         // Tab title sits right after the rounded corner: `╭ TITLE ─`.
         .title(Line::from(vec![
-            Span::styled(title, title_style),
-            Span::styled("─", Style::default().fg(border_color)),
+            Span::styled(title.into(), title_style),
+            Span::styled("─", border_style),
         ]))
-        .padding(Padding::new(1, 1, 0, 0))
+        .padding(Padding::new(1, 1, 0, 0));
+    if let Some(meta) = meta {
+        // Right-aligned title is flush to the top-right corner; mirror the corner
+        // dash on the trailing side so it reads ` meta ─╮` with a leading gap
+        // separating it from the border fill.
+        let mut spans = Vec::with_capacity(meta.spans.len() + 2);
+        spans.push(Span::styled(" ", border_style));
+        spans.extend(meta.spans);
+        spans.push(Span::styled(" ─", border_style));
+        block = block.title_top(Line::from(spans).right_aligned());
+    }
+    block
 }
 
 pub fn focus_span(focused: bool) -> Span<'static> {

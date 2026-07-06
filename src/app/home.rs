@@ -313,6 +313,23 @@ impl HomeField {
             HomeField::SearchMode | HomeField::SearchStatus | HomeField::SearchSort
         )
     }
+
+    /// Whether this field renders as a self-styling CTA button (`button_item`),
+    /// which paints its own pill fill. The list's row-wide `bg_hover` highlight
+    /// must be suppressed on such a row, else the tint doubles up with the pill
+    /// (the broken box). Drives the `highlight` arg of every Get Maps
+    /// `render_scrollable_panel`, so a new button can never forget to opt out.
+    pub fn is_button(self) -> bool {
+        matches!(
+            self,
+            HomeField::Download
+                | HomeField::CollectionBrowse
+                | HomeField::UpdateScan
+                | HomeField::UpdateBrowse
+                | HomeField::SearchRun
+                | HomeField::SearchBrowse
+        )
+    }
 }
 
 pub struct HomeTab {

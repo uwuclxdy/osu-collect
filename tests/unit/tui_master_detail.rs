@@ -33,11 +33,13 @@ fn sample_view<'a>(
 ) -> MasterDetail<'a> {
     MasterDetail {
         status: None,
-        list_title: LIST_TITLE,
+        list_title: LIST_TITLE.into(),
+        list_meta: None,
         list_items: sample_items(3),
         list_selected: Some(0),
         list_offset,
-        preview_title: PREVIEW_TITLE,
+        preview_title: PREVIEW_TITLE.into(),
+        preview_meta: None,
         preview_items: sample_items(2),
         preview_selected: Some(0),
         preview_offset,
@@ -76,11 +78,13 @@ fn empty_list_items_does_not_panic() {
     let preview_offset = Cell::new(0);
     let view = MasterDetail {
         status: Some(Line::from("0 of 0 selected")),
-        list_title: LIST_TITLE,
+        list_title: LIST_TITLE.into(),
+        list_meta: None,
         list_items: Vec::new(),
         list_selected: None,
         list_offset: &list_offset,
-        preview_title: PREVIEW_TITLE,
+        preview_title: PREVIEW_TITLE.into(),
+        preview_meta: None,
         preview_items: Vec::new(),
         preview_selected: None,
         preview_offset: &preview_offset,
@@ -90,4 +94,34 @@ fn empty_list_items_does_not_panic() {
     // Only asserting no panic; the empty-list scroll/highlight path is the
     // regression surface here.
     let _ = render_to_string(80, 20, &view);
+}
+
+#[test]
+fn list_meta_renders_in_top_border() {
+    let list_offset = Cell::new(0);
+    let preview_offset = Cell::new(0);
+    let mut view = sample_view(&list_offset, &preview_offset);
+    view.list_meta = Some(Line::from("651 new maps"));
+
+    let output = render_to_string(80, 20, &view);
+    assert!(
+        output.contains("651 new maps"),
+        "list title-right meta should render in the panel's top border break"
+    );
+}
+
+#[test]
+fn owned_preview_title_renders() {
+    let list_offset = Cell::new(0);
+    let preview_offset = Cell::new(0);
+    let mut view = sample_view(&list_offset, &preview_offset);
+    // A proper-noun preview title (original case preserved) — the collection
+    // name in the update browse.
+    view.preview_title = "AIM GYM MEGAPACK".to_string().into();
+
+    let output = render_to_string(80, 20, &view);
+    assert!(
+        output.contains("AIM GYM MEGAPACK"),
+        "an owned preview title should render, case preserved"
+    );
 }

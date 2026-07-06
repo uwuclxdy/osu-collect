@@ -314,6 +314,109 @@ fn set_all_collections_selected_toggles_everything() {
     assert_eq!(ids, vec![1, 2, 3]);
 }
 
+// ── no-update collections are inert (unselectable) + sunk to the bottom ────────
+
+/// Three collections; only 100 and 300 have updates. After the scan, 200 sinks
+/// below the rest and is force-deselected.
+fn seeded_with_empty() -> UpdateSource {
+    let mut tab = UpdateSource::new();
+    tab.set_collections(vec![
+        local_col("Has - 100", 3),
+        local_col("Empty - 200", 2),
+        local_col("Also - 300", 1),
+    ]);
+    tab.set_missing_beatmaps(vec![missing(1, 100, false), missing(2, 300, false)]);
+    tab
+}
+
+#[test]
+fn no_update_collections_sink_to_bottom() {
+    let tab = seeded_with_empty();
+    let ids: Vec<Option<u64>> = tab
+        .selection
+        .local_collections
+        .iter()
+        .map(|c| c.collection_id)
+        .collect();
+    // 100 and 300 (with updates) keep their insertion order on top; 200 sinks.
+    assert_eq!(ids, vec![Some(100), Some(300), Some(200)]);
+}
+
+#[test]
+fn no_update_collection_is_force_deselected() {
+    let tab = seeded_with_empty();
+    let empty = tab
+        .selection
+        .local_collections
+        .iter()
+        .find(|c| c.collection_id == Some(200))
+        .expect("the empty collection is still listed");
+    assert!(
+        !empty.selected,
+        "a no-update collection is force-deselected"
+    );
+    assert!(
+        tab.selection
+            .local_collections
+            .iter()
+            .filter(|c| c.collection_id != Some(200))
+            .all(|c| c.selected),
+        "collections with updates stay selected"
+    );
+}
+
+#[test]
+fn toggle_is_inert_on_no_update_collection() {
+    let mut tab = seeded_with_empty();
+    let empty_idx = tab
+        .selection
+        .local_collections
+        .iter()
+        .position(|c| c.collection_id == Some(200))
+        .expect("the empty collection is still listed");
+    tab.selection.collections_cursor = Some(empty_idx);
+    tab.toggle_selected_collection();
+    assert!(
+        !tab.selection.local_collections[empty_idx].selected,
+        "toggling a no-update collection must be a no-op"
+    );
+}
+
+#[test]
+fn select_all_skips_no_update_collections() {
+    let mut tab = seeded_with_empty();
+    tab.set_all_collections_selected(false);
+    tab.set_all_collections_selected(true);
+    let selected: Vec<Option<u64>> = tab
+        .selection
+        .local_collections
+        .iter()
+        .filter(|c| c.selected)
+        .map(|c| c.collection_id)
+        .collect();
+    assert_eq!(
+        selected,
+        vec![Some(100), Some(300)],
+        "select-all ticks only collections with updates"
+    );
+}
+
+#[test]
+fn no_update_collections_stay_sunk_across_sorts() {
+    let mut tab = seeded_with_empty();
+    tab.cycle_collection_sort(); // → Name
+    let last = tab
+        .selection
+        .local_collections
+        .last()
+        .expect("list is non-empty");
+    assert_eq!(
+        last.collection_id,
+        Some(200),
+        "a no-update collection stays at the bottom under the Name sort too"
+    );
+}
+
 #[test]
 fn counts_track_missing_per_collection() {
     let tab = seeded();

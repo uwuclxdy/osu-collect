@@ -291,18 +291,26 @@ impl UpdateSource {
     // ── collection selection ──────────────────────────────────────────────────
 
     /// Flip the checkbox on the collection under the list cursor. No-op when the
-    /// cursor is parked on the action bar.
+    /// cursor is parked on the action bar or on an inert (no-update) collection —
+    /// a collection with nothing to download can't be selected.
     pub fn toggle_selected_collection(&mut self) {
-        if let Some(idx) = self.selection.collections_cursor
-            && let Some(collection) = self.selection.local_collections.get_mut(idx)
+        let Some(idx) = self.selection.collections_cursor else {
+            return;
+        };
+        let with_new = self.collections_with_new_ids();
+        if let Some(collection) = self.selection.local_collections.get_mut(idx)
+            && entry_has_new(collection, &with_new)
         {
             collection.selected = !collection.selected;
         }
     }
 
+    /// Select-all (`value == true`) only ticks collections that have updates;
+    /// inert no-update ones stay deselected. Clear (`value == false`) drops all.
     pub fn set_all_collections_selected(&mut self, value: bool) {
+        let with_new = self.collections_with_new_ids();
         for collection in &mut self.selection.local_collections {
-            collection.selected = value;
+            collection.selected = value && entry_has_new(collection, &with_new);
         }
     }
 
@@ -315,14 +323,16 @@ impl UpdateSource {
     }
 
     fn apply_collection_sort(&mut self) {
+        // No-update collections are inert, so they sink below the rest in every
+        // mode; the active mode then orders within each partition. Precompute the
+        // has-new set once — the borrow ends before the in-place sort.
+        let with_new = self.collections_with_new_ids();
+        let has_new = |c: &CollectionEntry| entry_has_new(c, &with_new);
         match self.selection.collection_sort {
             CollectionSort::Default => {
-                // Restore insertion order in place. Cloning the snapshot here
-                // would reset every `selected` flag to its scan-time default,
-                // and since selection is now whole-collection (the sole download
-                // determinant), a sort round-trip would silently re-include
-                // collections the user deselected. Reordering keeps the live
-                // `selected`/`removed_count` on each entry.
+                // Reorder in place rather than cloning the snapshot: a clone would
+                // reset every live `selected`/`removed_count` to its scan-time
+                // default, silently re-including collections the user deselected.
                 let order: std::collections::HashMap<(Option<u64>, String), usize> = self
                     .selection
                     .collections_default_order
@@ -330,22 +340,33 @@ impl UpdateSource {
                     .enumerate()
                     .map(|(idx, c)| ((c.collection_id, c.name.clone()), idx))
                     .collect();
-                self.selection.local_collections.sort_by_key(|c| {
-                    order
-                        .get(&(c.collection_id, c.name.clone()))
-                        .copied()
-                        .unwrap_or(usize::MAX)
+                self.selection.local_collections.sort_by(|a, b| {
+                    has_new(b).cmp(&has_new(a)).then_with(|| {
+                        let ka = order
+                            .get(&(a.collection_id, a.name.clone()))
+                            .copied()
+                            .unwrap_or(usize::MAX);
+                        let kb = order
+                            .get(&(b.collection_id, b.name.clone()))
+                            .copied()
+                            .unwrap_or(usize::MAX);
+                        ka.cmp(&kb)
+                    })
                 });
             }
             CollectionSort::Name => {
-                self.selection
-                    .local_collections
-                    .sort_by_key(|a| a.name.to_lowercase());
+                self.selection.local_collections.sort_by(|a, b| {
+                    has_new(b)
+                        .cmp(&has_new(a))
+                        .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                });
             }
             CollectionSort::Size => {
-                self.selection
-                    .local_collections
-                    .sort_by_key(|c| std::cmp::Reverse(c.beatmap_count));
+                self.selection.local_collections.sort_by(|a, b| {
+                    has_new(b)
+                        .cmp(&has_new(a))
+                        .then_with(|| b.beatmap_count.cmp(&a.beatmap_count))
+                });
             }
         }
     }
@@ -436,6 +457,17 @@ impl UpdateSource {
             .iter()
             .filter(|set| selected.contains(&u64::from(set.collection_id)))
             .count()
+    }
+
+    /// Ids (as `u32`, matching the API) of collections with ≥1 pending missing
+    /// set. Precomputed for the sort / selection guards so a per-entry check
+    /// avoids re-scanning `cached_missing_sets` each time.
+    fn collections_with_new_ids(&self) -> HashSet<u32> {
+        self.selection
+            .cached_missing_sets
+            .iter()
+            .map(|set| set.collection_id)
+            .collect()
     }
 
     /// Collections that have at least one missing set.
@@ -665,6 +697,16 @@ impl UpdateSource {
     /// decide the download set.
     pub fn set_missing_beatmaps(&mut self, missing: Vec<MissingBeatmapset>) {
         self.selection.cached_missing_sets = missing;
+        // No-update collections are inert: force them deselected (nothing to
+        // download) so a default-selected empty collection can't ride along, then
+        // re-sort so they sink below the rest.
+        let with_new = self.collections_with_new_ids();
+        for collection in &mut self.selection.local_collections {
+            if !entry_has_new(collection, &with_new) {
+                collection.selected = false;
+            }
+        }
+        self.apply_collection_sort();
         self.selection.preview_cursor = Some(0);
     }
 
@@ -697,6 +739,17 @@ impl UpdateSource {
         self.selection.preview_focused = false;
         self.scan.scan_status = ScanStatus::Idle;
     }
+}
+
+/// Whether `entry` has any pending update, given a precomputed set of collection
+/// ids that do (see [`UpdateSource::collections_with_new_ids`]). A no-update
+/// collection is inert: unselectable and sorted to the bottom.
+fn entry_has_new(entry: &CollectionEntry, with_new: &HashSet<u32>) -> bool {
+    entry
+        .collection_id
+        .and_then(|id| u32::try_from(id).ok())
+        .map(|id| with_new.contains(&id))
+        .unwrap_or(false)
 }
 
 /// Moves the list cursor by `delta`, wrapping at both ends: stepping down past

@@ -18,6 +18,8 @@ use ratatui::{
     widgets::ListItem,
 };
 
+use std::borrow::Cow;
+
 use super::master_detail::{self, MasterDetail, Pane};
 use super::widgets::{self, Metric};
 use super::{accent, focused_label, spinner_str, success, text_dim, text_faint};
@@ -119,11 +121,6 @@ pub fn push_form_rows(
 
 /// Render the two-pane browse over the whole body area.
 pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource) {
-    let status = Some(new_summary_line(
-        form.total_new_count(),
-        form.collections_with_new_count(),
-    ));
-
     // Caret + label promotion render only while the list pane owns focus.
     let list_focused = !form.preview_focused();
     let list_selected = form.selection.collections_cursor;
@@ -141,11 +138,15 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource) {
                 entry.selected,
                 &entry.name,
                 new,
-                entry.removed_count,
                 list_focused && list_selected == Some(i),
             )
         })
         .collect();
+
+    // The grand-total new count rides the COLLECTIONS panel's title-right meta
+    // (hidden at zero, per the zero-count rule) instead of a status line above.
+    let total_new = form.total_new_count();
+    let list_meta = (total_new > 0).then(|| new_maps_meta(total_new));
 
     let preview_indices = form.preview_missing_indices();
     let preview_items: Vec<ListItem<'static>> = preview_indices
@@ -162,13 +163,31 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource) {
         })
         .flatten();
 
+    // Preview pane is named after the highlighted collection (proper-noun case
+    // preserved) with its per-collection new/removed stats in the title-right
+    // meta, so the list rows can stay name-only.
+    let highlighted = form.highlighted_collection();
+    let preview_title: Cow<'static, str> = match highlighted {
+        Some(c) => Cow::Owned(format!(" {} ", c.name)),
+        None => Cow::Borrowed(PREVIEW_TITLE),
+    };
+    let preview_meta = highlighted.map(|c| {
+        let new = c
+            .collection_id
+            .map(|id| form.new_count_for(id))
+            .unwrap_or(0);
+        collection_stats_meta(new, c.removed_count)
+    });
+
     let view = MasterDetail {
-        status,
-        list_title: LIST_TITLE,
+        status: None,
+        list_title: Cow::Borrowed(LIST_TITLE),
+        list_meta,
         list_items,
         list_selected,
         list_offset: &form.list_offset,
-        preview_title: PREVIEW_TITLE,
+        preview_title,
+        preview_meta,
         preview_items,
         preview_selected,
         preview_offset: &form.preview_offset,
@@ -181,29 +200,49 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource) {
     master_detail::render(frame, area, &view);
 }
 
-/// One collection row: caret, checkbox, name, "N new", and "· -M removed" when
-/// present. Only the cursor row's name promotes to TEXT + bold.
-fn collection_row(
-    selected: bool,
-    name: &str,
-    new: usize,
-    removed: usize,
-    is_cursor: bool,
-) -> ListItem<'static> {
+/// One collection row: caret, checkbox, name. Per-collection stats moved to the
+/// preview's title-right meta, so the row stays name-only (no truncation). A
+/// no-update collection is **inert** (unselectable, sunk to the bottom): the
+/// whole row goes faint with an inert `[ ]`, the caret still lands so the user
+/// can inspect it. A collection with updates renders live — the cursor row's
+/// name promotes to TEXT + bold, others sit in TEXT_DIM.
+fn collection_row(selected: bool, name: &str, new: usize, is_cursor: bool) -> ListItem<'static> {
     let mut spans = vec![widgets::focus_span(is_cursor)];
-    spans.extend(widgets::checkbox_spans(selected));
-    spans.push(Span::styled(format!(" {name}"), focused_label(is_cursor)));
-    spans.push(Span::styled(
-        format!("  {new} new"),
+    if new == 0 {
+        let faint = Style::default().fg(text_faint());
+        spans.push(Span::styled("[ ]", faint));
+        spans.push(Span::styled(format!(" {name}"), faint));
+    } else {
+        spans.extend(widgets::checkbox_spans(selected));
+        spans.push(Span::styled(format!(" {name}"), focused_label(is_cursor)));
+    }
+    ListItem::new(Line::from(spans))
+}
+
+/// The COLLECTIONS panel title-right meta: the grand-total new-map count across
+/// every collection. `TEXT_DIM` — a neutral count, never bold/italic.
+fn new_maps_meta(new: usize) -> Line<'static> {
+    Line::from(Span::styled(
+        format!("{new} new {}", if new == 1 { "map" } else { "maps" }),
+        Style::default().fg(text_dim()),
+    ))
+}
+
+/// The preview panel title-right meta for the highlighted collection: `N new`
+/// (SUCCESS when any, else faint) and `· M removed` (faint) when any were
+/// removed locally.
+fn collection_stats_meta(new: usize, removed: usize) -> Line<'static> {
+    let mut spans = vec![Span::styled(
+        format!("{new} new"),
         Style::default().fg(if new > 0 { success() } else { text_faint() }),
-    ));
+    )];
     if removed > 0 {
         spans.push(Span::styled(
-            format!("  · -{removed} removed"),
+            format!("  ·  {removed} removed"),
             Style::default().fg(text_faint()),
         ));
     }
-    ListItem::new(Line::from(spans))
+    Line::from(spans)
 }
 
 /// One read-only preview row: the missing set id, plus a marker for a set the

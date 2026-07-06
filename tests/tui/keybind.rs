@@ -495,14 +495,25 @@ fn space_on_download_button_does_not_start_download() {
 #[test]
 fn space_in_update_browse_toggles_highlighted_collection() {
     use osu_collect::app::GetMapsSource;
+    use osu_collect::app::update_source::{MissingBeatmapset, MissingStatus};
     let mut app = make_app();
     app.home.source = GetMapsSource::Update;
-    // seed one collection and descend into the browse
+    // seed one collection with an update (so it's selectable) and descend
     app.home
         .update
         .set_collections(vec![osu_collect::osu_db::LocalCollection {
             name: "test - 1234".to_string(),
             beatmap_checksums: Vec::new().into(),
+        }]);
+    app.home
+        .update
+        .set_missing_beatmaps(vec![MissingBeatmapset {
+            id: 42,
+            status: MissingStatus::NotInstalled,
+            collection_id: 1234,
+            collection_name: "test - 1234".to_string(),
+            selected: false,
+            previously_deleted: false,
         }]);
     app.home.update.descend();
 
@@ -888,6 +899,7 @@ fn vim_i_enters_edit_mode_then_typing_is_literal() {
 #[test]
 fn enter_on_collection_toggles_and_stays_in_browse() {
     use osu_collect::app::GetMapsSource;
+    use osu_collect::app::update_source::{MissingBeatmapset, MissingStatus};
     let mut app = make_app();
     app.home.source = GetMapsSource::Update;
     app.home
@@ -895,6 +907,16 @@ fn enter_on_collection_toggles_and_stays_in_browse() {
         .set_collections(vec![osu_collect::osu_db::LocalCollection {
             name: "test - 1234".to_string(),
             beatmap_checksums: Vec::new().into(),
+        }]);
+    app.home
+        .update
+        .set_missing_beatmaps(vec![MissingBeatmapset {
+            id: 42,
+            status: MissingStatus::NotInstalled,
+            collection_id: 1234,
+            collection_name: "test - 1234".to_string(),
+            selected: false,
+            previously_deleted: false,
         }]);
     app.home.update.descend();
     let before = app.home.update.selection.local_collections[0].selected;
