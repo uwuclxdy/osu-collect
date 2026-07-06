@@ -28,7 +28,7 @@ const LABEL_SOURCE: &str = "source";
 const LABEL_OVERWRITE: &str = "overwrite existing";
 const LABEL_VIDEO: &str = "video";
 
-const LABEL_DOWNLOAD_ALL: &str = "download all";
+const LABEL_DOWNLOAD: &str = "download";
 const LABEL_BROWSE_PICK: &str = "browse & pick";
 
 /// Left title of the collection browse&pick browse (its left pane).
@@ -267,20 +267,17 @@ fn can_download(form: &HomeTab) -> bool {
 }
 
 /// The collection source's download-button label + enabled state. Reads
-/// `download all` (the whole resolved collection) until a proper nonempty subset
-/// is checked in browse&pick, then flips to `download N selected` (dispatched via
+/// `download` (the whole resolved collection) until a proper nonempty subset
+/// is checked in browse&pick, then flips to `download (N)` (dispatched via
 /// the selective path in `dispatch_form_download`).
 fn collection_download_button(form: &HomeTab) -> (String, bool) {
     if form.collection_subset_picked() {
         (
-            format!(
-                "download {} selected",
-                form.collection_browse.selected_count()
-            ),
+            format!("download ({})", form.collection_browse.selected_count()),
             true,
         )
     } else {
-        (LABEL_DOWNLOAD_ALL.to_string(), can_download(form))
+        (LABEL_DOWNLOAD.to_string(), can_download(form))
     }
 }
 

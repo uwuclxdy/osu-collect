@@ -1,5 +1,6 @@
 //! Render for the Get Maps `Search` source: a small form (query input + three
-//! filter chips + the `search` CTA + a status line) that descends into the
+//! mode/status/sort cycle rows, each showing every option with the active one
+//! bracketed + the `search` CTA + a status line) that descends into the
 //! shared flat browse ([`super::set_browse`]) once results arrive. The source
 //! strip is drawn by the Home view; these form rows are pushed into the same
 //! Home panel. The results browse (and its status/action line) is rendered by
@@ -13,7 +14,7 @@ use ratatui::{
 };
 
 use super::widgets;
-use super::{accent, danger, focused_label, success, text_dim, text_faint, warning};
+use super::{accent, danger, success, text_dim, text_faint, warning};
 
 const LABEL_MODE: &str = "mode";
 const LABEL_STATUS: &str = "status";
@@ -27,7 +28,8 @@ const LABEL_WIDTH: usize = LABEL_STATUS.len();
 pub const BROWSE_LIST_TITLE: &str = "results";
 
 /// Push the search-source FORM rows into the Home panel: the query input, the
-/// mode/status/sort chips, the `search` CTA, and a status line for the last run.
+/// mode/status/sort cycle rows (every option shown, active one bracketed while
+/// focused), the `search` CTA, and a status line for the last run.
 pub fn push_form_rows(
     items: &mut widgets::FormItems<HomeField>,
     search: &SearchSource,
@@ -42,26 +44,33 @@ pub fn push_form_rows(
 
     items.push_focusable(
         HomeField::SearchMode,
-        chip_row(
+        widgets::cycle_item(
             LABEL_MODE,
+            search.mode_labels(),
             search.mode_label(),
             focus == HomeField::SearchMode,
+            LABEL_WIDTH,
         ),
     );
     items.push_focusable(
         HomeField::SearchStatus,
-        chip_row(
+        widgets::cycle_item(
             LABEL_STATUS,
+            search.status_labels(),
             search.status_label(),
             focus == HomeField::SearchStatus,
+            LABEL_WIDTH,
         ),
     );
+    let sort_labels = search.sort_labels();
     items.push_focusable(
         HomeField::SearchSort,
-        chip_row(
+        widgets::cycle_item(
             LABEL_SORT,
+            &sort_labels,
             search.sort_label(),
             focus == HomeField::SearchSort,
+            LABEL_WIDTH,
         ),
     );
     items.push(widgets::spacer());
@@ -74,11 +83,12 @@ pub fn push_form_rows(
     if let Some(row) = status_row(&search.status_msg) {
         items.push(row);
     }
+    items.push(widgets::spacer());
 
     // The download button dispatches the picked results; disabled until at least
     // one set is checked in the results browse. Shares the update source's label.
     let (download_label, download_enabled) =
-        super::update_source::download_button(search.browse.selected_count());
+        widgets::download_button_label(search.browse.selected_count());
     items.push_focusable(
         HomeField::Download,
         widgets::button_item(
@@ -113,25 +123,6 @@ pub fn browse_status(search: &SearchSource) -> Line<'static> {
         ));
     }
     Line::from(spans)
-}
-
-/// A compact single-value filter chip: `label  value`, the value bracketed +
-/// accent while focused (matching the source strip / config cycle convention).
-/// `space`/`enter` cycle it in the controller.
-fn chip_row(label: &str, value: &str, focused: bool) -> ListItem<'static> {
-    let value_span = if focused {
-        Span::styled(format!("[{value}]"), Style::default().fg(accent()))
-    } else {
-        Span::styled(value.to_string(), Style::default().fg(accent()))
-    };
-    ListItem::new(Line::from(vec![
-        widgets::focus_span(focused),
-        Span::styled(
-            widgets::label_cell(label, LABEL_WIDTH),
-            focused_label(focused),
-        ),
-        value_span,
-    ]))
 }
 
 /// The inline status line for the last search, or `None` when idle.

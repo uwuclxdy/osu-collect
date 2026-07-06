@@ -937,7 +937,7 @@ fn enter_on_update_download_button_dispatches_selective() {
             selected: false,
             previously_deleted: false,
         }]);
-    // The download now fires from the form's `download N selected` button, not an
+    // The download now fires from the form's `download (N)` button, not an
     // in-browse action bar.
     app.home.focus = HomeField::Download;
 
@@ -1117,4 +1117,33 @@ fn collection_pick_download_uses_snapshotted_id_not_late_resolve() {
     let mut ids = request.beatmapset_ids.clone();
     ids.sort_unstable();
     assert_eq!(ids, vec![10, 20]);
+}
+
+#[test]
+fn reopening_collection_browse_preserves_picks() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Collection;
+    app.home.set_resolved_collection(7, vec![10, 20, 30]);
+    app.home.focus = HomeField::CollectionBrowse;
+
+    // Open browse&pick: a fresh collection defaults every set selected.
+    app.handle_key(press(KeyCode::Enter));
+    assert!(app.home.collection_browse.is_browsing());
+    assert_eq!(app.home.collection_browse.selected_count(), 3);
+
+    // Uncheck the highlighted row, then ascend back to the form.
+    app.handle_key(press(KeyCode::Enter)); // toggle row 0 → 2 selected
+    assert_eq!(app.home.collection_browse.selected_count(), 2);
+    app.handle_key(press(KeyCode::Esc));
+    assert!(!app.home.collection_browse.is_browsing());
+
+    // Re-opening the SAME collection keeps the picks (no reset-to-all).
+    app.handle_key(press(KeyCode::Enter));
+    assert!(app.home.collection_browse.is_browsing());
+    assert_eq!(
+        app.home.collection_browse.selected_count(),
+        2,
+        "re-opening the same collection preserves the user's selection"
+    );
 }

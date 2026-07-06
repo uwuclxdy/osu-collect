@@ -714,6 +714,18 @@ pub fn button_item(label: &str, focused: bool, enabled: bool) -> ListItem<'stati
     ListItem::new(Line::from(spans))
 }
 
+/// Label + enabled state for a "download the checked sets" button (the search and
+/// update source forms): `download (N)` when `selected` sets are checked, a
+/// disabled bare `download` when none are. The count lives in the parens so the
+/// label stays terse; the running total is also on the browse status line.
+pub fn download_button_label(selected: usize) -> (String, bool) {
+    if selected > 0 {
+        (format!("download ({selected})"), true)
+    } else {
+        ("download".to_string(), false)
+    }
+}
+
 /// A `label value` metric line separated by [`SEPARATOR`].
 ///
 /// Metric styling: each label is lowercase `TEXT_FAINT` (a recessive

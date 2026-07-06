@@ -368,6 +368,23 @@ impl SearchSource {
         SORT_PRESETS[self.sort_idx].label
     }
 
+    /// Every mode option label, in cycle order — for a full cloudy cycle row that
+    /// shows all options with the active one bracketed.
+    pub fn mode_labels(&self) -> &'static [&'static str] {
+        MODE_LABELS
+    }
+
+    /// Every status option label, in cycle order (see [`mode_labels`](Self::mode_labels)).
+    pub fn status_labels(&self) -> &'static [&'static str] {
+        STATUS_LABELS
+    }
+
+    /// Every sort-preset label, in cycle order (see [`mode_labels`](Self::mode_labels)).
+    /// Built from [`SORT_PRESETS`] so the two never drift.
+    pub fn sort_labels(&self) -> Vec<&'static str> {
+        SORT_PRESETS.iter().map(|preset| preset.label).collect()
+    }
+
     // ── query ─────────────────────────────────────────────────────────────────
 
     /// The osu! API query for the current form plus an optional paging cursor.

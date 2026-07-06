@@ -385,7 +385,7 @@ fn scan_cta_label_follows_state_machine() {
     // Ready with nothing found: re-scan invitation.
     tab.scan.scan_status = ScanStatus::Ready;
     assert_eq!(tab.scan_cta(), ScanCta::Scan);
-    assert_eq!(tab.scan_cta_label(), "no updates found — scan again");
+    assert_eq!(tab.scan_cta_label(), "rescan");
 
     // Ready with updates: descend.
     let mut ready = seeded();

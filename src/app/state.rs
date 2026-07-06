@@ -1265,8 +1265,9 @@ impl App {
     }
 
     /// Open the resolved collection in the checkbox browse (collection
-    /// "browse & pick"), defaulting all sets selected. No-op with a toast until a
-    /// collection has resolved.
+    /// "browse & pick"). A fresh collection defaults all sets selected;
+    /// re-opening the same collection preserves the prior picks. No-op with a
+    /// toast until a collection has resolved.
     fn open_collection_browse(&mut self) {
         let Some((collection_id, ids)) = self.home.resolved_collection.clone() else {
             self.toast_warn("resolve a collection first");
@@ -1276,12 +1277,18 @@ impl App {
             self.toast_warn("collection has no beatmaps");
             return;
         }
+        // Re-opening the same collection keeps the user's selection alive;
+        // `set_rows` retains checks for still-present ids, so only a fresh /
+        // changed collection defaults to all-selected.
+        let fresh = self.home.collection_browse_id != Some(collection_id);
         let rows: Vec<BrowseRow> = ids
             .into_iter()
             .map(|id| BrowseRow { id, meta: None })
             .collect();
         self.home.collection_browse.set_rows(rows);
-        self.home.collection_browse.set_all_selected(true);
+        if fresh {
+            self.home.collection_browse.set_all_selected(true);
+        }
         self.home.collection_browse.descend();
         // Snapshot the id so the dispatch stays paired with these rows even if a
         // late resolve updates `resolved_collection` while the browse is open.

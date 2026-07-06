@@ -293,9 +293,7 @@ impl UpdateSource {
             ScanCta::Descend => format!("view {} updates", self.total_new_count()),
             // A completed scan that found nothing invites a re-scan; a fresh /
             // errored one is the first scan.
-            ScanCta::Scan if self.scan.scan_status == ScanStatus::Ready => {
-                "no updates found — scan again".to_string()
-            }
+            ScanCta::Scan if self.scan.scan_status == ScanStatus::Ready => "rescan".to_string(),
             ScanCta::Scan => "scan for updates".to_string(),
         }
     }

@@ -382,9 +382,9 @@ fn latency_range_excludes_disabled_mirror() {
     assert_eq!(home.mirror_latency_range(), Some((50, 50)));
 }
 
-/// The adaptive collection download button reads `download N selected` only for
-/// a proper nonempty subset of the *currently-resolved* collection; all/none
-/// picked, or a browse left over from a different collection, reads `download all`.
+/// The adaptive collection download button reads `download (N)` only for a
+/// proper nonempty subset of the *currently-resolved* collection; all/none
+/// picked, or a browse left over from a different collection, reads `download`.
 #[test]
 fn collection_subset_picked_gates_on_current_collection() {
     use crate::app::BrowseRow;

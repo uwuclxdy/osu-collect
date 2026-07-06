@@ -159,16 +159,28 @@ fn home_renders_mirrors_section() {
 
 #[test]
 fn home_cta_scrolls_into_view_on_short_terminal() {
-    use osu_collect::app::HomeField;
+    use osu_collect::app::{BrowseRow, HomeField};
 
     // 18 rows overflows the home form (~17 rows) but stays out of compact mode
     // (>= COMPACT_HEIGHT). The CTA is the last, unhighlighted row; before the
     // scroll/highlight split it was selected=None → offset 0 → off-screen.
     let mut app = make_app();
+    // A picked subset makes the CTA read the unique "download (2)"; the bare
+    // "download" label would otherwise collide with the "download directory"
+    // field, so this pins the assertion to the button, not surrounding chrome.
+    app.home.set_resolved_collection(1, vec![10, 20, 30]);
+    app.home.collection_browse.set_rows(vec![
+        BrowseRow { id: 10, meta: None },
+        BrowseRow { id: 20, meta: None },
+        BrowseRow { id: 30, meta: None },
+    ]);
+    app.home.collection_browse.set_all_selected(true);
+    app.home.collection_browse.toggle_selected(); // drop one → a proper subset
+    app.home.collection_browse_id = Some(1);
     app.home.focus = HomeField::Download;
     let content = render_content(&app, 120, 18);
     assert!(
-        content.contains("download all"),
+        content.contains("download (2)"),
         "focused CTA must scroll into view on a short terminal: {content}"
     );
 }

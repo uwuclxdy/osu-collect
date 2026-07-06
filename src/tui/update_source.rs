@@ -75,10 +75,12 @@ pub fn push_form_rows(
         ),
     );
 
+    items.push(widgets::spacer());
+
     // The download button dispatches every missing set of the checked
     // collections; disabled until a scan selects at least one.
     let selected = form.selected_new_count();
-    let (download_label, download_enabled) = download_button(selected);
+    let (download_label, download_enabled) = widgets::download_button_label(selected);
     items.push_focusable(
         HomeField::Download,
         widgets::button_item(
@@ -90,17 +92,6 @@ pub fn push_form_rows(
 
     for metric in summary_metrics(form) {
         items.push(widgets::summary_item(std::slice::from_ref(&metric)));
-    }
-}
-
-/// A `download N selected` button label + enabled state, shared by the update
-/// and search source forms. Disabled (and dropping the count) when nothing is
-/// selected, per the cloudy zero-count rule.
-pub(super) fn download_button(selected: usize) -> (String, bool) {
-    if selected > 0 {
-        (format!("download {selected} selected"), true)
-    } else {
-        ("download selected".to_string(), false)
     }
 }
 
