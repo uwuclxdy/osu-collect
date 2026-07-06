@@ -76,12 +76,20 @@ pub fn push_form_rows(
     );
     items.push(widgets::spacer());
 
+    // A search in flight mirrors the scan CTA: the static `search` label swaps
+    // for an inline braille spinner and the button is inert until results land.
+    let loading = matches!(search.status_msg, SearchStatusMsg::Loading);
+    let cta_label = if loading {
+        format!("{} searching", spinner_str(tick).trim())
+    } else {
+        LABEL_CTA.to_string()
+    };
     items.push_focusable(
         HomeField::SearchRun,
-        widgets::button_item(LABEL_CTA, focus == HomeField::SearchRun, true),
+        widgets::button_item(&cta_label, focus == HomeField::SearchRun, !loading),
     );
 
-    if let Some(row) = status_row(&search.status_msg, tick) {
+    if let Some(row) = status_row(&search.status_msg) {
         items.push(row);
     }
     items.push(widgets::spacer());
@@ -122,20 +130,9 @@ pub fn browse_status(search: &SearchSource) -> Line<'static> {
     ])
 }
 
-/// The inline status line for the last search, or `None` when idle.
-fn status_row(msg: &SearchStatusMsg, tick: u64) -> Option<ListItem<'static>> {
-    // A search in flight is indeterminate work → inline braille spinner (ACCENT,
-    // fresh work) + a dim label, so it needs a two-span row unlike the flat rows
-    // below.
-    if matches!(msg, SearchStatusMsg::Loading) {
-        return Some(ListItem::new(Line::from(vec![
-            Span::styled(
-                format!("  {} ", spinner_str(tick).trim()),
-                Style::default().fg(accent()).bold(),
-            ),
-            Span::styled("searching", Style::default().fg(text_dim())),
-        ])));
-    }
+/// The inline status line for the last search's outcome, or `None` while idle or
+/// in flight (the in-flight spinner lives on the CTA itself).
+fn status_row(msg: &SearchStatusMsg) -> Option<ListItem<'static>> {
     let (label, color) = match msg {
         SearchStatusMsg::Idle | SearchStatusMsg::Loading => return None,
         SearchStatusMsg::Ready { total } => {

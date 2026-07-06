@@ -227,6 +227,22 @@ fn collection_browse_shows_focus_caret_and_uppercase_title() {
     );
 }
 
+#[test]
+fn search_cta_shows_inline_spinner_while_loading() {
+    use osu_collect::app::{GetMapsSource, SearchStatusMsg};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Search;
+    app.home.search.status_msg = SearchStatusMsg::Loading;
+    let content = render_content(&app, 80, 24);
+    // The CTA mirrors the scan CTA: an inline braille spinner replaces `search`
+    // while a query is in flight (tick 0 → frame `⠋`), rather than a separate
+    // status row below the button.
+    assert!(
+        content.contains("⠋ searching"),
+        "search CTA shows an inline spinner while loading: {content}"
+    );
+}
+
 // ── update source view ───────────────────────────────────────────────────────
 
 #[test]

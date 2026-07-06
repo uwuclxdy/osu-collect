@@ -79,10 +79,11 @@ pub fn push_form_rows(
         widgets::button_item(&cta_label, focus == HomeField::UpdateScan, !busy),
     );
 
-    items.push(widgets::spacer());
-
     // The download button dispatches every missing set of the checked
-    // collections; disabled until a scan selects at least one.
+    // collections; disabled until a scan selects at least one. Grouped tight
+    // under the scan CTA — the collection source stacks its two action buttons
+    // the same way — so the actions read as one block instead of split by a
+    // lone spacer.
     let selected = form.selected_new_count();
     let (download_label, download_enabled) = widgets::download_button_label(selected);
     items.push_focusable(
