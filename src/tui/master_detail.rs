@@ -120,13 +120,16 @@ fn render_list_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
 
 fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
     let focused = view.focused == Pane::Preview;
+    // A read-only preview (`preview_selected == None`, e.g. the set browse) is a
+    // scroll target, not a selectable list, so it takes no `bg_hover` selection
+    // band even while descended — only a preview that marks a row highlights it.
     widgets::render_scrollable_panel(
         frame,
         area,
         view.preview_title,
         view.preview_items.clone(),
         view.preview_selected.unwrap_or(0),
-        focused,
+        focused && view.preview_selected.is_some(),
         None,
         focused,
         false,

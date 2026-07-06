@@ -14,7 +14,7 @@ use ratatui::{
 };
 
 use super::widgets;
-use super::{accent, danger, success, text_dim, text_faint, warning};
+use super::{accent, danger, spinner_str, success, text_dim, warning};
 
 const LABEL_MODE: &str = "mode";
 const LABEL_STATUS: &str = "status";
@@ -25,7 +25,7 @@ const LABEL_CTA: &str = "search";
 const LABEL_WIDTH: usize = LABEL_STATUS.len();
 
 /// Left title of the results browse (the left pane of the master-detail).
-pub const BROWSE_LIST_TITLE: &str = "results";
+pub const BROWSE_LIST_TITLE: &str = " RESULTS ";
 
 /// Push the search-source FORM rows into the Home panel: the query input, the
 /// mode/status/sort cycle rows (every option shown, active one bracketed while
@@ -35,6 +35,7 @@ pub fn push_form_rows(
     search: &SearchSource,
     focus: HomeField,
     editing: bool,
+    tick: u64,
 ) {
     items.push_focusable(
         HomeField::SearchQuery,
@@ -80,7 +81,7 @@ pub fn push_form_rows(
         widgets::button_item(LABEL_CTA, focus == HomeField::SearchRun, true),
     );
 
-    if let Some(row) = status_row(&search.status_msg) {
+    if let Some(row) = status_row(&search.status_msg, tick) {
         items.push(row);
     }
     items.push(widgets::spacer());
@@ -108,28 +109,35 @@ pub fn browse_status(search: &SearchSource) -> Line<'static> {
         SearchStatusMsg::Ready { total } => total,
         _ => shown as u64,
     };
-    let mut spans = vec![
+    // The `m load more` keybind lives in the footer hint bar (shown in the same
+    // condition), so it isn't duplicated here — the `X of TOTAL` count already
+    // signals more results exist.
+    Line::from(vec![
         Span::styled(shown.to_string(), Style::default().fg(accent()).bold()),
         Span::styled(format!(" of {total}  ·  "), Style::default().fg(text_dim())),
         Span::styled(
             format!("{selected} selected"),
             Style::default().fg(text_dim()),
         ),
-    ];
-    if search.next_cursor.is_some() {
-        spans.push(Span::styled(
-            "   ·   m load more",
-            Style::default().fg(text_faint()),
-        ));
-    }
-    Line::from(spans)
+    ])
 }
 
 /// The inline status line for the last search, or `None` when idle.
-fn status_row(msg: &SearchStatusMsg) -> Option<ListItem<'static>> {
-    let (text, color) = match msg {
-        SearchStatusMsg::Idle => return None,
-        SearchStatusMsg::Loading => ("searching…".to_string(), text_dim()),
+fn status_row(msg: &SearchStatusMsg, tick: u64) -> Option<ListItem<'static>> {
+    // A search in flight is indeterminate work → inline braille spinner (ACCENT,
+    // fresh work) + a dim label, so it needs a two-span row unlike the flat rows
+    // below.
+    if matches!(msg, SearchStatusMsg::Loading) {
+        return Some(ListItem::new(Line::from(vec![
+            Span::styled(
+                format!("  {} ", spinner_str(tick).trim()),
+                Style::default().fg(accent()).bold(),
+            ),
+            Span::styled("searching", Style::default().fg(text_dim())),
+        ])));
+    }
+    let (label, color) = match msg {
+        SearchStatusMsg::Idle | SearchStatusMsg::Loading => return None,
         SearchStatusMsg::Ready { total } => {
             let word = if *total == 1 { "result" } else { "results" };
             (format!("{total} {word}"), success())
@@ -139,6 +147,6 @@ fn status_row(msg: &SearchStatusMsg) -> Option<ListItem<'static>> {
     };
     Some(ListItem::new(Line::from(vec![
         Span::raw("  "),
-        Span::styled(text, Style::default().fg(color)),
+        Span::styled(label, Style::default().fg(color)),
     ])))
 }

@@ -20,10 +20,10 @@ use ratatui::{
 
 use super::master_detail::{self, MasterDetail, Pane};
 use super::widgets::{self, Metric};
-use super::{accent, focused_label, success, text, text_dim, text_faint};
+use super::{accent, focused_label, spinner_str, success, text_dim, text_faint};
 
-const LIST_TITLE: &str = "collections";
-const PREVIEW_TITLE: &str = "preview";
+const LIST_TITLE: &str = " COLLECTIONS ";
+const PREVIEW_TITLE: &str = " PREVIEW ";
 
 const METRIC_KNOWN_BAD: &str = "known bad";
 const TAG_PREVIOUSLY_DELETED: &str = "previously deleted";
@@ -46,6 +46,7 @@ pub fn push_form_rows(
     library: &LibraryState,
     focus: HomeField,
     editing: bool,
+    tick: u64,
 ) {
     let path_focused = focus == HomeField::UpdateOsuPath;
     items.push_focusable(
@@ -65,14 +66,17 @@ pub fn push_form_rows(
         ));
     }
 
-    let cta_enabled = form.scan_cta() != ScanCta::Busy;
+    // A running scan is indeterminate work, so the CTA animates: swap the static
+    // label for an inline braille spinner and hold the button inert until done.
+    let busy = form.scan_cta() == ScanCta::Busy;
+    let cta_label = if busy {
+        format!("{} scanning", spinner_str(tick).trim())
+    } else {
+        form.scan_cta_label()
+    };
     items.push_focusable(
         HomeField::UpdateScan,
-        widgets::button_item(
-            &form.scan_cta_label(),
-            focus == HomeField::UpdateScan,
-            cta_enabled,
-        ),
+        widgets::button_item(&cta_label, focus == HomeField::UpdateScan, !busy),
     );
 
     items.push(widgets::spacer());
@@ -102,20 +106,28 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource) {
         form.collections_with_new_count(),
     ));
 
+    // Caret + label promotion render only while the list pane owns focus.
+    let list_focused = !form.preview_focused();
+    let list_selected = form.selection.collections_cursor;
     let list_items: Vec<ListItem<'static>> = form
         .selection
         .local_collections
         .iter()
-        .map(|entry| {
+        .enumerate()
+        .map(|(i, entry)| {
             let new = entry
                 .collection_id
                 .map(|id| form.new_count_for(id))
                 .unwrap_or(0);
-            collection_row(entry.selected, &entry.name, new, entry.removed_count)
+            collection_row(
+                entry.selected,
+                &entry.name,
+                new,
+                entry.removed_count,
+                list_focused && list_selected == Some(i),
+            )
         })
         .collect();
-
-    let list_selected = form.selection.collections_cursor;
 
     let preview_indices = form.preview_missing_indices();
     let preview_items: Vec<ListItem<'static>> = preview_indices
@@ -151,13 +163,18 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource) {
     master_detail::render(frame, area, &view);
 }
 
-/// One collection row: checkbox, name, "N new", and "· -M removed" when present.
-fn collection_row(selected: bool, name: &str, new: usize, removed: usize) -> ListItem<'static> {
-    let mut spans = widgets::checkbox_spans(selected);
-    spans.push(Span::styled(
-        format!(" {name}"),
-        Style::default().fg(text()),
-    ));
+/// One collection row: caret, checkbox, name, "N new", and "· -M removed" when
+/// present. Only the cursor row's name promotes to TEXT + bold.
+fn collection_row(
+    selected: bool,
+    name: &str,
+    new: usize,
+    removed: usize,
+    is_cursor: bool,
+) -> ListItem<'static> {
+    let mut spans = vec![widgets::focus_span(is_cursor)];
+    spans.extend(widgets::checkbox_spans(selected));
+    spans.push(Span::styled(format!(" {name}"), focused_label(is_cursor)));
     spans.push(Span::styled(
         format!("  {new} new"),
         Style::default().fg(if new > 0 { success() } else { text_faint() }),
@@ -192,7 +209,14 @@ fn new_summary_line(new: usize, collections: usize) -> Line<'static> {
     Line::from(vec![
         Span::styled(new.to_string(), Style::default().fg(accent()).bold()),
         Span::styled(
-            format!(" new across {collections} collections"),
+            format!(
+                " new across {collections} {}",
+                if collections == 1 {
+                    "collection"
+                } else {
+                    "collections"
+                }
+            ),
             Style::default().fg(text_dim()),
         ),
     ])

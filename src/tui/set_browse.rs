@@ -19,9 +19,11 @@ use ratatui::{
 
 use super::master_detail::{self, MasterDetail, Pane};
 use super::widgets;
-use super::{accent, success, text, text_dim, text_faint, warning};
+use super::{accent, focused_label, text, text_dim, text_faint, warning};
 
-const PREVIEW_TITLE: &str = "preview";
+const PREVIEW_TITLE: &str = " PREVIEW ";
+/// Widest key on the preview card, for column-aligning the static kv rows.
+const KV_WIDTH: usize = "favourites".len();
 
 /// Render a set browse over the whole body area. `list_title` names the left
 /// pane, `status` is the line above it. Pure selector — no download button.
@@ -32,10 +34,21 @@ pub fn render(
     list_title: &'static str,
     status: Line<'static>,
 ) {
+    // Caret + label promotion render only while the list pane owns focus (the
+    // contract's per-pane cursor rule); a descended preview drops both.
+    let list_focused = !browse.preview_focused();
+    let cursor = browse.list_cursor();
     let list_items: Vec<ListItem<'static>> = browse
         .rows
         .iter()
-        .map(|row| list_row(row, browse.is_selected(row.id)))
+        .enumerate()
+        .map(|(i, row)| {
+            list_row(
+                row,
+                browse.is_selected(row.id),
+                list_focused && cursor == Some(i),
+            )
+        })
         .collect();
 
     let preview_items = browse
@@ -47,7 +60,7 @@ pub fn render(
         status: Some(status),
         list_title,
         list_items,
-        list_selected: browse.list_cursor(),
+        list_selected: cursor,
         list_offset: &browse.list_offset,
         preview_title: PREVIEW_TITLE,
         preview_items,
@@ -66,22 +79,16 @@ pub fn render(
 
 /// One list row: checkbox plus the set's compact label. Rich when metadata is
 /// present (`artist - title`), else the bare id.
-fn list_row(row: &BrowseRow, selected: bool) -> ListItem<'static> {
-    let mut spans = widgets::checkbox_spans(selected);
-    match &row.meta {
-        Some(meta) => {
-            spans.push(Span::styled(
-                format!(" {} - {}", meta.artist, meta.title),
-                Style::default().fg(text()),
-            ));
-        }
-        None => {
-            spans.push(Span::styled(
-                format!(" #{}", row.id),
-                Style::default().fg(text_dim()),
-            ));
-        }
-    }
+fn list_row(row: &BrowseRow, selected: bool, is_cursor: bool) -> ListItem<'static> {
+    // caret → checkbox → label (the contract's checkbox-row order); only the
+    // cursor row's label promotes to TEXT + bold.
+    let mut spans = vec![widgets::focus_span(is_cursor)];
+    spans.extend(widgets::checkbox_spans(selected));
+    let label = match &row.meta {
+        Some(meta) => format!(" {} - {}", meta.artist, meta.title),
+        None => format!(" #{}", row.id),
+    };
+    spans.push(Span::styled(label, focused_label(is_cursor)));
     ListItem::new(Line::from(spans))
 }
 
@@ -97,7 +104,7 @@ fn preview_rows(row: &BrowseRow) -> Vec<ListItem<'static>> {
                 Style::default().fg(text()),
             ))),
             ListItem::new(Line::from(Span::styled(
-                "no preview — osu!collector exposes no per-set metadata",
+                "no preview · osu!collector exposes no per-set metadata",
                 Style::default().fg(text_faint()),
             ))),
         ],
@@ -114,21 +121,10 @@ fn meta_preview(meta: &BeatmapSetMeta) -> Vec<ListItem<'static>> {
             meta.artist.clone(),
             Style::default().fg(text()),
         ))),
-        ListItem::new(Line::from(vec![
-            Span::styled("mapper  ", Style::default().fg(text_faint())),
-            Span::styled(meta.creator.clone(), Style::default().fg(text())),
-        ])),
-        ListItem::new(Line::from(vec![
-            Span::styled("status  ", Style::default().fg(text_faint())),
-            Span::styled(meta.status.clone(), Style::default().fg(text_dim())),
-            Span::styled("   ♥ ", Style::default().fg(text_faint())),
-            Span::styled(
-                meta.favourite_count.to_string(),
-                Style::default().fg(success()),
-            ),
-            Span::styled("   ▶ ", Style::default().fg(text_faint())),
-            Span::styled(meta.play_count.to_string(), Style::default().fg(text_dim())),
-        ])),
+        kv_row("mapper", meta.creator.clone()),
+        kv_row("status", meta.status.clone()),
+        kv_row("favourites", group_thousands(meta.favourite_count as u64)),
+        kv_row("plays", group_thousands(meta.play_count as u64)),
     ];
     if meta.video || meta.nsfw {
         let mut flags: Vec<Span<'static>> = Vec::new();
@@ -144,4 +140,31 @@ fn meta_preview(meta: &BeatmapSetMeta) -> Vec<ListItem<'static>> {
         rows.push(ListItem::new(Line::from(flags)));
     }
     rows
+}
+
+/// A static key→value preview row: key in `TEXT_DIM + bold` (the cloudy static-kv
+/// treatment), column-aligned to [`KV_WIDTH`], value in `TEXT`.
+fn kv_row(key: &str, value: String) -> ListItem<'static> {
+    ListItem::new(Line::from(vec![
+        Span::styled(
+            format!("{key:<width$}  ", width = KV_WIDTH),
+            Style::default().fg(text_dim()).bold(),
+        ),
+        Span::styled(value, Style::default().fg(text())),
+    ]))
+}
+
+/// `1240` → `"1,240"`. Preview counts are detail-panel figures, so they render at
+/// full precision with thousands separators (cloudy numeric formatting).
+fn group_thousands(n: u64) -> String {
+    let s = n.to_string();
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, &b) in bytes.iter().enumerate() {
+        if i > 0 && (bytes.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(b as char);
+    }
+    out
 }

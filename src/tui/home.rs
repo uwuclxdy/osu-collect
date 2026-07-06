@@ -28,15 +28,15 @@ const LABEL_SOURCE: &str = "source";
 const LABEL_OVERWRITE: &str = "overwrite existing";
 const LABEL_VIDEO: &str = "video";
 
-const LABEL_DOWNLOAD: &str = "download";
+const LABEL_DOWNLOAD_ALL: &str = "download all";
 const LABEL_BROWSE_PICK: &str = "browse & pick";
 
 /// Left title of the collection browse&pick browse (its left pane).
-const COLLECTION_BROWSE_TITLE: &str = "collection";
+const COLLECTION_BROWSE_TITLE: &str = " COLLECTION ";
 
-/// Focus hint under the mirrors summary: it is read-only here, so `enter` hands
+/// Focus hint under the mirrors summary: it is read-only here, so `↵` hands
 /// off to the Config tab, which owns all mirror editing.
-const HELP_MIRRORS_SUMMARY: &str = "enter to edit mirrors in the config tab";
+const HELP_MIRRORS_SUMMARY: &str = "↵ to edit mirrors in the config tab";
 
 /// Positions the terminal caret (via [`ratatui::Frame::set_cursor_position`])
 /// when a text field is focused in edit mode; otherwise leaves it hidden.
@@ -49,12 +49,13 @@ pub fn render(
     form: &HomeTab,
     library: &LibraryState,
     editing: bool,
+    tick: u64,
 ) {
     if area.height < super::COMPACT_HEIGHT {
-        render_compact(frame, area, form, library, editing);
+        render_compact(frame, area, form, library, editing, tick);
         return;
     }
-    render_content(frame, area, form, library, editing);
+    render_content(frame, area, form, library, editing, tick);
 }
 
 /// Caret column for the update source's osu! path input (its value lives on
@@ -104,12 +105,11 @@ fn search_cursor_col(form: &HomeTab, editing: bool) -> Option<u16> {
 
 /// Status line above the collection browse&pick browse: `N sets · K selected`.
 fn collection_browse_status(browse: &SetBrowse) -> Line<'static> {
+    let n = browse.rows.len();
+    let noun = if n == 1 { "set" } else { "sets" };
     Line::from(vec![
-        Span::styled(
-            browse.rows.len().to_string(),
-            Style::default().fg(accent()).bold(),
-        ),
-        Span::styled("  sets  ·  ", Style::default().fg(text_dim())),
+        Span::styled(n.to_string(), Style::default().fg(accent()).bold()),
+        Span::styled(format!("  {noun}  ·  "), Style::default().fg(text_dim())),
         Span::styled(
             format!("{} selected", browse.selected_count()),
             Style::default().fg(text_dim()),
@@ -127,6 +127,7 @@ fn render_compact(
     form: &HomeTab,
     library: &LibraryState,
     editing: bool,
+    tick: u64,
 ) {
     let focus = form.focus;
 
@@ -149,7 +150,7 @@ fn render_compact(
     match form.source {
         GetMapsSource::Collection => {}
         GetMapsSource::Update => {
-            update_source::push_form_rows(&mut items, &form.update, library, focus, editing);
+            update_source::push_form_rows(&mut items, &form.update, library, focus, editing, tick);
             let cursor_col = update_cursor_col(form, library, editing);
             let (items, focused_index) = items.into_parts();
             widgets::render_scrollable_panel(
@@ -167,7 +168,7 @@ fn render_compact(
             return;
         }
         GetMapsSource::Search => {
-            search_source::push_form_rows(&mut items, &form.search, focus, editing);
+            search_source::push_form_rows(&mut items, &form.search, focus, editing, tick);
             let cursor_col = search_cursor_col(form, editing);
             let (items, focused_index) = items.into_parts();
             widgets::render_scrollable_panel(
@@ -267,7 +268,7 @@ fn can_download(form: &HomeTab) -> bool {
 }
 
 /// The collection source's download-button label + enabled state. Reads
-/// `download` (the whole resolved collection) until a proper nonempty subset
+/// `download all` (the whole resolved collection) until a proper nonempty subset
 /// is checked in browse&pick, then flips to `download (N)` (dispatched via
 /// the selective path in `dispatch_form_download`).
 fn collection_download_button(form: &HomeTab) -> (String, bool) {
@@ -277,7 +278,9 @@ fn collection_download_button(form: &HomeTab) -> (String, bool) {
             true,
         )
     } else {
-        (LABEL_DOWNLOAD.to_string(), can_download(form))
+        // `download all` (vs a source's bare `download`) names that this
+        // dispatches the whole resolved collection, not a picked subset.
+        (LABEL_DOWNLOAD_ALL.to_string(), can_download(form))
     }
 }
 
@@ -307,6 +310,7 @@ fn render_content(
     form: &HomeTab,
     library: &LibraryState,
     editing: bool,
+    tick: u64,
 ) {
     let focus = form.focus;
 
@@ -331,7 +335,7 @@ fn render_content(
     match form.source {
         GetMapsSource::Collection => {}
         GetMapsSource::Update => {
-            update_source::push_form_rows(&mut items, &form.update, library, focus, editing);
+            update_source::push_form_rows(&mut items, &form.update, library, focus, editing, tick);
             let cursor_col = update_cursor_col(form, library, editing);
             let (items, focused_index) = items.into_parts();
             widgets::render_scrollable_panel(
@@ -349,7 +353,7 @@ fn render_content(
             return;
         }
         GetMapsSource::Search => {
-            search_source::push_form_rows(&mut items, &form.search, focus, editing);
+            search_source::push_form_rows(&mut items, &form.search, focus, editing, tick);
             let cursor_col = search_cursor_col(form, editing);
             let (items, focused_index) = items.into_parts();
             widgets::render_scrollable_panel(

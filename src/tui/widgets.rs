@@ -19,8 +19,8 @@ use std::time::Instant;
 use super::theme::{Tier, theme};
 use super::{
     FILL_BLOCK, FILL_SHADE, FILL_SPACE, GLYPH_BLOCK, GLYPH_SHADE, GLYPH_SPACE, accent, accent_alt,
-    bg, bg_hover, danger, focused_label, glyph_fill, info, line, line_strong, success, text_dim,
-    text_faint, warning,
+    bg, bg_hover, bg_raised, danger, focused_label, glyph_fill, info, line, line_strong, success,
+    text_dim, text_faint, warning,
 };
 
 pub const FOCUS_MARK: &str = "❯ ";
@@ -689,25 +689,22 @@ pub fn disabled_toggle_row(
     ListItem::new(Line::from(spans))
 }
 
-/// A button row rendered as a filled pill, activated with `enter`.
+/// A prominent-CTA action button (`▐ label ▌`), activated with `enter`.
 ///
-/// `enabled` greys the label when the action is currently unavailable (e.g. no
-/// maps selected). The button is still rendered so its position stays stable.
+/// Renders the action-only chip's prominent-CTA form: `ACCENT + bold` on a
+/// `BG_RAISED` fill at rest, an inverse `ACCENT` block (`fg = BG`) when focused,
+/// 1-space inset. `enabled == false` is the disabled chip — the whole pill goes
+/// `TEXT_FAINT`, focusable-but-inert (the caret still lands so the row reads as
+/// selected); the caller skips activation and surfaces a reason.
 pub fn button_item(label: &str, focused: bool, enabled: bool) -> ListItem<'static> {
-    let mut pill = String::with_capacity(label.len() + 4);
-    pill.push_str("  ");
-    pill.push_str(label);
-    pill.push_str("  ");
+    let pill = format!(" {label} ");
 
-    let pill_style = if !enabled && !focused {
-        Style::default().fg(text_faint())
-    } else if !enabled {
-        // focused but disabled: show dim accent so the row is visibly selected
-        Style::default().fg(accent()).dim()
+    let pill_style = if !enabled {
+        Style::default().fg(text_faint()).bg(bg_raised())
     } else if focused {
         Style::default().fg(bg()).bg(accent()).bold()
     } else {
-        Style::default().fg(accent()).bold()
+        Style::default().fg(accent()).bold().bg(bg_raised())
     };
 
     let spans = vec![focus_span(focused), Span::styled(pill, pill_style)];

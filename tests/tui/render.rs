@@ -185,6 +185,48 @@ fn home_cta_scrolls_into_view_on_short_terminal() {
     );
 }
 
+#[test]
+fn collection_form_cta_reads_download_all() {
+    // No picked subset → the collection CTA dispatches the whole collection and
+    // reads `download all`, distinct from a source's bare disabled `download`.
+    let app = make_app();
+    let content = render_content(&app, 120, 40);
+    assert!(
+        content.contains("download all"),
+        "collection form CTA reads 'download all': {content}"
+    );
+}
+
+#[test]
+fn collection_browse_shows_focus_caret_and_uppercase_title() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use osu_collect::app::{GetMapsSource, HomeField};
+
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Collection;
+    app.home.set_resolved_collection(7, vec![10, 20, 30]);
+    app.home.focus = HomeField::CollectionBrowse;
+    // Descend into browse&pick: the list pane owns focus, so its cursor row draws
+    // the caret. The browse claims the whole body, so this `❯` can only be the
+    // list row's (the source form isn't rendered).
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
+    assert!(app.home.collection_browse.is_browsing());
+
+    let content = render_content(&app, 120, 40);
+    // Exactly one caret: the browse claims the whole body (no form rendered) and
+    // only the cursor row is caret-marked. More than one would mean the per-row
+    // `list_focused && cursor == Some(i)` gate regressed to caret-on-every-row.
+    assert_eq!(
+        content.matches('❯').count(),
+        1,
+        "exactly the cursor row shows the caret: {content}"
+    );
+    assert!(
+        content.contains("COLLECTION"),
+        "browse list panel title is uppercased: {content}"
+    );
+}
+
 // ── update source view ───────────────────────────────────────────────────────
 
 #[test]
