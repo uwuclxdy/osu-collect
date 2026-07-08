@@ -32,6 +32,7 @@ pub enum ConfigField {
     AuthChip,
     Theme,
     VimKeys,
+    JumpToDownloads,
     MirrorNerinyan,
     MirrorOsuDirect,
     MirrorSayobot,
@@ -69,6 +70,7 @@ const CONFIG_FIELDS_HEAD: &[ConfigField] = &[
     ConfigField::AuthChip,
     ConfigField::Theme,
     ConfigField::VimKeys,
+    ConfigField::JumpToDownloads,
 ];
 
 const CONFIG_FIELDS_AFTER_CUSTOM: &[ConfigField] = &[
@@ -127,6 +129,7 @@ pub struct ConfigTab {
     pub logging_dir: InputField,
     pub theme: ThemeMode,
     pub vim_keys: bool,
+    pub jump_to_downloads: bool,
     pub auto_update: bool,
     pub prereleases: bool,
     /// Built-in mirror try-order, seeded from
@@ -175,6 +178,7 @@ impl ConfigTab {
             // Absent config key → show the default (full) palette in the cycle.
             theme: config.display.theme.unwrap_or_default(),
             vim_keys: config.display.vim_keys,
+            jump_to_downloads: config.display.jump_to_downloads,
             auto_update: config.update.auto_update,
             prereleases: config.update.prereleases,
             mirror_order: config.mirror.ordered_builtins(),
@@ -423,6 +427,7 @@ impl ConfigTab {
         match self.focus {
             ConfigField::Theme => self.cycle_theme(),
             ConfigField::VimKeys => self.vim_keys = !self.vim_keys,
+            ConfigField::JumpToDownloads => self.jump_to_downloads = !self.jump_to_downloads,
             ConfigField::MirrorNerinyan => self.nerinyan = !self.nerinyan,
             ConfigField::MirrorOsuDirect => self.osu_direct = !self.osu_direct,
             ConfigField::MirrorSayobot => self.sayobot = !self.sayobot,
@@ -531,6 +536,7 @@ impl ConfigTab {
             display: DisplayConfig {
                 theme: Some(self.theme),
                 vim_keys: self.vim_keys,
+                jump_to_downloads: self.jump_to_downloads,
             },
             update: UpdateConfig {
                 auto_update: self.auto_update,

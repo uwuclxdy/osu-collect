@@ -32,7 +32,10 @@ const SECTION_UPDATE: &str = "updates";
 
 const LABEL_THEME: &str = "theme";
 const LABEL_VIM_KEYS: &str = "vim keys";
+const LABEL_JUMP_TO_DOWNLOADS: &str = "jump to downloads on launch";
 const HELP_VIM_KEYS: &str = "hjkl move · gg/G top/bottom · ctrl+d/u page · i/a edit";
+const HELP_JUMP_TO_DOWNLOADS: &str =
+    "on download launch switch to the downloads tab · off: stay put";
 
 const LABEL_VIDEO: &str = "video";
 const LABEL_VERIFY_INTEGRITY: &str = "verify .osz integrity";
@@ -207,6 +210,19 @@ fn build_config_items(
     );
     if show_chrome && focus == ConfigField::VimKeys {
         items.push(widgets::help_item(HELP_VIM_KEYS));
+    }
+    items.push_focusable(
+        ConfigField::JumpToDownloads,
+        widgets::row_item(
+            LABEL_JUMP_TO_DOWNLOADS,
+            None,
+            form.jump_to_downloads,
+            focus == ConfigField::JumpToDownloads,
+            0,
+        ),
+    );
+    if show_chrome && focus == ConfigField::JumpToDownloads {
+        items.push(widgets::help_item(HELP_JUMP_TO_DOWNLOADS));
     }
     if show_chrome {
         items.push(widgets::spacer());
@@ -436,7 +452,7 @@ fn focus_section(field: ConfigField) -> Option<&'static str> {
     use ConfigField::*;
     Some(match field {
         AuthChip => return None,
-        Theme | VimKeys => SECTION_DISPLAY,
+        Theme | VimKeys | JumpToDownloads => SECTION_DISPLAY,
         MirrorOsuDirect | MirrorNerinyan | MirrorSayobot | MirrorNekoha | MirrorBeatconnect
         | MirrorOsudl | MirrorCatboy | MirrorHinamizawa | MirrorOsuOfficial
         | MirrorCustomUrl(_) => SECTION_MIRRORS,

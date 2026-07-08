@@ -81,6 +81,8 @@ fn next_field_cycles_through_auth_chip() {
     tab.next_field();
     assert_eq!(tab.focus, ConfigField::VimKeys);
     tab.next_field();
+    assert_eq!(tab.focus, ConfigField::JumpToDownloads);
+    tab.next_field();
     assert_eq!(tab.focus, ConfigField::MirrorOsuDirect);
 }
 
@@ -89,6 +91,8 @@ fn prev_field_cycles_through_auth_chip() {
     let mut tab = tab_logged_in();
     tab.focus = ConfigField::MirrorOsuDirect;
     tab.prev_field();
+    assert_eq!(tab.focus, ConfigField::JumpToDownloads);
+    tab.prev_field();
     assert_eq!(tab.focus, ConfigField::VimKeys);
     tab.prev_field();
     assert_eq!(tab.focus, ConfigField::Theme);
@@ -96,6 +100,23 @@ fn prev_field_cycles_through_auth_chip() {
     assert_eq!(tab.focus, ConfigField::AuthChip);
     tab.prev_field();
     assert_eq!(tab.focus, ConfigField::Prereleases);
+}
+
+#[test]
+fn jump_to_downloads_defaults_off_and_round_trips() {
+    let mut tab = tab_logged_in();
+    assert!(!tab.jump_to_downloads, "default is stay on get maps");
+
+    tab.focus = ConfigField::JumpToDownloads;
+    tab.toggle_current();
+    assert!(tab.jump_to_downloads);
+
+    let built = tab.build_config().unwrap();
+    assert!(built.display.jump_to_downloads);
+    assert!(
+        !ConfigTab::new(&Config::default()).jump_to_downloads,
+        "absent config key stays off"
+    );
 }
 
 #[test]
@@ -259,8 +280,8 @@ fn nav_order_follows_reordered_mirrors() {
     let mut tab = ConfigTab::new(&Config::default());
     tab.focus = ConfigField::MirrorNerinyan;
     tab.reorder_focused_mirror(true); // Nerinyan becomes the first mirror row
-    // Stepping down from vim-keys lands on the new first mirror.
-    tab.focus = ConfigField::VimKeys;
+    // Stepping down from the last display row lands on the new first mirror.
+    tab.focus = ConfigField::JumpToDownloads;
     tab.next_field();
     assert_eq!(tab.focus, ConfigField::MirrorNerinyan);
 }

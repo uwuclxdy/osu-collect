@@ -944,12 +944,14 @@ fn config_tab_shows_mirrors_section_before_download() {
     assert!(content.contains("mirrors") || content.contains("MIRRORS"));
     // mirrors render before download, matching the home tab's section flow.
     // The header's `downloads` tab title sits in the first buffer row (120
-    // cells), so only matches past it count as the download section.
+    // cells) and the display section's `jump to downloads on launch` row also
+    // matches the prefix, so only a bare `download` past the header counts as
+    // the section header.
     let mir_pos = content.find("mirrors").or_else(|| content.find("MIRRORS"));
     let dl_pos = content
         .match_indices("download")
         .map(|(i, _)| i)
-        .find(|&i| i > 120);
+        .find(|&i| i > 120 && !content[i..].starts_with("downloads"));
     if let (Some(m), Some(d)) = (mir_pos, dl_pos) {
         assert!(m < d, "mirrors section should render before download");
     }

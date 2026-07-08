@@ -2695,8 +2695,9 @@ impl App {
     }
 
     /// Point the Downloads-list cursor at a just-queued run (the newest active
-    /// row) so opening the tab lands on it. The active tab does not change —
-    /// launch stays on Get Maps, signalled by the queued toast.
+    /// row) so opening the tab lands on it. Launch stays on the current tab
+    /// (signalled by the queued toast) unless `display.jump_to_downloads` is
+    /// on, which switches to the Downloads tab.
     fn focus_new_download_run(&mut self) {
         let actives = self.downloads.iter().filter(|p| !p.is_settled()).count();
         self.downloads_tab.selected = actives.saturating_sub(1);
@@ -2704,6 +2705,9 @@ impl App {
         // descended preview keeps the preview, now on the new retry run.
         if self.active_tab != Tab::Downloads {
             self.downloads_tab.preview_focused = false;
+            if self.config.jump_to_downloads {
+                self.active_tab = Tab::Downloads;
+            }
         }
     }
 

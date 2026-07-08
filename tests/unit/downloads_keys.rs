@@ -348,6 +348,51 @@ fn queueing_from_another_tab_resets_stale_preview_focus() {
         "a run queued from another tab must land on the list, not inside a preview"
     );
     assert_eq!(app.downloads_tab.selected, 1, "cursor on the new run");
+    assert_eq!(
+        app.active_tab,
+        Tab::Home,
+        "default launch behavior stays on the current tab"
+    );
+}
+
+#[test]
+fn queueing_with_jump_setting_switches_to_downloads_list() {
+    let mut app = make_app();
+    app.config.jump_to_downloads = true;
+    push_page(&mut app, 1, DownloadStage::Downloading);
+    app.downloads_tab.preview_focused = true; // left descended
+    app.active_tab = Tab::Home;
+
+    let mut new_run = CollectionPage::new(2, "new".to_string(), 2);
+    new_run.stage = DownloadStage::Downloading;
+    app.downloads.push(new_run);
+    app.focus_new_download_run();
+
+    assert_eq!(app.active_tab, Tab::Downloads, "jump setting switches tabs");
+    assert!(
+        !app.downloads_tab.preview_focused,
+        "the jump lands on the list, never inside a preview"
+    );
+    assert_eq!(app.downloads_tab.selected, 1, "cursor on the new run");
+}
+
+#[test]
+fn retry_from_descended_preview_never_jumps_or_ascends() {
+    let mut app = make_app();
+    app.config.jump_to_downloads = true;
+    push_page(&mut app, 1, DownloadStage::Failed);
+    app.downloads_tab.preview_focused = true; // retrying from the preview
+
+    let mut retry_run = CollectionPage::new(2, "retry".to_string(), 2);
+    retry_run.stage = DownloadStage::Downloading;
+    app.downloads.push(retry_run);
+    app.focus_new_download_run();
+
+    assert_eq!(app.active_tab, Tab::Downloads);
+    assert!(
+        app.downloads_tab.preview_focused,
+        "a retry queued from a descended preview keeps the preview"
+    );
 }
 
 // ── x stays toast-only ───────────────────────────────────────────────────────

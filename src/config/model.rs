@@ -94,6 +94,11 @@ pub struct DisplayConfig {
     /// text field in edit mode bypasses the layer so typing stays literal.
     #[serde(default)]
     pub vim_keys: bool,
+    /// On download launch, switch to the Downloads tab (landing on the run
+    /// list). Off by default: launch stays on the current tab, signalled by
+    /// the queued toast.
+    #[serde(default)]
+    pub jump_to_downloads: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
