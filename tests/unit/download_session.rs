@@ -1,7 +1,8 @@
 use super::{
-    OutputPreparation, SessionTarget, partition_pending, resolve_selective_with, search_folder_name,
+    OutputPreparation, SessionTarget, ids_folder_name, partition_pending, resolve_selective_with,
 };
 use crate::core::collection::{Beatmap, Beatmapset, Collection, CollectionService, Uploader};
+use crate::download::IdsRunSource;
 use crate::download::{DownloadEvent, SelectiveDownloadCollection};
 use crate::utils;
 use std::collections::HashSet;
@@ -187,33 +188,38 @@ fn partition_pending_empty_owned_is_noop() {
 }
 
 #[test]
-fn search_folder_name_derives_from_query() {
-    // A plain query becomes `search-<query>`; different queries → different dirs,
-    // so two concurrent searches never collide on the per-output-dir lock.
-    assert_eq!(search_folder_name("tekno"), "search-tekno");
-    assert_eq!(search_folder_name("blue zenith"), "search-blue zenith");
+fn ids_folder_name_derives_from_tag() {
+    // A plain tag becomes `<prefix>-<tag>`; different tags → different dirs,
+    // so two concurrent runs never collide on the per-output-dir lock.
+    assert_eq!(ids_folder_name("search", "tekno"), "search-tekno");
+    assert_eq!(
+        ids_folder_name("search", "blue zenith"),
+        "search-blue zenith"
+    );
+    assert_eq!(ids_folder_name("filter", "a1b2c3d4"), "filter-a1b2c3d4");
 }
 
 #[test]
-fn search_folder_name_sanitizes_forbidden_chars() {
+fn ids_folder_name_sanitizes_forbidden_chars() {
     // Path separators / reserved chars can't leak into the folder name.
-    assert_eq!(search_folder_name("a/b:c*?"), "search-a_b_c__");
-    assert_eq!(search_folder_name("../etc"), "search-.._etc");
+    assert_eq!(ids_folder_name("search", "a/b:c*?"), "search-a_b_c__");
+    assert_eq!(ids_folder_name("search", "../etc"), "search-.._etc");
 }
 
 #[test]
-fn search_folder_name_blank_falls_back() {
-    // An empty or whitespace-only label still yields a valid, recognizable dir.
-    assert_eq!(search_folder_name(""), "search");
-    assert_eq!(search_folder_name("   "), "search");
+fn ids_folder_name_blank_falls_back() {
+    // An empty or whitespace-only tag still yields a valid, recognizable dir.
+    assert_eq!(ids_folder_name("search", ""), "search");
+    assert_eq!(ids_folder_name("filter", "   "), "filter");
 }
 
 #[test]
-fn session_target_search_has_no_collection() {
-    let target = SessionTarget::Search {
+fn session_target_ids_has_no_collection() {
+    let target = SessionTarget::Ids {
         label: "tekno".to_string(),
+        source: IdsRunSource::Search,
     };
-    // A search run carries no collection metadata (skips `collection.db`).
+    // A raw-ids run carries no collection metadata (skips `collection.db`).
     assert!(target.collection().is_none());
     assert!(target.selective_collections().is_none());
     // The expectation index is the requested id set, not a collection's contents.
@@ -223,9 +229,10 @@ fn session_target_search_has_no_collection() {
 }
 
 #[test]
-fn session_target_search_announces_label_and_count() {
-    let target = SessionTarget::Search {
+fn session_target_ids_announces_label_and_count() {
+    let target = SessionTarget::Ids {
         label: "blue zenith".to_string(),
+        source: IdsRunSource::Search,
     };
     let output = OutputPreparation {
         output_dir: PathBuf::from("/tmp/search-blue zenith"),

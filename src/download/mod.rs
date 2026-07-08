@@ -11,7 +11,7 @@ pub use error::DownloadError;
 pub use events::{Tally, translate_event};
 pub use lock::ActiveDownloadRegistry;
 pub use pipeline::{
-    spawn_download, spawn_search_download, spawn_selective_download, try_remove_empty_output_dir,
+    spawn_download, spawn_ids_download, spawn_selective_download, try_remove_empty_output_dir,
 };
 
 pub use crate::config::constants::status;
@@ -130,16 +130,45 @@ pub struct SelectiveDownloadRequest {
     pub snapshots: Vec<crate::app::snapshots::CollectionSnapshotFile>,
 }
 
-/// A fetch-skipping download of raw beatmapset ids from a search. Unlike
-/// [`DownloadRequest`] / [`SelectiveDownloadRequest`] there is no collection to
-/// resolve — search results already carry the ids, so the pipeline skips the
-/// osu!collector fetch and the `collection.db` write. `label` names the run: it
-/// derives the page title and the per-run output subdir (`search-<label>`, so
-/// different query texts land in different dirs).
+/// Which Get Maps source produced a raw-ids run. Decides the run's uploader
+/// label and its output-subdir prefix (`search-*` / `filter-*`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdsRunSource {
+    Search,
+    Filter,
+}
+
+impl IdsRunSource {
+    /// Uploader shown on the run's page (raw-ids runs have no collection owner).
+    pub(crate) fn uploader(self) -> &'static str {
+        match self {
+            Self::Search => "search",
+            Self::Filter => "filter",
+        }
+    }
+
+    /// Prefix of the per-run output subdir (`<prefix>-<folder_tag>`).
+    pub(crate) fn folder_prefix(self) -> &'static str {
+        match self {
+            Self::Search => "search",
+            Self::Filter => "filter",
+        }
+    }
+}
+
+/// A fetch-skipping download of raw beatmapset ids from a search or filter run.
+/// Unlike [`DownloadRequest`] / [`SelectiveDownloadRequest`] there is no
+/// collection to resolve — the results already carry the ids, so the pipeline
+/// skips the osu!collector fetch and the `collection.db` write. `label` names
+/// the run (the page title / `CollectionReady` name); `folder_tag` derives the
+/// per-run output subdir (`<source>-<folder_tag>`), so different queries land
+/// in different dirs.
 #[derive(Debug, Clone)]
-pub struct SearchDownloadRequest {
+pub struct IdsDownloadRequest {
     pub beatmapset_ids: Vec<u32>,
     pub label: String,
+    pub folder_tag: String,
+    pub source: IdsRunSource,
     pub config: DownloadConfig,
     pub auto_overwrite: bool,
     /// Pre-skip beatmapsets already in the osu! library (they still count toward

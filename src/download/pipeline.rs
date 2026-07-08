@@ -1,6 +1,6 @@
 use super::{
     DownloadConfig, DownloadError, DownloadEvent, DownloadHandle, DownloadId, DownloadRequest,
-    DownloadStage, Emit, SearchDownloadRequest, SelectiveDownloadRequest,
+    DownloadStage, Emit, IdsDownloadRequest, SelectiveDownloadRequest,
     collection_db::{write_collection_db, write_selective_collection_db},
     events::{Tally, emit_finish, translate_event},
     fetch_collection_sizes,
@@ -75,14 +75,15 @@ pub fn spawn_selective_download(
     )
 }
 
-pub fn spawn_search_download(
+pub fn spawn_ids_download(
     id: DownloadId,
-    request: SearchDownloadRequest,
+    request: IdsDownloadRequest,
     tx: UnboundedSender<DownloadEvent>,
 ) -> DownloadHandle {
     let span = info_span!(
-        "search_download_task",
+        "ids_download_task",
         download_id = id,
+        source = ?request.source,
         mirror_count = request.config.mirrors.len(),
         concurrent = request.config.concurrent,
         beatmapset_count = request.beatmapset_ids.len()
@@ -92,7 +93,7 @@ pub fn spawn_search_download(
         span,
         tx,
         move |cancel_rx, defer_rx, skip_rx, emit| async move {
-            run_search(id, request, cancel_rx, defer_rx, skip_rx, emit).await
+            run_ids(id, request, cancel_rx, defer_rx, skip_rx, emit).await
         },
     )
 }
@@ -374,17 +375,19 @@ async fn run_selective(
     Ok(())
 }
 
-async fn run_search(
+async fn run_ids(
     id: DownloadId,
-    request: SearchDownloadRequest,
+    request: IdsDownloadRequest,
     cancel_rx: watch::Receiver<bool>,
     defer_rx: watch::Receiver<u64>,
     skip_rx: watch::Receiver<u64>,
     emit: EmitArc,
 ) -> Result<(), DownloadError> {
-    let SearchDownloadRequest {
+    let IdsDownloadRequest {
         beatmapset_ids,
         label,
+        folder_tag,
+        source,
         config,
         auto_overwrite,
         skip_already_imported,
@@ -407,9 +410,11 @@ async fn run_search(
         config: &config,
         registry: &DOWNLOAD_REGISTRY,
         emit: emit.as_ref(),
-        target: PrepareTarget::Search {
+        target: PrepareTarget::Ids {
             beatmapset_ids: &beatmapset_ids,
             label: &label,
+            folder_tag: &folder_tag,
+            source,
         },
         overwrite: auto_overwrite,
         owned_ids,
@@ -445,7 +450,7 @@ async fn run_search(
         return Ok(());
     };
 
-    // A search run has no collection identity, so it writes no `collection.db`.
+    // A raw-ids run has no collection identity, so it writes no `collection.db`.
     // The persisted failed-maps file is still reconciled: a re-download clears
     // stale failures and this run's fresh failures are recorded.
     let resolved: HashSet<u32> = session

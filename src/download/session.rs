@@ -33,16 +33,15 @@ pub(crate) enum SessionTarget {
         collections: Vec<SelectiveDownloadCollection>,
         collection_names: Vec<String>,
     },
-    /// A search run: no collection metadata, just a display label. The ids live
-    /// on [`DownloadSession::beatmapset_ids`] and there is no `collection.db`
-    /// write, so [`collection`](Self::collection) returns `None` here.
-    Search {
+    /// A raw-ids run (search / filter): no collection metadata, just a display
+    /// label. The ids live on [`DownloadSession::beatmapset_ids`] and there is
+    /// no `collection.db` write, so [`collection`](Self::collection) returns
+    /// `None` here.
+    Ids {
         label: String,
+        source: super::IdsRunSource,
     },
 }
-
-/// Uploader shown on a search run's page (searches have no collection owner).
-const SEARCH_UPLOADER: &str = "search";
 
 impl SessionTarget {
     pub(crate) fn expectation_index(&self, beatmapset_ids: &[u32]) -> Arc<HashSet<u32>> {
@@ -50,7 +49,7 @@ impl SessionTarget {
             SessionTarget::Collection(collection) => {
                 Arc::new(collection.beatmapsets.iter().map(|s| s.id).collect())
             }
-            SessionTarget::Selective { .. } | SessionTarget::Search { .. } => {
+            SessionTarget::Selective { .. } | SessionTarget::Ids { .. } => {
                 Arc::new(beatmapset_ids.iter().copied().collect())
             }
         }
@@ -86,11 +85,11 @@ impl SessionTarget {
                     output_dir: output.display.clone(),
                 });
             }
-            SessionTarget::Search { label } => {
+            SessionTarget::Ids { label, source } => {
                 emit(DownloadEvent::CollectionReady {
                     id,
                     collection_name: label.clone(),
-                    uploader: SEARCH_UPLOADER.to_string(),
+                    uploader: source.uploader().to_string(),
                     total_maps: beatmapset_ids.len(),
                     output_dir: output.display.clone(),
                 });
@@ -98,20 +97,20 @@ impl SessionTarget {
         }
     }
 
-    /// The resolved collection this run downloads, or `None` for a search run
-    /// (searches carry only ids, no collection metadata, and skip `collection.db`).
+    /// The resolved collection this run downloads, or `None` for a raw-ids run
+    /// (search/filter carry only ids, no collection metadata, and skip `collection.db`).
     pub(crate) fn collection(&self) -> Option<&Collection> {
         match self {
             SessionTarget::Collection(collection) | SessionTarget::Selective { collection, .. } => {
                 Some(collection)
             }
-            SessionTarget::Search { .. } => None,
+            SessionTarget::Ids { .. } => None,
         }
     }
 
     pub(crate) fn selective_collections(&self) -> Option<&[SelectiveDownloadCollection]> {
         match self {
-            SessionTarget::Collection(_) | SessionTarget::Search { .. } => None,
+            SessionTarget::Collection(_) | SessionTarget::Ids { .. } => None,
             SessionTarget::Selective { collections, .. } => Some(collections),
         }
     }
@@ -142,11 +141,14 @@ pub(crate) enum PrepareTarget<'a> {
         collections: Vec<SelectiveDownloadCollection>,
         beatmapset_ids: &'a [u32],
     },
-    /// Raw beatmapset ids from a search — no collection fetch. `label` derives
-    /// the per-run output subdir and the page title.
-    Search {
+    /// Raw beatmapset ids from a search or filter run — no collection fetch.
+    /// `label` names the page; `folder_tag` derives the per-run output subdir
+    /// (`<source>-<folder_tag>`).
+    Ids {
         beatmapset_ids: &'a [u32],
         label: &'a str,
+        folder_tag: &'a str,
+        source: super::IdsRunSource,
     },
 }
 
@@ -211,20 +213,24 @@ impl DownloadSession {
                     target_ids,
                 )
             }
-            PrepareTarget::Search {
+            PrepareTarget::Ids {
                 beatmapset_ids,
                 label,
+                folder_tag,
+                source,
             } => {
                 let mut ids = beatmapset_ids.to_vec();
                 ids.sort_unstable();
                 ids.dedup();
-                // Query-derived subdir so different query texts land in different
+                // Query-derived subdir so different queries land in different
                 // dirs (no lock collision). No collection fetch — the ids came
-                // straight from the search results.
-                let output = prepare_output_dir(directory, &search_folder_name(label)).await?;
+                // straight from the search/filter results.
+                let folder = ids_folder_name(source.folder_prefix(), folder_tag);
+                let output = prepare_output_dir(directory, &folder).await?;
                 (
-                    SessionTarget::Search {
+                    SessionTarget::Ids {
                         label: label.to_string(),
+                        source,
                     },
                     output,
                     ids,
@@ -392,27 +398,29 @@ async fn prepare_output_dir(
     })
 }
 
-/// The per-run subdir for a search download: `search-<sanitized query>`, using
+/// The per-run subdir for a raw-ids download: `<prefix>-<sanitized tag>`, using
 /// the same forbidden-character set (`_` replacement) the collection folder
-/// sanitizer applies. An empty/blank label collapses to `search`, so a run always
-/// lands in a valid, recognizable directory.
+/// sanitizer applies. An empty/blank tag collapses to the bare prefix, so a run
+/// always lands in a valid, recognizable directory.
 ///
-/// The name derives from the query TEXT only (not the mode/status/sort filters),
-/// so two searches with different text never share a dir. Two runs of the same
-/// text collide the way two runs of one collection do: concurrent → the second
-/// fails the per-output-dir lock; sequential → they merge into the one dir.
-fn search_folder_name(label: &str) -> String {
-    let mut out = String::with_capacity(label.len() + "search-".len());
-    out.push_str("search-");
-    for c in label.chars() {
+/// Search derives the tag from the query TEXT only (not the mode/status/sort
+/// filters); filter derives it from the preset name or the query hash. Two runs
+/// of the same tag collide the way two runs of one collection do: concurrent →
+/// the second fails the per-output-dir lock; sequential → they merge into the
+/// one dir.
+fn ids_folder_name(prefix: &str, tag: &str) -> String {
+    let mut out = String::with_capacity(prefix.len() + tag.len() + 1);
+    out.push_str(prefix);
+    out.push('-');
+    for c in tag.chars() {
         out.push(match c {
             '/' | '\\' | '\0' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
             other => other,
         });
     }
     let trimmed = out.trim();
-    if trimmed == "search-" {
-        "search".to_string()
+    if trimmed.len() == prefix.len() + 1 {
+        prefix.to_string()
     } else {
         trimmed.to_string()
     }

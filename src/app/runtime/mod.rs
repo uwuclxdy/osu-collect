@@ -1,4 +1,5 @@
 mod auth;
+mod filter;
 mod mirror_probe;
 mod resolve;
 mod scan;
@@ -12,6 +13,7 @@ pub use scan::{
     should_hide_failed_beatmapset, snapshot_diffs_for_scan,
 };
 
+pub use filter::{HomeFilterEvent, handle_home_filter_event};
 pub use resolve::{HomeResolveEvent, handle_home_resolve_event};
 pub use search::{HomeSearchEvent, handle_home_search_event};
 
@@ -31,6 +33,7 @@ use auth::{
     AuthEvent, handle_auth_event, spawn_lazer_login_task, spawn_logout_task, spawn_reissue_task,
     spawn_verification_task,
 };
+use filter::{schedule_filter, schedule_filter_details};
 use mirror_probe::{handle_mirror_probe_event, schedule_probe};
 use resolve::schedule_resolve;
 use scan::{handle_updates_event, spawn_failed_map_recheck_task, spawn_scan_task};
@@ -79,6 +82,7 @@ pub async fn run(
     let (input_tx, mut input_rx) = mpsc::unbounded_channel::<InputEvent>();
     let (home_resolve_tx, mut home_resolve_rx) = mpsc::unbounded_channel::<HomeResolveEvent>();
     let (home_search_tx, mut home_search_rx) = mpsc::unbounded_channel::<HomeSearchEvent>();
+    let (home_filter_tx, mut home_filter_rx) = mpsc::unbounded_channel::<HomeFilterEvent>();
     let (mirror_probe_tx, mut mirror_probe_rx) = mpsc::unbounded_channel::<MirrorProbeEvent>();
     let (update_tx, mut update_rx) = mpsc::unbounded_channel::<UpdateEvent>();
     let input_handle = spawn_input_thread(input_tx.clone());
@@ -93,6 +97,10 @@ pub async fn run(
         search: None,
         search_cancel: None,
         home_search_tx,
+        filter: None,
+        filter_cancel: None,
+        filter_details: None,
+        home_filter_tx,
         mirror_probe: None,
         mirror_probe_cancel: None,
         mirror_probe_tx: mirror_probe_tx.clone(),
@@ -177,6 +185,22 @@ pub async fn run(
                 trace!(?event, "Received home search event");
                 handle_home_search_event(event, &mut app);
             }
+            Some(event) = home_filter_rx.recv() => {
+                trace!(?event, "Received home filter event");
+                // The handler may hand back a follow-up command (the auto-fetch
+                // of the first details page); run it through the same dispatch.
+                let follow_up = handle_home_filter_event(event, &mut app);
+                should_quit = dispatch_command(
+                    follow_up,
+                    &mut app,
+                    &download_tx,
+                    &updates_tx,
+                    &auth_tx,
+                    &update_tx,
+                    &mut active_downloads,
+                    &mut tasks,
+                );
+            }
             Some(event) = mirror_probe_rx.recv() => {
                 trace!(?event, "Received mirror probe event");
                 handle_mirror_probe_event(event, &mut app.home);
@@ -196,6 +220,12 @@ pub async fn run(
         handle.abort();
     }
     if let Some(handle) = tasks.search.take() {
+        handle.abort();
+    }
+    if let Some(handle) = tasks.filter.take() {
+        handle.abort();
+    }
+    if let Some(handle) = tasks.filter_details.take() {
         handle.abort();
     }
     if let Some(handle) = tasks.mirror_probe.take() {
@@ -335,11 +365,13 @@ fn dispatch_command(
             );
             downloads.insert(id, handle);
         }
-        Some(AppCommand::StartSearchDownload { id, request }) => {
-            let handle = download::spawn_search_download(id, request, download_tx.clone());
+        Some(AppCommand::StartIdsDownload { id, request }) => {
+            let source = request.source;
+            let handle = download::spawn_ids_download(id, request, download_tx.clone());
             info!(
                 download_id = id,
-                "Spawned search download from search source"
+                ?source,
+                "Spawned raw-ids download from get-maps source"
             );
             downloads.insert(id, handle);
         }
@@ -410,6 +442,28 @@ fn dispatch_command(
                 &mut tasks.search_cancel,
                 &tasks.home_search_tx,
             );
+        }
+        Some(AppCommand::RunFilter { query }) => {
+            schedule_filter(
+                query,
+                &mut tasks.filter,
+                &mut tasks.filter_cancel,
+                &mut tasks.filter_details,
+                &tasks.home_filter_tx,
+            );
+        }
+        Some(AppCommand::LoadFilterDetails) => {
+            // Pull the next unfetched page off the pager; a dry pager (every
+            // page requested) makes this a no-op.
+            let rewind_to = app.home.filter.details_cursor();
+            if let Some(page) = app.home.filter.next_details_page() {
+                schedule_filter_details(
+                    page,
+                    rewind_to,
+                    &mut tasks.filter_details,
+                    &tasks.home_filter_tx,
+                );
+            }
         }
         Some(AppCommand::ProbeMirrors) => {
             schedule_probe(
@@ -526,6 +580,11 @@ struct BackgroundTasks {
     search: Option<tokio::task::JoinHandle<()>>,
     search_cancel: Option<tokio::sync::watch::Sender<bool>>,
     home_search_tx: mpsc::UnboundedSender<HomeSearchEvent>,
+    filter: Option<tokio::task::JoinHandle<()>>,
+    filter_cancel: Option<tokio::sync::watch::Sender<bool>>,
+    /// The in-flight `beatmapDetails` page task (one page at a time).
+    filter_details: Option<tokio::task::JoinHandle<()>>,
+    home_filter_tx: mpsc::UnboundedSender<HomeFilterEvent>,
     mirror_probe: Option<tokio::task::JoinHandle<()>>,
     mirror_probe_cancel: Option<tokio::sync::watch::Sender<bool>>,
     mirror_probe_tx: mpsc::UnboundedSender<MirrorProbeEvent>,

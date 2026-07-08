@@ -6,6 +6,7 @@ use super::{
     download_history::DownloadHistory,
     downloads_tab::{DownloadsRow, DownloadsTab},
     failed_maps,
+    filter_source::FilterStatusMsg,
     home::{GetMapsSource, HomeField, HomeTab},
     ignored_maps,
     library::LibraryState,
@@ -28,12 +29,13 @@ use crate::{
     core::search::SearchQuery,
     download::{
         DownloadConfig, DownloadEvent, DownloadId, DownloadRequest, DownloadStage,
-        SearchDownloadRequest, SelectiveDownloadCollection, SelectiveDownloadRequest,
+        IdsDownloadRequest, IdsRunSource, SelectiveDownloadCollection, SelectiveDownloadRequest,
     },
     utils,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use fs2::available_space;
+use osu_downloader::filter::FilterQuery;
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::collections::HashSet;
@@ -173,10 +175,10 @@ pub enum AppCommand {
         request: SelectiveDownloadRequest,
     },
     /// Start a fetch-skipping download of raw beatmapset ids picked from search
-    /// results (the ids + checksums are already in hand, so no collection fetch).
-    StartSearchDownload {
+    /// or filter results (the ids are already in hand, so no collection fetch).
+    StartIdsDownload {
         id: DownloadId,
-        request: SearchDownloadRequest,
+        request: IdsDownloadRequest,
     },
     CancelDownload {
         id: DownloadId,
@@ -221,6 +223,13 @@ pub enum AppCommand {
         query: SearchQuery,
         append: bool,
     },
+    /// Run an nzbasic filter fetch (the `filter` CTA).
+    RunFilter {
+        query: FilterQuery,
+    },
+    /// Fetch the next `beatmapDetails` page for the current filter results
+    /// (auto once results land; `m` in the browse loads more).
+    LoadFilterDetails,
     /// Probe latency for all built-in mirrors.
     ProbeMirrors,
     /// Switch to the home tab and focus the output directory field.
@@ -1189,6 +1198,7 @@ impl App {
     fn active_set_browse(&self) -> Option<&SetBrowse> {
         match self.home.source {
             GetMapsSource::Search => Some(&self.home.search.browse),
+            GetMapsSource::Filter => Some(&self.home.filter.browse),
             GetMapsSource::Collection => Some(&self.home.collection_browse),
             GetMapsSource::Update => None,
         }
@@ -1197,6 +1207,7 @@ impl App {
     fn active_set_browse_mut(&mut self) -> Option<&mut SetBrowse> {
         match self.home.source {
             GetMapsSource::Search => Some(&mut self.home.search.browse),
+            GetMapsSource::Filter => Some(&mut self.home.filter.browse),
             GetMapsSource::Collection => Some(&mut self.home.collection_browse),
             GetMapsSource::Update => None,
         }
@@ -1216,6 +1227,33 @@ impl App {
             HomeField::SearchStatus => self.home.search.cycle_status(forward),
             HomeField::SearchSort => self.home.search.cycle_sort(forward),
             _ => {}
+        }
+    }
+
+    /// Cycle the focused filter-source chip (`space`/`enter`).
+    fn cycle_filter_chip(&mut self, forward: bool) {
+        match self.home.focus {
+            HomeField::FilterPreset => self.home.filter.cycle_preset(forward),
+            HomeField::FilterSpecial => self.home.filter.cycle_special(forward),
+            HomeField::FilterMode => self.home.filter.cycle_mode(forward),
+            HomeField::FilterStatus => self.home.filter.cycle_status(forward),
+            HomeField::FilterSort => self.home.filter.cycle_sort(forward),
+            _ => {}
+        }
+    }
+
+    /// Build + dispatch a fresh filter fetch from the form. An invalid input
+    /// (bad range / limit) surfaces as a toast and nothing dispatches.
+    fn request_filter(&mut self) -> Option<AppCommand> {
+        match self.home.filter.build_query() {
+            Ok(query) => {
+                self.home.filter.status_msg = FilterStatusMsg::Loading;
+                Some(AppCommand::RunFilter { query })
+            }
+            Err(reason) => {
+                self.toast_warn(reason);
+                None
+            }
         }
     }
 
@@ -1273,6 +1311,13 @@ impl App {
             'm' if self.home.source == GetMapsSource::Search => {
                 return self.load_more_search();
             }
+            // Filter results are all in hand; `m` enriches the next page of
+            // rows with `beatmapDetails` metadata instead.
+            'm' if self.home.source == GetMapsSource::Filter
+                && self.home.filter.has_more_details() =>
+            {
+                return Some(AppCommand::LoadFilterDetails);
+            }
             _ => {}
         }
         None
@@ -1282,7 +1327,7 @@ impl App {
     /// routed by source:
     /// - collection: the whole resolved collection, or — when a proper subset is
     ///   checked in browse&pick — the picked sets via the selective path.
-    /// - search: the picked results via the fetch-skipping [`SearchDownloadRequest`].
+    /// - search: the picked results via the fetch-skipping [`IdsDownloadRequest`].
     /// - update: every missing set of the checked collections via the selective path.
     fn dispatch_form_download(&mut self) -> Option<AppCommand> {
         match self.home.source {
@@ -1297,7 +1342,11 @@ impl App {
             }
             GetMapsSource::Search => {
                 let (id, request) = self.request_search_download()?;
-                Some(AppCommand::StartSearchDownload { id, request })
+                Some(AppCommand::StartIdsDownload { id, request })
+            }
+            GetMapsSource::Filter => {
+                let (id, request) = self.request_filter_download()?;
+                Some(AppCommand::StartIdsDownload { id, request })
             }
             GetMapsSource::Update => {
                 let (id, request) = self.request_selective_download()?;
@@ -1338,7 +1387,7 @@ impl App {
     }
 
     /// Build a fetch-skipping search download from the picked search results.
-    pub fn request_search_download(&mut self) -> Option<(DownloadId, SearchDownloadRequest)> {
+    pub fn request_search_download(&mut self) -> Option<(DownloadId, IdsDownloadRequest)> {
         let beatmapset_ids = self.home.search.browse.selected_ids();
         if beatmapset_ids.is_empty() {
             self.toast_warn("no beatmaps selected for download");
@@ -1370,9 +1419,60 @@ impl App {
                 .with_detail(format!("{} beatmaps", beatmapset_ids.len())),
         );
 
-        let request = SearchDownloadRequest {
+        let request = IdsDownloadRequest {
+            beatmapset_ids,
+            // The search subdir tag is the same query-derived label as the title.
+            folder_tag: label.clone(),
+            label,
+            source: IdsRunSource::Search,
+            config,
+            auto_overwrite: self.home.auto_overwrite,
+            skip_already_imported: self.config.skip_already_imported,
+            osu_client: self.library.client_type,
+            osu_path: self.library.osu_path(),
+        };
+        Some((id, request))
+    }
+
+    /// Build a fetch-skipping filter download from the picked filter results.
+    pub fn request_filter_download(&mut self) -> Option<(DownloadId, IdsDownloadRequest)> {
+        let beatmapset_ids = self.home.filter.browse.selected_ids();
+        if beatmapset_ids.is_empty() {
+            self.toast_warn("no beatmaps selected for download");
+            return None;
+        }
+        if self.home.mirror_count() == 0 {
+            self.toast_warn("no mirrors enabled (configure in the config tab)");
+            return None;
+        }
+        if self.downloads.len() >= usize::MAX - 1 {
+            self.toast_err("too many downloads queued");
+            return None;
+        }
+
+        let label = self.home.filter.run_label();
+        let folder_tag = self.home.filter.folder_tag();
+        let config = self.build_run_config();
+        let id = self.next_download_id;
+        self.next_download_id += 1;
+
+        let concurrent = usize::from(config.concurrent.max(1));
+        let mut page = CollectionPage::new(id, format!("filter \"{label}\""), concurrent);
+        page.stage = DownloadStage::Resolving;
+        page.download_config = Some(config.clone());
+        self.downloads.push(page);
+        self.focus_new_download_run();
+
+        self.push_toast(
+            Toast::success(format!("queued filter download #{id}"))
+                .with_detail(format!("{} beatmaps", beatmapset_ids.len())),
+        );
+
+        let request = IdsDownloadRequest {
             beatmapset_ids,
             label,
+            folder_tag,
+            source: IdsRunSource::Filter,
             config,
             auto_overwrite: self.home.auto_overwrite,
             skip_already_imported: self.config.skip_already_imported,
@@ -2111,6 +2211,17 @@ impl App {
                             | HomeField::SearchStatus
                             | HomeField::SearchSort => self.cycle_search_chip(true),
                             HomeField::SearchRun => return self.request_search(),
+                            // Same guarded-descend as `SearchBrowse`: inert until
+                            // fresh results still matching the inputs are loaded.
+                            HomeField::FilterBrowse => {
+                                if !self.home.filter.browse.rows.is_empty()
+                                    && self.home.filter.results_current()
+                                {
+                                    self.home.filter.browse.descend();
+                                }
+                            }
+                            field if field.is_filter_chip() => self.cycle_filter_chip(true),
+                            HomeField::FilterRun => return self.request_filter(),
                             field if field.is_toggle() => self.home.toggle_current(),
                             // Text inputs and the threads stepper have nothing to activate.
                             _ => {}
@@ -2184,6 +2295,8 @@ impl App {
                         self.home.cycle_source(true);
                     } else if self.home.focus.is_search_chip() {
                         self.cycle_search_chip(true);
+                    } else if self.home.focus.is_filter_chip() {
+                        self.cycle_filter_chip(true);
                     } else if self.home.focus.is_toggle() {
                         self.home.toggle_current();
                     }

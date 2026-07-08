@@ -9,8 +9,8 @@ use ratatui::{
 
 use super::widgets;
 use super::{
-    accent, danger, focused_label, line, search_source, set_browse, success, text_dim, text_faint,
-    update_source, warning,
+    accent, danger, filter_source, focused_label, line, search_source, set_browse, success,
+    text_dim, text_faint, update_source, warning,
 };
 use crate::utils::pretty_path;
 use std::path::Path;
@@ -83,6 +83,20 @@ fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab) -> boo
             );
             true
         }
+        GetMapsSource::Filter if form.filter.browse.is_browsing() => {
+            let status = widgets::ratio_line(
+                form.filter.browse.selected_count(),
+                form.filter.browse.rows.len(),
+            );
+            set_browse::render(
+                frame,
+                area,
+                &form.filter.browse,
+                filter_source::BROWSE_LIST_TITLE,
+                status,
+            );
+            true
+        }
         GetMapsSource::Collection if form.collection_browse.is_browsing() => {
             let status = widgets::ratio_line(
                 form.collection_browse.selected_count(),
@@ -106,6 +120,17 @@ fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab) -> boo
 fn search_cursor_col(form: &HomeTab, editing: bool) -> Option<u16> {
     (editing && form.focus == HomeField::SearchQuery)
         .then(|| widgets::input_cursor_col(&form.search.query, 0))
+}
+
+/// Caret column for whichever filter-source input is focused in edit mode; the
+/// offset matches the aligned label width its rows render with.
+fn filter_cursor_col(form: &HomeTab, editing: bool) -> Option<u16> {
+    (editing && form.focus.is_filter_input())
+        .then(|| {
+            form.focused_input()
+                .map(|input| widgets::input_cursor_col(input, filter_source::LABEL_WIDTH))
+        })
+        .flatten()
 }
 
 /// Compact render: all focusable fields without section headers, spacers, or help lines.
@@ -162,6 +187,25 @@ fn render_compact(
         GetMapsSource::Search => {
             search_source::push_form_rows(&mut items, &form.search, focus, editing, tick);
             let cursor_col = search_cursor_col(form, editing);
+            let (items, focused_index) = items.into_parts();
+            widgets::render_scrollable_panel(
+                frame,
+                area,
+                PANEL_TITLE,
+                None,
+                items,
+                focused_index,
+                !focus.is_button(),
+                cursor_col,
+                true,
+                true,
+                &form.list_offset,
+            );
+            return;
+        }
+        GetMapsSource::Filter => {
+            filter_source::push_form_rows(&mut items, &form.filter, focus, editing, tick);
+            let cursor_col = filter_cursor_col(form, editing);
             let (items, focused_index) = items.into_parts();
             widgets::render_scrollable_panel(
                 frame,
@@ -377,6 +421,25 @@ fn render_content(
             );
             return;
         }
+        GetMapsSource::Filter => {
+            filter_source::push_form_rows(&mut items, &form.filter, focus, editing, tick);
+            let cursor_col = filter_cursor_col(form, editing);
+            let (items, focused_index) = items.into_parts();
+            widgets::render_scrollable_panel(
+                frame,
+                area,
+                PANEL_TITLE,
+                None,
+                items,
+                focused_index,
+                !focus.is_button(),
+                cursor_col,
+                true,
+                true,
+                &form.list_offset,
+            );
+            return;
+        }
     }
 
     let active_section = home_section(focus);
@@ -556,6 +619,11 @@ fn home_section(field: HomeField) -> &'static str {
         // their own bodies, not the collection sections, so they light no header.
         Download | CollectionBrowse | UpdateOsuPath | UpdateScan | UpdateBrowse => SECTION_NONE,
         SearchQuery | SearchMode | SearchStatus | SearchSort | SearchRun | SearchBrowse => {
+            SECTION_NONE
+        }
+        FilterPreset | FilterSpecial | FilterMode | FilterStatus | FilterStars | FilterAr
+        | FilterCs | FilterOd | FilterHp | FilterBpm | FilterLength | FilterArtist
+        | FilterCreator | FilterTitle | FilterSort | FilterLimit | FilterRun | FilterBrowse => {
             SECTION_NONE
         }
     }

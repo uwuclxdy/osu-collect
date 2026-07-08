@@ -457,8 +457,9 @@ impl Default for SearchSource {
     }
 }
 
-/// Step an index forward/backward within `len`, wrapping at both ends.
-fn cycle_idx(idx: usize, len: usize, forward: bool) -> usize {
+/// Step an index forward/backward within `len`, wrapping at both ends. Shared
+/// with the filter source's chips.
+pub(crate) fn cycle_idx(idx: usize, len: usize, forward: bool) -> usize {
     if len == 0 {
         return 0;
     }

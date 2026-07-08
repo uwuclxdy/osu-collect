@@ -47,6 +47,8 @@ const HINT_SOURCE: &str = "↵ switch source";
 const HINT_CYCLE: &str = "space cycle";
 /// Search form's `search` CTA: run the query.
 const HINT_SEARCH: &str = "↵ search";
+
+const HINT_FILTER: &str = "↵ filter";
 /// Search browse (list pane): load the next page of results.
 const HINT_MORE: &str = "m more";
 const HINT_ENTER_TOGGLE: &str = "↵ toggle";
@@ -289,6 +291,7 @@ fn home_tab_hints(form: &HomeTab) -> (Vec<&'static str>, Option<&'static str>) {
 fn active_set_browse(form: &HomeTab) -> Option<&crate::app::SetBrowse> {
     match form.source {
         GetMapsSource::Search if form.search.browse.is_browsing() => Some(&form.search.browse),
+        GetMapsSource::Filter if form.filter.browse.is_browsing() => Some(&form.filter.browse),
         GetMapsSource::Collection if form.collection_browse.is_browsing() => {
             Some(&form.collection_browse)
         }
@@ -311,8 +314,12 @@ fn set_browse_hints(
         HINT_SELECT_ALL_NONE,
         HINT_FOCUS_PREVIEW,
     ];
-    // `m` loads the next page of a search that still has one.
+    // `m` loads the next page of a search that still has one, or the next
+    // details page of a filter result set.
     if form.source == GetMapsSource::Search && form.search.next_cursor.is_some() {
+        segments.push(HINT_MORE);
+    }
+    if form.source == GetMapsSource::Filter && form.filter.has_more_details() {
         segments.push(HINT_MORE);
     }
     (segments, None)
@@ -323,10 +330,13 @@ fn home_form_hints(form: &HomeTab) -> Vec<&'static str> {
     match form.focus {
         HomeField::Source => segments.push(HINT_SOURCE),
         HomeField::Download => segments.push(HINT_ENTER_DOWNLOAD),
-        HomeField::CollectionBrowse | HomeField::SearchBrowse => segments.push(HINT_ENTER_OPEN),
+        HomeField::CollectionBrowse | HomeField::SearchBrowse | HomeField::FilterBrowse => {
+            segments.push(HINT_ENTER_OPEN)
+        }
         HomeField::Mirrors => segments.push(HINT_ENTER_OPEN),
         HomeField::SearchRun => segments.push(HINT_SEARCH),
-        f if f.is_search_chip() => segments.push(HINT_CYCLE),
+        HomeField::FilterRun => segments.push(HINT_FILTER),
+        f if f.is_search_chip() || f.is_filter_chip() => segments.push(HINT_CYCLE),
         f if f.is_stepper() => segments.push(HINT_PLUS_MINUS),
         f if f.is_toggle() => segments.push(HINT_ENTER_TOGGLE),
         f if f.is_text_input() => segments.push(HINT_EDIT),

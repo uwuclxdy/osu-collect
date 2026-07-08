@@ -337,7 +337,8 @@ fn switching_source_preserves_collection_input() {
     app.home.focus = HomeField::Source;
     app.handle_key(press(KeyCode::Char(' '))); // collection → update
     app.handle_key(press(KeyCode::Char(' '))); // update → search
-    app.handle_key(press(KeyCode::Char(' '))); // search → collection
+    app.handle_key(press(KeyCode::Char(' '))); // search → filter
+    app.handle_key(press(KeyCode::Char(' '))); // filter → collection
     assert_eq!(app.home.source, GetMapsSource::Collection);
     assert_eq!(app.home.collection.value, "12345");
 }
@@ -1297,4 +1298,103 @@ fn reopening_collection_browse_preserves_picks() {
         2,
         "re-opening the same collection preserves the user's selection"
     );
+}
+
+// ── filter source ─────────────────────────────────────────────────────────────
+
+#[test]
+fn filter_cta_emits_run_filter_and_rejects_bad_ranges() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Filter;
+    app.home.focus = HomeField::FilterRun;
+
+    let cmd = app.handle_key(press(KeyCode::Enter));
+    assert!(
+        matches!(cmd, Some(AppCommand::RunFilter { .. })),
+        "the filter CTA dispatches a fetch, got {cmd:?}"
+    );
+
+    // An invalid range surfaces as a toast, nothing dispatches.
+    app.home.filter.stars.set_value("nope");
+    let cmd = app.handle_key(press(KeyCode::Enter));
+    assert!(cmd.is_none(), "a bad range must not dispatch, got {cmd:?}");
+}
+
+#[test]
+fn filter_chips_cycle_on_space_and_presets_seed_fields() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Filter;
+
+    app.home.focus = HomeField::FilterSpecial;
+    app.handle_key(press(KeyCode::Char(' ')));
+    assert_eq!(app.home.filter.special_label(), "farm");
+
+    // Preset cycling seeds the editable fields (space steps none → all ranked
+    // → loved → farm; the farm seed pins mode to osu and resets special).
+    app.home.focus = HomeField::FilterPreset;
+    for _ in 0..3 {
+        app.handle_key(press(KeyCode::Char(' ')));
+    }
+    assert_eq!(app.home.filter.preset_label(), "farm");
+    assert_eq!(app.home.filter.mode_label(), "osu");
+    assert_eq!(app.home.filter.special_label(), "farm");
+}
+
+#[test]
+fn m_in_filter_browse_loads_more_details() {
+    use osu_collect::app::{BrowseRow, GetMapsSource};
+    use std::collections::HashMap;
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Filter;
+    // 300 diff ids = two details pages; the first auto-fetch already pulled one.
+    app.home
+        .filter
+        .set_results((0..300).collect(), HashMap::new());
+    let _ = app.home.filter.next_details_page();
+    app.home
+        .filter
+        .browse
+        .set_rows(vec![BrowseRow { id: 10, meta: None }]);
+    app.home.filter.browse.descend();
+
+    let cmd = app.handle_key(press(KeyCode::Char('m')));
+    assert!(
+        matches!(cmd, Some(AppCommand::LoadFilterDetails)),
+        "`m` in the filter browse loads the next details page, got {cmd:?}"
+    );
+
+    // Drain the pager: `m` becomes a no-op once every page was requested.
+    let _ = app.home.filter.next_details_page();
+    let cmd = app.handle_key(press(KeyCode::Char('m')));
+    assert!(cmd.is_none(), "a dry pager must not dispatch, got {cmd:?}");
+}
+
+#[test]
+fn request_filter_download_uses_label_tag_and_selected_ids() {
+    use osu_collect::app::{BrowseRow, GetMapsSource};
+    use osu_collect::download::IdsRunSource;
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Filter;
+    // Seed the farm preset so the label + folder tag read "farm".
+    app.home.focus = osu_collect::app::HomeField::FilterPreset;
+    for _ in 0..3 {
+        app.handle_key(press(KeyCode::Char(' ')));
+    }
+    app.home.filter.browse.set_rows(vec![
+        BrowseRow { id: 10, meta: None },
+        BrowseRow { id: 20, meta: None },
+    ]);
+    app.home.filter.browse.set_all_selected(true);
+
+    let (_, request) = app
+        .request_filter_download()
+        .expect("a selection with mirrors enabled builds a request");
+    assert_eq!(request.source, IdsRunSource::Filter);
+    assert_eq!(request.label, "farm");
+    assert_eq!(request.folder_tag, "farm");
+    let mut ids = request.beatmapset_ids.clone();
+    ids.sort_unstable();
+    assert_eq!(ids, vec![10, 20]);
 }

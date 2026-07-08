@@ -1,5 +1,6 @@
 use super::{
     custom_mirrors::CustomMirrorList,
+    filter_source::FilterSource,
     first_field, last_field,
     messages::AppMessage,
     next_field, prev_field,
@@ -25,20 +26,20 @@ pub enum ResolveState {
 }
 
 /// Which get-maps source the tab is showing. The strip is the first focusable
-/// row; `←`/`→` cycle it. [`Collection`](GetMapsSource::Collection) and
-/// [`Update`](GetMapsSource::Update) are wired; `Search` renders a placeholder
-/// body until its phase lands.
+/// row; `space`/`enter` cycle it. All four sources are wired.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GetMapsSource {
     Search,
+    Filter,
     Collection,
     Update,
 }
 
 impl GetMapsSource {
-    /// Strip order, left to right.
-    pub const ALL: [GetMapsSource; 3] = [
+    /// Strip order, left to right (the discovery sources sit adjacent).
+    pub const ALL: [GetMapsSource; 4] = [
         GetMapsSource::Search,
+        GetMapsSource::Filter,
         GetMapsSource::Collection,
         GetMapsSource::Update,
     ];
@@ -47,6 +48,7 @@ impl GetMapsSource {
     pub fn label(self) -> &'static str {
         match self {
             GetMapsSource::Search => "search",
+            GetMapsSource::Filter => "filter",
             GetMapsSource::Collection => "collection",
             GetMapsSource::Update => "update",
         }
@@ -237,6 +239,37 @@ pub enum HomeField {
     /// The search source's `view N maps` button — reopens the results browse
     /// without re-running the query. Enabled once results are loaded.
     SearchBrowse,
+    /// The filter source's preset seed-macro chip (`space`/`enter` cycle it;
+    /// each step resets + seeds the criteria fields).
+    FilterPreset,
+    /// The filter source's special-tag chip (farm / stream / ranked mapper —
+    /// nzbasic-only flags).
+    FilterSpecial,
+    /// The filter source's game-mode chip.
+    FilterMode,
+    /// The filter source's rank-status chip.
+    FilterStatus,
+    /// The filter source's min-max range inputs (per-diff attributes).
+    FilterStars,
+    FilterAr,
+    FilterCs,
+    FilterOd,
+    FilterHp,
+    FilterBpm,
+    FilterLength,
+    /// The filter source's substring text inputs.
+    FilterArtist,
+    FilterCreator,
+    FilterTitle,
+    /// The filter source's sort chip (curated column+direction presets).
+    FilterSort,
+    /// The filter source's diff-row limit input (default 500).
+    FilterLimit,
+    /// The filter source's `filter` CTA button.
+    FilterRun,
+    /// The filter source's `view N maps` button — reopens the results browse
+    /// without re-fetching. Enabled once fresh results are loaded.
+    FilterBrowse,
 }
 
 /// Focus order when the collection source is active: the source strip, then the
@@ -273,6 +306,33 @@ const SEARCH_FIELDS: &[HomeField] = &[
     HomeField::Download,
 ];
 
+/// Focus order for the filter source: the strip, the preset seed-macro, the
+/// criteria (chips → ranges → texts), the sort/limit knobs, then the CTA row.
+/// Like search, the run settings (folder / mirrors / threads / overwrite) are
+/// borrowed silently from the collection source's shared `self.home.*` fields.
+const FILTER_FIELDS: &[HomeField] = &[
+    HomeField::Source,
+    HomeField::FilterPreset,
+    HomeField::FilterSpecial,
+    HomeField::FilterMode,
+    HomeField::FilterStatus,
+    HomeField::FilterStars,
+    HomeField::FilterAr,
+    HomeField::FilterCs,
+    HomeField::FilterOd,
+    HomeField::FilterHp,
+    HomeField::FilterBpm,
+    HomeField::FilterLength,
+    HomeField::FilterArtist,
+    HomeField::FilterCreator,
+    HomeField::FilterTitle,
+    HomeField::FilterSort,
+    HomeField::FilterLimit,
+    HomeField::FilterRun,
+    HomeField::FilterBrowse,
+    HomeField::Download,
+];
+
 /// Focus order for the update source form: the strip, the osu! path input, the
 /// scan CTA, the `view N maps` button, then the `download N selected` button.
 /// Descending into the browse suspends this nav (the app gates it on
@@ -294,6 +354,24 @@ impl HomeField {
                 | HomeField::Directory
                 | HomeField::UpdateOsuPath
                 | HomeField::SearchQuery
+        ) || self.is_filter_input()
+    }
+
+    /// The filter source's text-editable fields (ranges, texts, limit).
+    pub fn is_filter_input(self) -> bool {
+        matches!(
+            self,
+            HomeField::FilterStars
+                | HomeField::FilterAr
+                | HomeField::FilterCs
+                | HomeField::FilterOd
+                | HomeField::FilterHp
+                | HomeField::FilterBpm
+                | HomeField::FilterLength
+                | HomeField::FilterArtist
+                | HomeField::FilterCreator
+                | HomeField::FilterTitle
+                | HomeField::FilterLimit
         )
     }
 
@@ -314,6 +392,18 @@ impl HomeField {
         )
     }
 
+    /// Whether this is a filter-source chip that `space`/`enter` cycle.
+    pub fn is_filter_chip(self) -> bool {
+        matches!(
+            self,
+            HomeField::FilterPreset
+                | HomeField::FilterSpecial
+                | HomeField::FilterMode
+                | HomeField::FilterStatus
+                | HomeField::FilterSort
+        )
+    }
+
     /// Whether this field renders as a self-styling CTA button (`button_item`),
     /// which paints its own pill fill. The list's row-wide `bg_hover` highlight
     /// must be suppressed on such a row, else the tint doubles up with the pill
@@ -328,6 +418,8 @@ impl HomeField {
                 | HomeField::UpdateBrowse
                 | HomeField::SearchRun
                 | HomeField::SearchBrowse
+                | HomeField::FilterRun
+                | HomeField::FilterBrowse
         )
     }
 }
@@ -386,6 +478,9 @@ pub struct HomeTab {
     /// State for the [`GetMapsSource::Search`] source: the query form + results
     /// browse. Kept here so it survives source-strip switches (keep-both).
     pub search: SearchSource,
+    /// State for the [`GetMapsSource::Filter`] source: the nzbasic attribute
+    /// filter form + results browse (keep-both, like `search`).
+    pub filter: FilterSource,
     /// Collection browse&pick browse state (the collection source's
     /// `view N maps` CTA). Fed from [`resolved_collection`](Self::resolved_collection);
     /// separate from `search.browse` so each source's selection persists.
@@ -467,6 +562,7 @@ impl HomeTab {
             list_offset: std::cell::Cell::new(0),
             update: UpdateSource::new(),
             search: SearchSource::new(),
+            filter: FilterSource::new(),
             collection_browse: SetBrowse::new(),
             collection_browse_id: None,
         }
@@ -568,6 +664,7 @@ impl HomeTab {
             GetMapsSource::Collection => COLLECTION_FIELDS,
             GetMapsSource::Update => UPDATE_FIELDS,
             GetMapsSource::Search => SEARCH_FIELDS,
+            GetMapsSource::Filter => FILTER_FIELDS,
         }
     }
 
@@ -713,6 +810,17 @@ impl HomeTab {
             HomeField::Collection => Some(&self.collection),
             HomeField::Directory => Some(&self.directory),
             HomeField::SearchQuery => Some(&self.search.query),
+            HomeField::FilterStars => Some(&self.filter.stars),
+            HomeField::FilterAr => Some(&self.filter.ar),
+            HomeField::FilterCs => Some(&self.filter.cs),
+            HomeField::FilterOd => Some(&self.filter.od),
+            HomeField::FilterHp => Some(&self.filter.hp),
+            HomeField::FilterBpm => Some(&self.filter.bpm),
+            HomeField::FilterLength => Some(&self.filter.length),
+            HomeField::FilterArtist => Some(&self.filter.artist),
+            HomeField::FilterCreator => Some(&self.filter.creator),
+            HomeField::FilterTitle => Some(&self.filter.title),
+            HomeField::FilterLimit => Some(&self.filter.limit),
             _ => None,
         }
     }
@@ -722,6 +830,17 @@ impl HomeTab {
             HomeField::Collection => Some(&mut self.collection),
             HomeField::Directory => Some(&mut self.directory),
             HomeField::SearchQuery => Some(&mut self.search.query),
+            HomeField::FilterStars => Some(&mut self.filter.stars),
+            HomeField::FilterAr => Some(&mut self.filter.ar),
+            HomeField::FilterCs => Some(&mut self.filter.cs),
+            HomeField::FilterOd => Some(&mut self.filter.od),
+            HomeField::FilterHp => Some(&mut self.filter.hp),
+            HomeField::FilterBpm => Some(&mut self.filter.bpm),
+            HomeField::FilterLength => Some(&mut self.filter.length),
+            HomeField::FilterArtist => Some(&mut self.filter.artist),
+            HomeField::FilterCreator => Some(&mut self.filter.creator),
+            HomeField::FilterTitle => Some(&mut self.filter.title),
+            HomeField::FilterLimit => Some(&mut self.filter.limit),
             _ => None,
         }
     }

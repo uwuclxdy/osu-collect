@@ -5,6 +5,7 @@ pub(crate) mod banner;
 mod config;
 mod download;
 mod downloads;
+mod filter_source;
 mod footer;
 mod header;
 mod home;
