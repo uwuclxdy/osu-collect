@@ -20,7 +20,7 @@ osu!collect is a terminal app (TUI) that **downloads osu! beatmap collections fr
 <div align="center">
 
 <img src="media/osu-collect-home.png" alt="osu!collect download tab with live per-map progress, speed and ETA" width="49%">
-<img src="media/osu-collect-downloading.png" alt="osu!collect updates tab showing missing and removed maps" width="49%">
+<img src="media/osu-collect-downloading.png" alt="osu!collect update scan showing missing and removed maps" width="49%">
 
 </div>
 
@@ -120,13 +120,13 @@ Text fields support full caret editing: <kbd>home</kbd>, <kbd>end</kbd>, <kbd>de
 
 **Vim keys** (off by default, toggle on the config tab): <kbd>h</kbd> <kbd>j</kbd> <kbd>k</kbd> <kbd>l</kbd> move, <kbd>g</kbd><kbd>g</kbd> / <kbd>G</kbd> jump to top / bottom, <kbd>ctrl</kbd>+<kbd>u</kbd> / <kbd>ctrl</kbd>+<kbd>d</kbd> page, and <kbd>i</kbd> / <kbd>a</kbd> start editing the focused field. A field in edit mode types literally; <kbd>esc</kbd> leaves it. When enabled, a <kbd>vim</kbd> marker shows in the footer.
 
-### Download tabs
+### Downloads tab
 
-Each queued collection gets its own tab with live per-map progress, speed and ETA, rate-limit countdowns, and a failure summary with reasons. Failed maps persist between runs. Retry them with <kbd>r</kbd>, or accept the prompt on your next download of that collection (configurable).
+Every run lives on the downloads tab, active ones first, then past ones (including cancelled) that survive restarts. Open a run with <kbd>↵</kbd> for live per-map progress, speed and ETA, rate-limit countdowns, and a failure summary with reasons. Failed maps persist between runs. Retry them with <kbd>r</kbd>, or accept the prompt on your next download of that collection (configurable). Starting a download keeps you where you are by default; turn on `jump to downloads on launch` in config to land here instead.
 
-### Updates tab
+### Updating collections
 
-Tracks every collection you've downloaded, re-checks them against osu!collector, and shows what's missing or was removed. Pick exactly which maps to fetch, so keeping a collection current never means redownloading it. If a map you already own keeps showing as missing, mark it installed with <kbd>i</kbd> (or <kbd>I</kbd> for every shown map) to hide it; a later scan that actually finds it on disk un-hides it automatically. Your osu! install path and client choice now persist across restarts.
+The get maps tab's `update` source re-checks every collection you've downloaded against osu!collector and shows what's missing or was removed. Check the collections you want and download their missing maps, so keeping a collection current never means redownloading it. If a map you already own keeps showing as missing, mark it installed with <kbd>i</kbd> (or <kbd>I</kbd> for the whole collection) to hide it; a later scan that actually finds it on disk un-hides it automatically. Your osu! install path and client choice persist across restarts.
 
 ### Logging in with your osu! account (optional)
 

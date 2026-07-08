@@ -47,6 +47,9 @@ theme = "full"
 # vim navigation keymap (hjkl move, gg/G top/bottom, ctrl+u/d page, i/a edit).
 # off by default; also toggleable live on the config tab.
 vim_keys = false
+# switch to the downloads tab when a download starts.
+# off by default (stay on the current tab); also toggleable live on the config tab.
+jump_to_downloads = false
 
 [logging]
 # structured logging is disabled by default, set to true to enable tracing output
