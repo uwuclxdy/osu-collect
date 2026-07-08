@@ -454,7 +454,7 @@ fn focus_section(field: ConfigField) -> Option<&'static str> {
         AuthChip => return None,
         Theme | VimKeys | JumpToDownloads => SECTION_DISPLAY,
         MirrorOsuDirect | MirrorNerinyan | MirrorSayobot | MirrorNekoha | MirrorBeatconnect
-        | MirrorOsudl | MirrorCatboy | MirrorHinamizawa | MirrorOsuOfficial
+        | MirrorOsudl | MirrorCatboy | MirrorHinamizawa | MirrorOsuOfficial | MirrorNzbasic
         | MirrorCustomUrl(_) => SECTION_MIRRORS,
         DownloadThreads
         | DownloadVideo

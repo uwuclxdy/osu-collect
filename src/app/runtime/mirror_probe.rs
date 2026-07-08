@@ -53,6 +53,8 @@ pub fn probe_url(kind: MirrorKind) -> Option<&'static str> {
         MirrorKind::Hinamizawa => Some("https://mirror.hinamizawa.ai/"),
         // osu! official site root (the download endpoint itself needs auth)
         MirrorKind::OsuApi => Some("https://osu.ppy.sh/"),
+        // nzbasic CDN root (404s, but any response is a latency reading)
+        MirrorKind::Nzbasic => Some("https://direct.nzbasic.com/"),
         MirrorKind::Custom => None,
     }
 }

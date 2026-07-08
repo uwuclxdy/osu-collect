@@ -42,6 +42,7 @@ pub enum ConfigField {
     MirrorCatboy,
     MirrorHinamizawa,
     MirrorOsuOfficial,
+    MirrorNzbasic,
     /// One custom-mirror URL row, indexed into [`CustomMirrorList`]. The last
     /// index is always the empty "add new" entry slot.
     MirrorCustomUrl(usize),
@@ -114,6 +115,7 @@ pub struct ConfigTab {
     pub catboy: bool,
     pub hinamizawa: bool,
     pub osu_official: bool,
+    pub nzbasic: bool,
     pub custom_mirrors: CustomMirrorList,
     pub login_state: AuthLoginState,
     pub threads: InputField,
@@ -162,6 +164,7 @@ impl ConfigTab {
             catboy: config.mirror.catboy,
             hinamizawa: config.mirror.hinamizawa,
             osu_official: config.mirror.osu_official,
+            nzbasic: config.mirror.nzbasic,
             custom_mirrors: CustomMirrorList::from_templates(&config.mirror.custom_templates()),
             login_state: login_state(auth_loaded),
             threads: threads_field(&config.download),
@@ -234,6 +237,7 @@ impl ConfigTab {
             MirrorKind::Catboy => self.catboy,
             MirrorKind::Hinamizawa => self.hinamizawa,
             MirrorKind::OsuApi => self.osu_official,
+            MirrorKind::Nzbasic => self.nzbasic,
             MirrorKind::Custom => false,
         }
     }
@@ -437,6 +441,7 @@ impl ConfigTab {
             ConfigField::MirrorCatboy => self.catboy = !self.catboy,
             ConfigField::MirrorHinamizawa => self.hinamizawa = !self.hinamizawa,
             ConfigField::MirrorOsuOfficial => self.osu_official = !self.osu_official,
+            ConfigField::MirrorNzbasic => self.nzbasic = !self.nzbasic,
             ConfigField::DownloadVideo => self.video = !self.video,
             ConfigField::DownloadArchiveValidation => self.cycle_archive_validation(),
             ConfigField::RetryFailedOnDownload => self.cycle_retry_failed_on_download(),
@@ -504,6 +509,7 @@ impl ConfigTab {
             catboy: self.catboy,
             hinamizawa: self.hinamizawa,
             osu_official: self.osu_official,
+            nzbasic: self.nzbasic,
             urls: self.custom_mirrors.nonempty_templates(),
             // Migrate any legacy single URL into `urls` on the next save.
             url: None,
@@ -670,6 +676,7 @@ fn mirror_config_field(kind: MirrorKind) -> Option<ConfigField> {
         MirrorKind::Catboy => ConfigField::MirrorCatboy,
         MirrorKind::Hinamizawa => ConfigField::MirrorHinamizawa,
         MirrorKind::OsuApi => ConfigField::MirrorOsuOfficial,
+        MirrorKind::Nzbasic => ConfigField::MirrorNzbasic,
         MirrorKind::Custom => return None,
     })
 }
@@ -687,6 +694,7 @@ fn mirror_kind_of(field: ConfigField) -> Option<MirrorKind> {
         ConfigField::MirrorCatboy => MirrorKind::Catboy,
         ConfigField::MirrorHinamizawa => MirrorKind::Hinamizawa,
         ConfigField::MirrorOsuOfficial => MirrorKind::OsuApi,
+        ConfigField::MirrorNzbasic => MirrorKind::Nzbasic,
         _ => return None,
     })
 }

@@ -130,6 +130,10 @@ pub struct MirrorConfig {
     /// `lazer`-scope login and is rate-limited to 10–20 downloads/hour.
     #[serde(default)]
     pub osu_official: bool,
+    /// nzbasic batch-beatmap-downloader CDN. Off by default: a solo dev's
+    /// free instance, and coverage is only what its backend has cached.
+    #[serde(default)]
+    pub nzbasic: bool,
     /// User-defined custom mirror URL templates, each containing `{id}`. Tried
     /// after the built-ins, in list order.
     #[serde(default)]
@@ -248,6 +252,7 @@ impl Default for MirrorConfig {
             catboy: true,
             hinamizawa: false,
             osu_official: false,
+            nzbasic: false,
             urls: Vec::new(),
             url: None,
             order: Vec::new(),
@@ -308,6 +313,7 @@ impl MirrorConfig {
             || self.catboy
             || self.hinamizawa
             || self.osu_official
+            || self.nzbasic
             || !self.custom_templates().is_empty()
     }
 }

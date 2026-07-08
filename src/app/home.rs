@@ -439,6 +439,7 @@ pub struct HomeTab {
     pub catboy: bool,
     pub hinamizawa: bool,
     pub osu_official: bool,
+    pub nzbasic: bool,
     /// Built-in mirror try-order, seeded from
     /// [`MirrorConfig::ordered_builtins`](crate::config::MirrorConfig::ordered_builtins)
     /// and kept in sync with the Config tab via
@@ -502,6 +503,7 @@ impl HomeTab {
         let catboy = config.mirror.catboy;
         let hinamizawa = config.mirror.hinamizawa;
         let osu_official = config.mirror.osu_official;
+        let nzbasic = config.mirror.nzbasic;
         let custom_templates = config.mirror.custom_templates();
 
         // One syscall: raw form for submit fallback, pretty form for placeholder.
@@ -547,6 +549,7 @@ impl HomeTab {
             catboy,
             hinamizawa,
             osu_official,
+            nzbasic,
             mirror_order: config.mirror.ordered_builtins(),
             video: config.download.video,
             source: GetMapsSource::Collection,
@@ -653,6 +656,7 @@ impl HomeTab {
         self.catboy = mirror.catboy;
         self.hinamizawa = mirror.hinamizawa;
         self.osu_official = mirror.osu_official;
+        self.nzbasic = mirror.nzbasic;
         self.mirror_order = mirror.ordered_builtins();
         self.custom_mirrors = CustomMirrorList::from_templates(&mirror.custom_templates());
     }
@@ -906,6 +910,7 @@ impl HomeTab {
             MirrorKind::Catboy => self.catboy,
             MirrorKind::Hinamizawa => self.hinamizawa,
             MirrorKind::OsuApi => self.osu_official,
+            MirrorKind::Nzbasic => self.nzbasic,
             MirrorKind::Custom => false,
         }
     }

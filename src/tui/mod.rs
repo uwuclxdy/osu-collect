@@ -45,6 +45,7 @@ pub fn mirror_label(kind: MirrorKind) -> &'static str {
         MirrorKind::Catboy => "catboy.best",
         MirrorKind::Hinamizawa => "hinamizawa",
         MirrorKind::OsuApi => "osu! official",
+        MirrorKind::Nzbasic => "nzbasic",
         MirrorKind::Custom => "custom",
     }
 }
