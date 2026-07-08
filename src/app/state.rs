@@ -3,6 +3,8 @@ use super::{
     collection::CollectionPage,
     collection_state::{self, CollectionStateFile},
     config::{AuthLoginState, ConfigField, ConfigTab},
+    download_history::DownloadHistory,
+    downloads_tab::{DownloadsRow, DownloadsTab},
     failed_maps,
     home::{GetMapsSource, HomeField, HomeTab},
     ignored_maps,
@@ -18,7 +20,9 @@ use crate::auto_update::AvailableUpdate;
 use crate::{
     config::{
         Config, RetryFailedOnDownload,
-        constants::{DISK_CACHE_TTL, STATIC_TABS, TAB_CONFIG_LOWER, TAB_HOME_LOWER},
+        constants::{
+            DISK_CACHE_TTL, STATIC_TABS, TAB_CONFIG_LOWER, TAB_DOWNLOADS_LOWER, TAB_HOME_LOWER,
+        },
         save_config,
     },
     core::search::SearchQuery,
@@ -71,6 +75,13 @@ pub struct App {
     /// while it is open the config form is frozen and all input routes here.
     pub login: Option<LoginTab>,
     pub downloads: Vec<CollectionPage>,
+    /// Downloads-tab view state (list cursor + pane focus). The rows it points
+    /// into are built per frame from `downloads` + `history`.
+    pub downloads_tab: DownloadsTab,
+    /// Past-run records behind `download_history.json`. `App::new` starts an
+    /// in-memory store; the runtime swaps in the disk-backed one, so tests
+    /// never read or write the user's real file.
+    pub history: DownloadHistory,
     /// Transient top-right notifications — results and errors. Ephemeral by
     /// design; durable signals live on banners, inline state, or tab markers.
     pub toasts: Toasts,
@@ -128,6 +139,14 @@ pub struct App {
     /// immutable borrow during `draw()` (interior mutability mirrors
     /// `disk_cache`).
     pub(crate) banner_recency: BannerRecency,
+}
+
+/// Identity of a Downloads-list row (see [`App::selected_row_key`]): a live
+/// run by id, or a persisted record by its index into `history.records`.
+#[derive(Debug, Clone, Copy)]
+enum SelectedRow {
+    Page(DownloadId),
+    Record(usize),
 }
 
 /// Header self-update indicator phase (see [`App::update_phase`]). Each variant
@@ -279,6 +298,8 @@ impl App {
             config: ConfigTab::new(&config),
             login: None,
             downloads: Vec::new(),
+            downloads_tab: DownloadsTab::default(),
+            history: DownloadHistory::default(),
             toasts: Toasts::default(),
             active_tab: Tab::Home,
             collection_state: coll_state,
@@ -333,9 +354,7 @@ impl App {
     /// resolving, rechecking, or downloading). Drives the header brand
     /// animation, which idles once every page reaches `Completed`/`Failed`.
     pub fn is_downloading(&self) -> bool {
-        self.downloads
-            .iter()
-            .any(|p| !matches!(p.stage, DownloadStage::Completed | DownloadStage::Failed))
+        self.downloads.iter().any(|p| !p.is_settled())
     }
 
     /// Eased ramp (0..1) for the header brand shimmer. Eases toward 1 over
@@ -446,6 +465,20 @@ impl App {
         self.active_tab() == Tab::Home
             && self.home.source == GetMapsSource::Update
             && self.home.update.is_browsing()
+    }
+
+    /// Whether the Downloads tab's preview pane holds focus — the descended
+    /// state where the download-control keys (esc cancel, `s`/`S`, `r`) live.
+    fn downloads_preview_focused(&self) -> bool {
+        self.active_tab == Tab::Downloads && self.downloads_tab.preview_focused
+    }
+
+    /// Whether the Downloads run list owns navigation keys. A focused preview
+    /// never falls through to list movement — on a record preview (no live
+    /// page to scroll) the arrows are inert, so the cursor can't silently walk
+    /// onto a different run while descended.
+    fn downloads_list_focused(&self) -> bool {
+        self.active_tab == Tab::Downloads && !self.downloads_tab.preview_focused
     }
 
     /// Whether the update source's osu! path field is the focused, editable
@@ -609,6 +642,8 @@ impl App {
             }
         } else if let Some(page) = self.active_download_page_mut() {
             page.jump_top();
+        } else if self.downloads_list_focused() {
+            self.downloads_tab.selected = 0;
         } else {
             self.focus_first_field();
         }
@@ -624,6 +659,8 @@ impl App {
             }
         } else if let Some(page) = self.active_download_page_mut() {
             page.jump_bottom();
+        } else if self.downloads_list_focused() {
+            self.downloads_tab.selected = self.downloads_row_count().saturating_sub(1);
         } else {
             self.focus_last_field();
         }
@@ -640,6 +677,8 @@ impl App {
             }
         } else if let Some(page) = self.active_download_page_mut() {
             page.page_up();
+        } else if self.downloads_list_focused() {
+            self.downloads_tab.page_up();
         } else {
             self.focus_first_field();
         }
@@ -655,6 +694,9 @@ impl App {
             }
         } else if let Some(page) = self.active_download_page_mut() {
             page.page_down();
+        } else if self.downloads_list_focused() {
+            let count = self.downloads_row_count();
+            self.downloads_tab.page_down(count);
         } else {
             self.focus_last_field();
         }
@@ -787,7 +829,7 @@ impl App {
     }
 
     fn total_tabs(&self) -> usize {
-        STATIC_TABS + self.downloads.len()
+        STATIC_TABS
     }
 
     /// Whether the login split is open. While it is, the active tab stays on
@@ -986,7 +1028,7 @@ impl App {
         page.stage = DownloadStage::Resolving;
         page.download_config = Some(request.config.clone());
         self.downloads.push(page);
-        self.active_tab = Tab::Download(self.downloads.len() - 1);
+        self.focus_new_download_run();
     }
 
     /// Count beatmaps in `failed-beatmapsets.json` that belong to
@@ -1076,7 +1118,7 @@ impl App {
         page.stage = DownloadStage::Resolving;
         // config is stored after it is built below; we'll set it there
         self.downloads.push(page);
-        self.active_tab = Tab::Download(self.downloads.len() - 1);
+        self.focus_new_download_run();
 
         self.push_toast(
             Toast::success(format!("queued update download #{id}"))
@@ -1321,7 +1363,7 @@ impl App {
         page.stage = DownloadStage::Resolving;
         page.download_config = Some(config.clone());
         self.downloads.push(page);
-        self.active_tab = Tab::Download(self.downloads.len() - 1);
+        self.focus_new_download_run();
 
         self.push_toast(
             Toast::success(format!("queued search download #{id}"))
@@ -1379,7 +1421,7 @@ impl App {
         page.stage = DownloadStage::Resolving;
         page.download_config = Some(config.clone());
         self.downloads.push(page);
-        self.active_tab = Tab::Download(self.downloads.len() - 1);
+        self.focus_new_download_run();
 
         self.push_toast(
             Toast::success(format!("queued collection download #{id}"))
@@ -1860,6 +1902,10 @@ impl App {
                     if let Some(browse) = self.active_set_browse_mut() {
                         browse.focus_list();
                     }
+                } else if self.downloads_preview_focused() {
+                    // Leave the run preview without cancelling (esc is the
+                    // control key there); the list keeps arrow-tab-switching.
+                    self.downloads_tab.preview_focused = false;
                 } else if let Some(cmd) = self.prev_tab() {
                     return Some(cmd);
                 }
@@ -1874,6 +1920,9 @@ impl App {
                     if let Some(browse) = self.active_set_browse_mut() {
                         browse.focus_preview();
                     }
+                } else if self.downloads_preview_focused() {
+                    // Already at the deepest pane; swallow so → doesn't switch
+                    // tabs out from under the descended preview.
                 } else if let Some(cmd) = self.next_tab() {
                     return Some(cmd);
                 }
@@ -1940,6 +1989,8 @@ impl App {
                     } else {
                         page.scroll_threads_up();
                     }
+                } else if self.downloads_list_focused() {
+                    self.downloads_tab.select_prev();
                 } else {
                     self.focus_prev_field();
                 }
@@ -1957,6 +2008,9 @@ impl App {
                     } else {
                         page.scroll_threads_down();
                     }
+                } else if self.downloads_list_focused() {
+                    let count = self.downloads_row_count();
+                    self.downloads_tab.select_next(count);
                 } else {
                     self.focus_next_field();
                 }
@@ -2078,10 +2132,16 @@ impl App {
                             }
                         }
                     },
-                    _ => {
-                        // download page: enter expands/collapses the failed section
-                        if let Some(page) = self.active_download_page_mut() {
-                            page.toggle_failed_section();
+                    Tab::Downloads => {
+                        if self.downloads_tab.preview_focused {
+                            // On the run preview, enter expands/collapses the
+                            // failed section (history records have none).
+                            if let Some(page) = self.active_download_page_mut() {
+                                page.toggle_failed_section();
+                            }
+                        } else if self.downloads_row_count() > 0 {
+                            // Descend into the highlighted run's preview.
+                            self.downloads_tab.preview_focused = true;
                         }
                     }
                 }
@@ -2465,11 +2525,13 @@ impl App {
                 }
             }
             DownloadEvent::StageChanged { id, stage } => {
-                if let Some(page) = self.page_mut(id) {
-                    page.stage = stage;
-                    if matches!(stage, DownloadStage::Completed | DownloadStage::Failed) {
+                if matches!(stage, DownloadStage::Completed | DownloadStage::Failed) {
+                    self.settle_run(id, |page| {
+                        page.stage = stage;
                         page.clear_active_downloads();
-                    }
+                    });
+                } else if let Some(page) = self.page_mut(id) {
+                    page.stage = stage;
                 }
             }
             DownloadEvent::BeatmapDeferred {
@@ -2502,48 +2564,154 @@ impl App {
                 self.toast_info(format!("skipped {count} already imported"));
             }
             DownloadEvent::Finished { id, summary } => {
-                if let Some(page) = self.page_mut(id) {
+                self.settle_run(id, |page| {
                     page.stage = DownloadStage::Completed;
                     page.summary = Some(summary);
-                }
+                });
             }
             DownloadEvent::Failed { id, message: _ } => {
-                if let Some(page) = self.page_mut(id) {
+                self.settle_run(id, |page| {
                     page.stage = DownloadStage::Failed;
                     page.summary = None;
                     page.clear_active_downloads();
-                }
+                });
             }
         }
     }
 
+    /// Apply a terminal-stage mutation to a run, persist its history record
+    /// while the page stays retained (crash safety — the record is on disk
+    /// before the page ever drops), and evict the oldest settled pages past
+    /// the retention cap. Settling regroups the list (actives before settled),
+    /// so the cursor is re-anchored to the run it was on.
+    fn settle_run(&mut self, id: DownloadId, apply: impl FnOnce(&mut CollectionPage)) {
+        let key = self.selected_row_key();
+        let records_before = self.history.records.len();
+        if let Some(page) = self.page_mut(id) {
+            apply(page);
+        }
+        if let Some(page) = self.downloads.iter().find(|page| page.id == id) {
+            self.history.record_settled(page);
+        }
+        self.evict_settled_pages_over_cap();
+        self.reanchor_selection(key, records_before);
+    }
+
     pub fn tab_titles(&self) -> Vec<Cow<'_, str>> {
-        let mut titles = Vec::with_capacity(self.total_tabs());
-        titles.push(Cow::Borrowed(TAB_HOME_LOWER));
-        titles.push(Cow::Borrowed(TAB_CONFIG_LOWER));
-        for page in &self.downloads {
-            titles.push(download_tab_title(page));
-        }
-        titles
+        vec![
+            Cow::Borrowed(TAB_HOME_LOWER),
+            Cow::Borrowed(TAB_DOWNLOADS_LOWER),
+            Cow::Borrowed(TAB_CONFIG_LOWER),
+        ]
     }
 
-    pub fn download_for_tab(&self, tab: Tab) -> Option<&CollectionPage> {
-        match tab {
-            Tab::Download(slot) => self.downloads.get(slot),
-            _ => None,
-        }
+    /// Indices into `downloads` in Downloads-list row order: active runs in
+    /// push order (stable while running), then settled-retained runs newest
+    /// first (most recent past on top, matching the history records below).
+    fn download_page_row_order(&self) -> Vec<usize> {
+        let settled = |i: &usize| self.downloads[*i].is_settled();
+        let mut order: Vec<usize> = (0..self.downloads.len()).filter(|i| !settled(i)).collect();
+        order.extend((0..self.downloads.len()).rev().filter(settled));
+        order
     }
 
+    /// The Downloads-tab list rows: live pages first, then persisted past-run
+    /// records. Built per frame; `downloads_tab.selected` indexes into this.
+    pub fn downloads_rows(&self) -> Vec<DownloadsRow<'_>> {
+        let mut rows: Vec<DownloadsRow<'_>> = self
+            .download_page_row_order()
+            .into_iter()
+            .map(|i| DownloadsRow::Page(&self.downloads[i]))
+            .collect();
+        rows.extend(self.history.records.iter().map(DownloadsRow::Record));
+        rows
+    }
+
+    fn downloads_row_count(&self) -> usize {
+        self.downloads.len() + self.history.records.len()
+    }
+
+    /// The `downloads` index of the page under the Downloads-list cursor, or
+    /// `None` when the cursor sits on a history record (or the list is empty).
+    fn selected_page_index(&self) -> Option<usize> {
+        self.download_page_row_order()
+            .get(self.downloads_tab.selected)
+            .copied()
+    }
+
+    /// The page under the Downloads-list cursor (the preview auto-follows it).
+    pub fn selected_download_page(&self) -> Option<&CollectionPage> {
+        self.selected_page_index().map(|i| &self.downloads[i])
+    }
+
+    /// The page owning download-control input: the one under the cursor, but
+    /// only while the Downloads preview pane holds focus — the scroll / defer /
+    /// skip / retry keys are scoped there.
     pub fn active_download_page_mut(&mut self) -> Option<&mut CollectionPage> {
-        match self.active_tab {
-            Tab::Download(slot) => self.downloads.get_mut(slot),
-            _ => None,
+        if self.active_tab != Tab::Downloads || !self.downloads_tab.preview_focused {
+            return None;
+        }
+        let index = self.selected_page_index()?;
+        self.downloads.get_mut(index)
+    }
+
+    /// Identity of the row under the Downloads cursor, stable across row
+    /// reorders — a settle regroups the page section, a removal promotes a
+    /// record — so the cursor can re-anchor to the same RUN, not the same
+    /// position (a positional cursor would silently switch the preview to a
+    /// different run, and `esc` would cancel the wrong download).
+    fn selected_row_key(&self) -> Option<SelectedRow> {
+        let order = self.download_page_row_order();
+        let selected = self.downloads_tab.selected;
+        if let Some(&page_index) = order.get(selected) {
+            return Some(SelectedRow::Page(self.downloads[page_index].id));
+        }
+        let record = selected - order.len();
+        (record < self.history.records.len()).then_some(SelectedRow::Record(record))
+    }
+
+    /// Move the cursor back onto the row identified by `key` after a mutation.
+    /// A page that dropped re-anchors to its just-promoted record (records
+    /// insert at the front); an existing record shifts by however many records
+    /// were inserted above it (`records_before` is the pre-mutation count).
+    fn reanchor_selection(&mut self, key: Option<SelectedRow>, records_before: usize) {
+        let grew = self.history.records.len().saturating_sub(records_before);
+        match key {
+            Some(SelectedRow::Page(id)) => {
+                let order = self.download_page_row_order();
+                let pages = order.len();
+                self.downloads_tab.selected = order
+                    .iter()
+                    .position(|&i| self.downloads[i].id == id)
+                    // Dropped page → its record now leads the records section.
+                    .unwrap_or(pages);
+            }
+            Some(SelectedRow::Record(i)) => {
+                self.downloads_tab.selected = self.download_page_row_order().len() + i + grew;
+            }
+            None => {}
+        }
+        self.downloads_tab.clamp(self.downloads_row_count());
+    }
+
+    /// Point the Downloads-list cursor at a just-queued run (the newest active
+    /// row) so opening the tab lands on it. The active tab does not change —
+    /// launch stays on Get Maps, signalled by the queued toast.
+    fn focus_new_download_run(&mut self) {
+        let actives = self.downloads.iter().filter(|p| !p.is_settled()).count();
+        self.downloads_tab.selected = actives.saturating_sub(1);
+        // Queued from another tab: land on the list. A retry dispatched from a
+        // descended preview keeps the preview, now on the new retry run.
+        if self.active_tab != Tab::Downloads {
+            self.downloads_tab.preview_focused = false;
         }
     }
 
     pub fn handle_cancel_result(&mut self, download_id: DownloadId, was_running: bool) {
+        // Removal re-anchors the cursor onto the run's promoted record; hand
+        // focus back to the list on it.
         let title = self.remove_download_page(download_id);
-        self.active_tab = Tab::Home;
+        self.downloads_tab.preview_focused = false;
         self.home.quit_prompt = false;
 
         let display = title.unwrap_or_else(|| format!("download #{download_id}"));
@@ -2558,22 +2726,49 @@ impl App {
         self.downloads.iter_mut().find(|page| page.id == id)
     }
 
+    /// Drop a run's page — the single removal choke point. The history record
+    /// is written BEFORE the page goes (a never-settled page records as
+    /// cancelled), so no removal path can lose a run. The cursor re-anchors by
+    /// run identity; a removed selected run lands on its promoted record.
     fn remove_download_page(&mut self, download_id: DownloadId) -> Option<String> {
-        if let Some(position) = self
+        let position = self
             .downloads
             .iter()
-            .position(|page| page.id == download_id)
-        {
-            let title = self.downloads[position].title.clone();
-            self.downloads.remove(position);
-            Some(title)
-        } else {
-            None
+            .position(|page| page.id == download_id)?;
+        let key = self.selected_row_key();
+        let records_before = self.history.records.len();
+        let page = self.downloads.remove(position);
+        self.history.record_removed(&page);
+        self.reanchor_selection(key, records_before);
+        Some(page.title)
+    }
+
+    /// Keep at most [`HISTORY_CAP`](super::download_history::HISTORY_CAP)
+    /// settled pages retained; the oldest evict to their history records.
+    fn evict_settled_pages_over_cap(&mut self) {
+        loop {
+            let settled: Vec<DownloadId> = self
+                .downloads
+                .iter()
+                .filter(|p| p.is_settled())
+                .map(|p| p.id)
+                .collect();
+            if settled.len() <= super::download_history::HISTORY_CAP {
+                return;
+            }
+            self.remove_download_page(settled[0]);
         }
     }
 
-    /// Handle `r`/`R` on the active download tab. Letter suppression never
-    /// applies here (there are no text inputs on download pages).
+    /// Record every still-retained run on quit: settled pages promote their
+    /// pending records, aborted-in-flight runs record as cancelled. Called by
+    /// the runtime after the input loop ends.
+    pub fn flush_history_on_exit(&mut self) {
+        for page in std::mem::take(&mut self.downloads) {
+            self.history.record_removed(&page);
+        }
+    }
+
     /// Allocate a new download page for a retry batch and return the ID + request.
     /// Returns `None` if the source page is missing or has no stored config.
     ///
@@ -2613,7 +2808,7 @@ impl App {
         retry_page.stage = DownloadStage::Resolving;
         retry_page.download_config = Some(retry_config.clone());
         self.downloads.push(retry_page);
-        self.active_tab = Tab::Download(self.downloads.len() - 1);
+        self.focus_new_download_run();
 
         let request = SelectiveDownloadRequest {
             collection_ids: vec![],
@@ -2630,6 +2825,9 @@ impl App {
         Some((new_id, request))
     }
 
+    /// Letter keys scoped to the Downloads preview pane (a focused live run;
+    /// [`Self::active_download_page_mut`] gates both). No text inputs exist
+    /// here, so letter suppression never applies.
     fn handle_download_tab_key(&mut self, ch: char) -> Option<AppCommand> {
         match ch {
             // Case-insensitive retry (hotkeys are case-insensitive):
@@ -2688,83 +2886,42 @@ impl App {
                 }
             }
             // `x` is reserved for toast dismissal (handled globally in
-            // `handle_key`); settled download tabs close via `esc`/`q`.
+            // `handle_key`); a settled run just stays on the list.
             _ => None,
         }
     }
 
-    /// Remove a settled download page and move focus to the adjacent tab.
-    ///
-    /// Navigation matches browser tab close: focus shifts to the tab to the
-    /// LEFT. Since `STATIC_TABS >= 1`, this always lands on a valid tab —
-    /// closing the leftmost download tab lands on `config`.
-    fn close_settled_download_tab(&mut self, download_id: DownloadId) {
-        let Some(position) = self
-            .downloads
-            .iter()
-            .position(|page| page.id == download_id)
-        else {
-            return;
-        };
-        let closed_tab_index = Tab::Download(position).to_index();
-        self.downloads.remove(position);
-        self.active_tab = Tab::from_index(
-            closed_tab_index
-                .saturating_sub(1)
-                .min(self.total_tabs() - 1),
-        );
-    }
-
-    /// `esc` as a pure "back" key. Runs after the edit/modal/login/updates
-    /// cascade. Cancels an armed quit prompt, backs out of a settled-download tab
-    /// (closes it or cancels a running download), and otherwise does nothing at
-    /// the static top level. It never arms or confirms a quit — quitting is
-    /// `q`-only. The login split is closed earlier in the esc cascade.
+    /// `esc` as a pure "back" key. Runs after the edit/modal/login/browse
+    /// cascade. Cancels an armed quit prompt; on the Downloads preview it is
+    /// the download-control key — a running run cancels, a settled run or
+    /// history record just ascends back to the list (leaving the preview
+    /// without cancelling is `←`). It never arms or confirms a quit — quitting
+    /// is `q`-only. The login split is closed earlier in the esc cascade.
     fn handle_back_key(&mut self) -> Option<AppCommand> {
         if self.home.quit_prompt {
             self.home.quit_prompt = false;
             return None;
         }
-        if matches!(self.active_tab(), Tab::Download(_)) {
-            return self.cancel_command_for_active_tab();
+        if self.active_tab == Tab::Downloads && self.downloads_tab.preview_focused {
+            if let Some(page) = self.selected_download_page()
+                && !page.is_settled()
+            {
+                return Some(AppCommand::CancelDownload { id: page.id });
+            }
+            self.downloads_tab.preview_focused = false;
         }
         None
     }
 
     fn handle_quit_key(&mut self) -> Option<AppCommand> {
-        if !matches!(self.active_tab(), Tab::Download(_)) {
-            if self.home.quit_prompt {
-                self.home.quit_prompt = false;
-                return Some(AppCommand::Quit);
-            }
-
-            self.home.quit_prompt = true;
-            debug!("Quit requested; showing confirmation prompt");
-            return None;
+        if self.home.quit_prompt {
+            self.home.quit_prompt = false;
+            return Some(AppCommand::Quit);
         }
 
-        self.home.quit_prompt = false;
-        self.cancel_command_for_active_tab()
-    }
-
-    fn cancel_command_for_active_tab(&mut self) -> Option<AppCommand> {
-        let Tab::Download(idx) = self.active_tab else {
-            return None;
-        };
-        let Some(page) = self.downloads.get(idx) else {
-            self.active_tab = Tab::Home;
-            return None;
-        };
-
-        // Settled tabs have nothing to cancel — `esc`/`q` just closes them
-        // in place, matching the `esc/q close` footer hint.
-        if matches!(page.stage, DownloadStage::Completed | DownloadStage::Failed) {
-            let download_id = page.id;
-            self.close_settled_download_tab(download_id);
-            return None;
-        }
-
-        Some(AppCommand::CancelDownload { id: page.id })
+        self.home.quit_prompt = true;
+        debug!("Quit requested; showing confirmation prompt");
+        None
     }
 
     fn placeholder_title(input: &str, download_id: DownloadId) -> String {
@@ -2778,55 +2935,6 @@ impl App {
             Err(_) => format!("collection {trimmed}"),
         }
     }
-}
-
-/// "0" through "100" as `&'static str`, indexed by value.
-static PCT_STR: [&str; 101] = [
-    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16",
-    "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32",
-    "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48",
-    "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64",
-    "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75", "76", "77", "78", "79", "80",
-    "81", "82", "83", "84", "85", "86", "87", "88", "89", "90", "91", "92", "93", "94", "95", "96",
-    "97", "98", "99", "100",
-];
-
-/// Build the tab title for one download page.
-///
-/// - No progress data yet (`download_target == 0`): returns the bare name.
-/// - In-progress: appends ` (N%)` where N = `(downloaded + skipped) / target * 100`.
-/// - Completed (`DownloadStage::Completed`): appends ` (✓)`.
-/// - Any failed maps: appends `*` after the progress suffix.
-fn download_tab_title(page: &CollectionPage) -> Cow<'_, str> {
-    let has_progress = page.download_target > 0;
-    let has_failures = page.stats.failed > 0;
-
-    if !has_progress && !has_failures {
-        return Cow::Borrowed(page.title_lower());
-    }
-
-    let name = page.title_lower();
-    // Reserve: name + " (100%)" + "*" = name + 8 bytes at most
-    let mut s = String::with_capacity(name.len() + 8);
-    s.push_str(name);
-
-    if has_progress {
-        if page.stage == DownloadStage::Completed {
-            s.push_str(" (✓)");
-        } else {
-            let done = u64::from(page.stats.downloaded) + u64::from(page.stats.skipped);
-            let pct = ((done * 100) / page.download_target as u64).min(100) as usize;
-            s.push_str(" (");
-            s.push_str(PCT_STR[pct]);
-            s.push_str("%)");
-        }
-    }
-
-    if has_failures {
-        s.push('*');
-    }
-
-    Cow::Owned(s)
 }
 
 /// Load the persisted failed-maps file at `path` and intersect its ids with
@@ -2857,5 +2965,5 @@ mod retry_on_download_tests;
 mod tab_titles_tests;
 
 #[cfg(test)]
-#[path = "../../tests/unit/close_download_tab.rs"]
-mod close_download_tab_tests;
+#[path = "../../tests/unit/downloads_keys.rs"]
+mod downloads_keys_tests;

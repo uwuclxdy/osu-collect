@@ -304,6 +304,13 @@ impl CollectionPage {
         self.title = title;
     }
 
+    /// Whether the run reached a terminal stage (completed or failed). Settled
+    /// pages are retained for the session so the Downloads tab can still
+    /// preview them; they evict to history records on cap or exit.
+    pub fn is_settled(&self) -> bool {
+        matches!(self.stage, DownloadStage::Completed | DownloadStage::Failed)
+    }
+
     pub fn title_lower(&self) -> &str {
         &self.title_lower
     }

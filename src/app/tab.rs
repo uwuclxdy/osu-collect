@@ -1,41 +1,38 @@
 //! Top-strip tab identity.
 //!
-//! The two static tabs render in declaration order; each active or settled
-//! download run appends one [`Tab::Download`] after them. Adding or removing a
-//! static tab is an edit here plus the [`Tab::to_index`]/[`Tab::from_index`]
-//! arms, not a hunt for scattered magic indices.
-
-use crate::config::constants::STATIC_TABS;
+//! All three tabs are static and render in declaration order. Per-run download
+//! tabs are gone — every run (active or past) lives on the Downloads tab's
+//! list. Adding or removing a tab is an edit here plus the
+//! [`Tab::to_index`]/[`Tab::from_index`] arms, not a hunt for magic indices.
 
 /// One tab in the top strip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     /// The `home` / Get Maps tab (search / collection / update sources).
     Home,
+    /// The `downloads` tab — active runs + past-run history.
+    Downloads,
     /// The `config` tab.
     Config,
-    /// A per-run download page; the payload indexes `App.downloads`.
-    Download(usize),
 }
 
 impl Tab {
-    /// Flat tab-strip position: static tabs occupy `0..STATIC_TABS`, download
-    /// tabs follow in `downloads` order.
+    /// Flat tab-strip position, matching declaration order.
     pub fn to_index(self) -> usize {
         match self {
             Tab::Home => 0,
-            Tab::Config => 1,
-            Tab::Download(slot) => STATIC_TABS + slot,
+            Tab::Downloads => 1,
+            Tab::Config => 2,
         }
     }
 
-    /// Inverse of [`to_index`](Tab::to_index): any index at or past `STATIC_TABS`
-    /// is a download tab. Callers keep the index in range for the live tab count.
+    /// Inverse of [`to_index`](Tab::to_index). Callers keep the index in range
+    /// (`0..STATIC_TABS`); anything past the end clamps to the last tab.
     pub fn from_index(index: usize) -> Tab {
         match index {
             0 => Tab::Home,
-            1 => Tab::Config,
-            n => Tab::Download(n - STATIC_TABS),
+            1 => Tab::Downloads,
+            _ => Tab::Config,
         }
     }
 }

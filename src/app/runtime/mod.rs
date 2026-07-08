@@ -62,6 +62,9 @@ pub async fn run(
     // restoring Drop of its own, so this guard is the single teardown site.
     let _terminal_guard = TerminalGuard;
     let mut app = App::new(config);
+    // The disk-backed history store attaches here (not in `App::new`) so tests
+    // constructing an `App` never read or write the user's real history file.
+    app.history = super::download_history::DownloadHistory::load();
     if let Some(msg) = validation_issue {
         warn!(error = %msg, "Configuration validation failed; surfacing to UI");
         app.toast_err(msg);
@@ -198,6 +201,17 @@ pub async fn run(
     if let Some(handle) = tasks.mirror_probe.take() {
         handle.abort();
     }
+
+    // Apply download events still queued when the loop broke — a run that
+    // finished in the quit window would otherwise flush with its last-seen
+    // in-flight stage and be misrecorded as cancelled.
+    while let Ok(event) = download_rx.try_recv() {
+        app.handle_download_event(event);
+    }
+    // Record every still-retained run (settled pages promote their pending
+    // records; aborted in-flight runs record as cancelled) before the pages
+    // drop with the process.
+    app.flush_history_on_exit();
 
     app.home.quit_prompt = false;
     app.toast_info("quitting…");

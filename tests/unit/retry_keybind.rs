@@ -63,7 +63,9 @@ fn setup_download_tab_with_failures(app: &mut App, reasons: &[FailureReason]) ->
     page.failed_section_expanded = true;
 
     app.downloads.push(page);
-    app.active_tab = Tab::Download(app.downloads.len() - 1);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.selected = 0;
+    app.downloads_tab.preview_focused = true;
     id
 }
 

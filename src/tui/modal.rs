@@ -130,13 +130,13 @@ const LOGIN_TAB: &[HelpRow] = &[
     HelpRow::new("esc / q", "close login"),
 ];
 
-const DOWNLOAD_TAB: &[HelpRow] = &[
-    HelpRow::new("↵", "expand / collapse failed"),
-    HelpRow::new("↑ ↓", "navigate failed rows"),
-    HelpRow::new("r", "retry failed maps"),
-    HelpRow::new("s", "defer rate-limited"),
-    HelpRow::new("S", "drop rate-limited"),
-    HelpRow::new("esc / q", "close completed tab"),
+const DOWNLOADS_TAB: &[HelpRow] = &[
+    HelpRow::new("↵", "open run / expand failed"),
+    HelpRow::new("↑ ↓", "select run / scroll"),
+    HelpRow::new("←", "back to the run list"),
+    HelpRow::new("r", "retry failed maps (preview)"),
+    HelpRow::new("s / S", "defer / drop rate-limited"),
+    HelpRow::new("esc", "cancel run (preview) / back"),
 ];
 
 /// Renders a centred keybindings overlay.
@@ -363,16 +363,15 @@ fn button_spans(buttons: &[&'static str], focus: usize) -> Vec<Span<'static>> {
 }
 
 /// Builds the help rows as measurable [`Line`]s: the always-shown `global`
-/// section plus only the section for the currently active tab. Download tabs
-/// (any index past the static three) map to the `download` section.
+/// section plus only the section for the currently active tab.
 fn build_help_lines(active_tab: Tab, login_open: bool, vim_keys: bool) -> Vec<Line<'static>> {
     let (heading, rows) = if login_open {
         ("login", LOGIN_TAB)
     } else {
         match active_tab {
             Tab::Home => ("home", HOME_TAB),
+            Tab::Downloads => ("downloads", DOWNLOADS_TAB),
             Tab::Config => ("config", CONFIG_TAB),
-            Tab::Download(_) => ("download", DOWNLOAD_TAB),
         }
     };
 

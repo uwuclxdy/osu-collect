@@ -5,6 +5,8 @@ pub mod collection;
 pub mod collection_state;
 pub mod config;
 pub mod custom_mirrors;
+pub mod download_history;
+pub mod downloads_tab;
 pub mod failed_maps;
 pub mod home;
 pub mod ignored_maps;
@@ -24,6 +26,8 @@ pub use banner::{Banner, BannerRecency, system_banners};
 pub use collection::{ActiveDownloadLine, CollectionPage};
 pub use config::{AuthLoginState, ConfigField, ConfigTab};
 pub use custom_mirrors::CustomMirrorList;
+pub use download_history::{DownloadHistory, HistoryRecord, HistoryStage};
+pub use downloads_tab::{DownloadsRow, DownloadsTab};
 pub use home::{GetMapsSource, HomeField, HomeTab, InputField, ResolveState};
 pub use library::LibraryState;
 pub use login::{LoginField, LoginPhase, LoginTab};
@@ -59,6 +63,18 @@ fn adjacent_field<T: Copy + PartialEq>(fields: &[T], current: T, offset: usize) 
         .position(|&field| field == current)
         .unwrap_or_default();
     fields[(idx + offset) % fields.len()]
+}
+
+/// Per-user data dir for osu-collect's state files (`ignored-beatmapsets.json`,
+/// `download_history.json`, …). Windows keeps roaming data; elsewhere local.
+#[cfg(windows)]
+fn platform_data_dir() -> Option<std::path::PathBuf> {
+    dirs::data_dir()
+}
+
+#[cfg(not(windows))]
+fn platform_data_dir() -> Option<std::path::PathBuf> {
+    dirs::data_local_dir()
 }
 
 fn write_atomic(path: &Path, tmp_extension: &str, contents: &str) -> std::io::Result<()> {

@@ -24,72 +24,72 @@ fn hint_line_has_key_and_label_spans() {
     assert!(full.contains("quit"));
 }
 
+/// Push a page and descend into its Downloads-tab preview — where the
+/// download-control keys (and their hints) live.
 fn push_focused_page(app: &mut App, id: DownloadId, stage: DownloadStage) {
     let mut page = CollectionPage::new(id, format!("col {id}"), 1);
     page.stage = stage;
     app.downloads.push(page);
-    app.active_tab = Tab::Download(app.downloads.len() - 1);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.selected = 0;
+    app.downloads_tab.preview_focused = true;
 }
 
 #[test]
-fn footer_hint_includes_close_on_completed_tab() {
+fn footer_hint_omits_cancel_on_completed_preview() {
     let mut app = App::new(Config::default());
     push_focused_page(&mut app, 1, DownloadStage::Completed);
 
     let hint = hint_for(&app);
+    // A settled run has nothing to cancel; esc just ascends (unadvertised).
     assert!(
-        hint.contains("close"),
-        "completed-tab hint should advertise `close`, got: {hint}"
+        !hint.contains("esc cancel"),
+        "settled preview must not advertise cancel, got: {hint}"
+    );
+    assert!(
+        hint.contains("← list"),
+        "settled preview must advertise the way back, got: {hint}"
     );
 }
 
 #[test]
-fn footer_hint_includes_close_on_failed_tab() {
-    let mut app = App::new(Config::default());
-    push_focused_page(&mut app, 1, DownloadStage::Failed);
-
-    let hint = hint_for(&app);
-    assert!(
-        hint.contains("close"),
-        "failed-tab hint must include `close`, got: {hint}"
-    );
-}
-
-#[test]
-fn footer_hint_omits_close_on_downloading_tab() {
+fn footer_hint_advertises_cancel_on_downloading_preview() {
     let mut app = App::new(Config::default());
     push_focused_page(&mut app, 1, DownloadStage::Downloading);
 
     let hint = hint_for(&app);
+    // esc is destructive on a running preview — it must be advertised.
     assert!(
-        !hint.contains("close"),
-        "in-progress hint must not advertise close: {hint}"
-    );
-    assert!(
-        hint.contains("q abort"),
-        "in-progress hint must keep abort: {hint}"
+        hint.contains("esc cancel"),
+        "in-flight preview must advertise `esc cancel`, got: {hint}"
     );
 }
 
 #[test]
-fn footer_hint_settled_tab_advertises_close_without_a_dismiss_token() {
+fn footer_hint_downloads_list_advertises_open() {
+    let mut app = App::new(Config::default());
+    push_focused_page(&mut app, 1, DownloadStage::Downloading);
+    app.downloads_tab.preview_focused = false;
+
+    let hint = hint_for(&app);
+    assert!(
+        hint.contains("↵ open"),
+        "the run list must advertise `↵ open`, got: {hint}"
+    );
+    assert!(hint.contains("q quit"), "list level quits on q: {hint}");
+}
+
+#[test]
+fn footer_hint_settled_preview_has_no_dismiss_token() {
     let mut app = App::new(Config::default());
     push_focused_page(&mut app, 1, DownloadStage::Completed);
 
     let hint = hint_for(&app);
-    // Both esc and q close a settled page. `x` is toast-only (a notification
-    // key, not a download-page action) so it must not appear in the hint.
-    assert!(
-        hint.contains("esc/q close"),
-        "settled tab must advertise `esc/q close`, got: {hint}"
-    );
+    // `x` is toast-only (a notification key, not a page action) so it must
+    // not appear in the hint while no toast is up.
     assert!(
         !hint.contains("dismiss"),
-        "settled tab must not advertise a toast-only `x dismiss` token, got: {hint}"
-    );
-    assert!(
-        !hint.contains("x/q"),
-        "the `x/q` compound must be dropped, got: {hint}"
+        "settled preview must not advertise a toast-only `x dismiss` token, got: {hint}"
     );
 }
 
@@ -122,7 +122,7 @@ fn footer_hint_advertises_dismiss_only_while_a_toast_is_visible() {
 }
 
 #[test]
-fn footer_hint_caps_at_four_segments_on_settled_tab() {
+fn footer_hint_caps_at_four_segments_on_settled_preview() {
     let mut app = App::new(Config::default());
     push_focused_page(&mut app, 1, DownloadStage::Completed);
 

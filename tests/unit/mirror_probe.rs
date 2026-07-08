@@ -228,8 +228,8 @@ fn r_on_update_source_does_not_emit_probe_mirrors() {
 #[test]
 fn switching_to_home_tab_emits_probe_mirrors() {
     let mut app = App::new(Config::default());
-    // Start on config (the only other static tab); Left wraps to home.
-    app.active_tab = Tab::Config;
+    // Start on the adjacent tab; Left lands on home.
+    app.active_tab = Tab::Downloads;
 
     let cmd = app.handle_key(key(KeyCode::Left));
 

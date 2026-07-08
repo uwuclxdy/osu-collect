@@ -362,6 +362,7 @@ fn update_source_shows_client_toggle() {
 fn config_tab_shows_auth_chip() {
     let mut app = make_app();
     app.next_tab();
+    app.next_tab(); // home → downloads → config
     let content = render_content(&app, 120, 40);
     assert!(
         content.contains("signed out")
@@ -478,11 +479,13 @@ fn config_footer_omits_space_on_text_input() {
     let mut app = make_app();
     // Focus a non-text field so Right switches tabs rather than moving the caret.
     app.home.focus = HomeField::Video;
-    // Two static tabs now: a single Right lands on Config.
-    app.handle_key(crossterm::event::KeyEvent::new(
-        crossterm::event::KeyCode::Right,
-        crossterm::event::KeyModifiers::empty(),
-    ));
+    // Three static tabs: home → downloads → config.
+    for _ in 0..2 {
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Right,
+            crossterm::event::KeyModifiers::empty(),
+        ));
+    }
     assert_eq!(app.active_tab(), Tab::Config);
     app.config.focus = ConfigField::MirrorCustomUrl(0);
 
@@ -700,7 +703,8 @@ fn download_tab_footer_shows_help_hint() {
     let mut app = make_app();
     let page = CollectionPage::new(1, "test".to_string(), 1);
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
     let footer = render_footer_row(&app, 200, 24);
     assert!(footer.contains('?'), "download tab footer must show ? help");
     assert!(
@@ -740,13 +744,15 @@ fn gauge_bottom_row_shows_tally_left_and_verified_right() {
     page.stats.skipped = 2;
     page.stats.failed = 1;
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
-    let buf = render_to_buffer(&app, 100, 24);
+    // Wide enough that the Downloads preview pane fits tally + verified.
+    let buf = render_to_buffer(&app, 140, 24);
     // Find the single row carrying both the tally and the verified count.
     let row = (0..24u16)
         .map(|y| {
-            (0..100u16)
+            (0..140u16)
                 .map(|x| buf[(x, y)].symbol().to_string())
                 .collect::<String>()
         })
@@ -784,11 +790,13 @@ fn gauge_drops_verified_count_when_too_narrow_for_tally() {
     page.stats.skipped = 2;
     page.stats.failed = 1;
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
-    // Narrow: the ~53-col tally fits but tally + " 5/10 verified " do not, so the
-    // verified count is dropped and the tally keeps the shared gauge bottom row.
-    let content = render_content(&app, 64, 24);
+    // The preview pane (~58 cols at this width) fits the ~53-col tally but not
+    // tally + " 5/10 verified ", so the verified count is dropped and the
+    // tally keeps the shared gauge bottom row.
+    let content = render_content(&app, 100, 24);
     assert!(
         content.contains("downloaded") && content.contains("1 failed"),
         "the tally must still render at a narrow width: {content}"
@@ -861,6 +869,7 @@ fn login_split_docks_login_on_the_right_of_config() {
     // any osu! token on the host.
     app.config.login_state = AuthLoginState::LoggedOut;
     app.next_tab();
+    app.next_tab(); // home → downloads → config
     app.config.focus = ConfigField::AuthChip;
     app.handle_key(KeyEvent {
         code: KeyCode::Enter,
@@ -903,6 +912,7 @@ fn login_split_info_lines_wrap_instead_of_clipping() {
     let mut app = make_app();
     app.config.login_state = AuthLoginState::LoggedOut;
     app.next_tab();
+    app.next_tab(); // home → downloads → config
     app.config.focus = ConfigField::AuthChip;
     app.handle_key(KeyEvent {
         code: KeyCode::Enter,
@@ -927,15 +937,19 @@ fn login_split_info_lines_wrap_instead_of_clipping() {
 fn config_tab_shows_mirrors_section_before_download() {
     let mut app = make_app();
     app.next_tab();
+    app.next_tab(); // home → downloads → config
     let content = render_content(&app, 120, 60);
     // both sections should be present
     assert!(content.contains("download") || content.contains("DOWNLOAD"));
     assert!(content.contains("mirrors") || content.contains("MIRRORS"));
-    // mirrors render before download, matching the home tab's section flow
+    // mirrors render before download, matching the home tab's section flow.
+    // The header's `downloads` tab title sits in the first buffer row (120
+    // cells), so only matches past it count as the download section.
     let mir_pos = content.find("mirrors").or_else(|| content.find("MIRRORS"));
     let dl_pos = content
-        .find("download")
-        .or_else(|| content.find("DOWNLOAD"));
+        .match_indices("download")
+        .map(|(i, _)| i)
+        .find(|&i| i > 120);
     if let (Some(m), Some(d)) = (mir_pos, dl_pos) {
         assert!(m < d, "mirrors section should render before download");
     }

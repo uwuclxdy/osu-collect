@@ -231,7 +231,8 @@ fn download_render_shows_status_metrics_and_results() {
         unverified: 0,
     });
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
     let output = render_app(&app, 90, 24);
 
@@ -550,7 +551,8 @@ fn active_view_renders_progress_bar_when_downloading() {
     page.update_active_progress(42, 5_000_000, 10_000_000);
     std::thread::sleep(std::time::Duration::from_millis(150));
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
     let output = render_app(&app, 100, 24);
 
@@ -579,7 +581,8 @@ fn active_view_requires_percentage_for_discovered_download_size() {
     page.update_active_progress(42, 1_500_000, 10_000_000);
     std::thread::sleep(std::time::Duration::from_millis(150));
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
     let output = render_app(&app, 100, 24);
 
@@ -606,7 +609,8 @@ fn active_view_renders_bouncing_bar_when_total_is_unknown() {
         None,
     );
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
     let output = render_app(&app, 100, 24);
 
@@ -641,7 +645,8 @@ fn active_panel_drops_finished_and_idle_rows() {
         );
     }
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
     let baseline = render_app(&app, 120, 30);
     assert_eq!(
@@ -708,7 +713,8 @@ fn long_message_does_not_drop_the_progress_bar() {
     page.update_active_progress(42, 7_000_000, 10_000_000);
     std::thread::sleep(std::time::Duration::from_millis(150));
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
     let output = render_app(&app, 60, 24);
     assert!(
@@ -741,7 +747,8 @@ fn active_view_shows_bar_for_active_download_regardless_of_message() {
     page.update_active_progress(42, 3_000_000, 6_000_000);
     std::thread::sleep(std::time::Duration::from_millis(150));
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
     let output = render_app(&app, 100, 24);
 
@@ -765,9 +772,12 @@ fn rechecking_stage_shows_verification_progress() {
     page.download_target = 10;
     page.stats.skipped = 3;
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
-    let output = render_app(&app, 100, 24);
+    // Wide enough that the preview pane fits the right-aligned verified title
+    // beside the tally (it is dropped when the two would collide).
+    let output = render_app(&app, 140, 24);
 
     assert!(
         output.contains("3/10 verified"),
@@ -784,7 +794,8 @@ fn rechecking_stage_replaces_top_title_with_recheck_progress() {
     page.download_target = 10;
     page.stats.skipped = 3;
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
     let output = render_app(&app, 100, 24);
 
@@ -810,7 +821,8 @@ fn rechecking_stage_threads_panel_shows_verification_status() {
     page.download_target = 10;
     page.stats.skipped = 2;
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
     let output = render_app(&app, 100, 24);
 
@@ -830,7 +842,8 @@ fn resolving_stage_renders_indeterminate_gauge_and_status() {
     let mut page = CollectionPage::new(1, "ranked maps".to_string(), 4);
     page.stage = DownloadStage::Resolving;
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
     let output = render_app(&app, 100, 24);
 
@@ -859,7 +872,8 @@ fn resolving_stage_with_progress_shows_count_in_title() {
     page.stage = DownloadStage::Resolving;
     page.resolve_progress = Some((2, 5));
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
     let output = render_app(&app, 100, 24);
 
@@ -875,7 +889,8 @@ fn resolving_stage_indeterminate_bar_is_bracketed_block() {
     let mut page = CollectionPage::new(1, "ranked maps".to_string(), 4);
     page.stage = DownloadStage::Resolving;
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
     let buf = render_buffer(&app, 100, 24);
     let frame_color = super::line();
@@ -893,8 +908,14 @@ fn resolving_stage_indeterminate_bar_is_bracketed_block() {
         close.iter().any(|&(_, y)| y == open_y),
         "bar must render a `]` frame cell on the same row as `[`"
     );
-    // GAUGE_H_MARGIN insets the bar by one column, so the `[` sits at x=1.
-    assert_eq!(open_x, 1, "bracket frame must start at the bar's left edge");
+    // The page renders in the Downloads preview pane (right of the run list),
+    // and GAUGE_H_MARGIN insets the bar one further column.
+    let list_width = (100u16 / 5 * 2).clamp(28, 52);
+    assert_eq!(
+        open_x,
+        list_width + 1,
+        "bracket frame must start at the bar's left edge"
+    );
     assert!(
         !block.is_empty(),
         "bar must render a filled `█` chunk inside the frame"
@@ -922,7 +943,8 @@ fn resolving_stage_indeterminate_block_stays_inside_frame() {
     let mut page = CollectionPage::new(1, "ranked maps".to_string(), 4);
     page.stage = DownloadStage::Resolving;
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
     let buf = render_buffer(&app, 100, 24);
     let frame_color = super::line();
@@ -948,7 +970,8 @@ fn resolving_stage_progress_bar_renders_single_row() {
     page.stage = DownloadStage::Resolving;
     page.resolve_progress = Some((2, 5));
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
     let buf = render_buffer(&app, 100, 24);
     let info = Color::Rgb(116, 199, 236);
@@ -977,7 +1000,8 @@ fn rechecking_stage_uses_warning_color_on_gauge() {
     page.download_target = 10;
     page.stats.skipped = 5;
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
     let buf = render_buffer(&app, 100, 24);
     let warning = Color::Rgb(249, 226, 175);
@@ -1294,7 +1318,8 @@ fn footer_offers_defer_and_drop_when_a_row_is_parked() {
         Some(std::time::Instant::now() + std::time::Duration::from_secs(30)),
     );
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
     let output = render_app(&app, 120, 24);
     assert!(
@@ -1315,7 +1340,8 @@ fn footer_offers_drop_only_when_only_deferred() {
     // A queue-deferred map with nothing parked inline: only `S drop` can act.
     page.mark_deferred(42);
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
     let output = render_app(&app, 120, 24);
     assert!(
@@ -1624,7 +1650,8 @@ fn compact_download_renders_without_panic() {
     page.total_maps = 10;
     page.download_target = 10;
     app.downloads.push(page);
-    app.active_tab = Tab::Download(0);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.preview_focused = true;
 
     let output = render_app(&app, 60, 10);
     assert!(!output.is_empty(), "compact download must produce output");

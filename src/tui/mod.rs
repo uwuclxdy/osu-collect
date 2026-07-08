@@ -4,6 +4,7 @@ pub mod theme;
 pub(crate) mod banner;
 mod config;
 mod download;
+mod downloads;
 mod footer;
 mod header;
 mod home;
@@ -326,17 +327,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 );
             }
         }
-        tab => match app.download_for_tab(tab) {
-            Some(page) => download::render(frame, body_area, page, app.tick_count),
-            None => home::render(
-                frame,
-                body_area,
-                &app.home,
-                &app.library,
-                editing,
-                app.tick_count,
-            ),
-        },
+        Tab::Downloads => downloads::render(frame, body_area, app, app.tick_count),
     }
 
     footer::render(frame, footer_area, app);

@@ -80,7 +80,7 @@ fn right_arrow_moves_to_next_tab() {
     app.home.focus = HomeField::Video; // non-text so ←/→ switch screens
     assert_eq!(app.active_tab(), Tab::Home);
     app.handle_key(press(KeyCode::Right));
-    assert_eq!(app.active_tab(), Tab::Config);
+    assert_eq!(app.active_tab(), Tab::Downloads);
 }
 
 #[test]
@@ -100,7 +100,11 @@ fn tab_and_backtab_switch_screens() {
     app.home.focus = HomeField::Video;
     assert_eq!(app.active_tab(), Tab::Home);
     app.handle_key(press(KeyCode::Tab));
-    assert_eq!(app.active_tab(), Tab::Config, "tab cycles to the next tab");
+    assert_eq!(
+        app.active_tab(),
+        Tab::Downloads,
+        "tab cycles to the next tab"
+    );
     app.handle_key(press(KeyCode::BackTab));
     assert_eq!(
         app.active_tab(),
@@ -606,7 +610,8 @@ fn focus_config_auth_chip() -> osu_collect::app::App {
     app.config.login_state = AuthLoginState::LoggedOut;
     // Focus a non-text field so Right switches tabs rather than moving the caret.
     app.home.focus = HomeField::Video;
-    // Two static tabs now: a single Right lands on Config.
+    // Three static tabs: home → downloads → config.
+    app.handle_key(press(KeyCode::Right));
     app.handle_key(press(KeyCode::Right));
     assert_eq!(app.active_tab(), Tab::Config);
     app.config.focus = ConfigField::AuthChip;
@@ -685,7 +690,8 @@ fn space_on_auth_chip_does_nothing() {
     let mut app = make_app();
     // Focus a non-text field so Right switches tabs rather than moving the caret.
     app.home.focus = HomeField::Video;
-    // Two static tabs now: a single Right lands on Config.
+    // Three static tabs: home → downloads → config.
+    app.handle_key(press(KeyCode::Right));
     app.handle_key(press(KeyCode::Right));
     assert_eq!(app.active_tab(), Tab::Config);
     app.config.focus = ConfigField::AuthChip;
@@ -854,7 +860,11 @@ fn vim_hl_switch_tabs() {
     use osu_collect::app::Tab;
     let mut app = config_app_vim(true);
     app.handle_key(press(KeyCode::Char('h')));
-    assert_eq!(app.active_tab(), Tab::Home, "h switches to the prev tab");
+    assert_eq!(
+        app.active_tab(),
+        Tab::Downloads,
+        "h switches to the prev tab"
+    );
     app.handle_key(press(KeyCode::Char('l')));
     assert_eq!(app.active_tab(), Tab::Config, "l switches to the next tab");
 }

@@ -45,21 +45,11 @@ pub fn ignored_maps_path() -> Option<PathBuf> {
         }
     }
 
-    platform_data_dir().map(ignored_maps_path_in)
+    super::platform_data_dir().map(ignored_maps_path_in)
 }
 
 pub fn ignored_maps_path_in(base: PathBuf) -> PathBuf {
     base.join("osu-collect").join(IGNORED_MAPS_FILE)
-}
-
-#[cfg(windows)]
-fn platform_data_dir() -> Option<PathBuf> {
-    dirs::data_dir()
-}
-
-#[cfg(not(windows))]
-fn platform_data_dir() -> Option<PathBuf> {
-    dirs::data_local_dir()
 }
 
 pub fn load(path: &Path) -> IgnoredMapsFile {

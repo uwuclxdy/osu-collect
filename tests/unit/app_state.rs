@@ -18,14 +18,14 @@ fn right_tab_switch_from_home_off_a_non_text_field() {
 
     app.handle_key(key(KeyCode::Right));
 
-    // Two static tabs: Home → Config.
-    assert_eq!(app.active_tab, Tab::Config);
+    // Three static tabs: Home → Downloads.
+    assert_eq!(app.active_tab, Tab::Downloads);
 }
 
 #[test]
 fn left_tab_switch_to_home_probes_mirrors() {
     let mut app = App::new(Config::default());
-    app.active_tab = Tab::Config;
+    app.active_tab = Tab::Downloads;
 
     let cmd = app.handle_key(key(KeyCode::Left));
 

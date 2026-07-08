@@ -73,12 +73,14 @@ pub const RETRY_FAILED_ON_DOWNLOAD_MODES: [RetryFailedOnDownload; 3] = [
     RetryFailedOnDownload::No,
 ];
 
-/// Count of always-present static tabs (`home`, `config`). Download tabs are
-/// appended after these; see [`crate::app::tab::Tab`] for the identity enum that
-/// replaced the per-tab index constants.
-pub const STATIC_TABS: usize = 2;
+/// Count of always-present static tabs (`home`, `downloads`, `config`). All
+/// tabs are static now — per-run download tabs folded into the Downloads tab;
+/// see [`crate::app::tab::Tab`] for the identity enum that replaced the
+/// per-tab index constants.
+pub const STATIC_TABS: usize = 3;
 
 pub const TAB_HOME_LOWER: &str = "home";
+pub const TAB_DOWNLOADS_LOWER: &str = "downloads";
 pub const TAB_CONFIG_LOWER: &str = "config";
 
 /// Free-space threshold below which a disk-low banner and warning pill appear (1 GiB).

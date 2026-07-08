@@ -26,10 +26,11 @@ const VIM_CHIP: &str = " vim ";
 const QUIT_PROMPT_TEXT: &str = "press q again to quit";
 const QUIT_PROMPT_TEXT_DOWNLOADS: &str = "press q again to quit · active downloads will stop";
 
-/// Download-page back key while running: `q` aborts the in-flight download.
-const HINT_ABORT: &str = "q abort";
-/// `esc`/`q` close key — a settled download page or the login split. `x`
-/// stays toast-only (a notification key, not a page action) so it isn't a back key.
+/// Downloads preview, run still in flight: `esc` cancels it (leaving without
+/// cancelling is `←`). Must stay advertised — esc is destructive here.
+const HINT_CANCEL: &str = "esc cancel";
+/// `esc`/`q` close key for the login split. `x` stays toast-only (a
+/// notification key, not a page action) so it isn't a back key.
 const HINT_CLOSE: &str = "esc/q close";
 const HINT_RETRY: &str = "r retry failed";
 const HINT_DEFER_DROP: &str = "s defer · S drop";
@@ -104,7 +105,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     if app.home.quit_prompt {
-        frame.render_widget(quit_prompt_paragraph(!app.downloads.is_empty()), area);
+        // Warn about stopping downloads only when one is actually in flight —
+        // settled pages are retained on the Downloads tab and quit clean.
+        frame.render_widget(quit_prompt_paragraph(app.is_downloading()), area);
         return;
     }
 
@@ -169,7 +172,7 @@ fn current_message(app: &App) -> Option<&AppMessage> {
         // The login split lives on Config and surfaces its in-progress status
         // via `config.message`, so the Config arm covers it too.
         Tab::Config => app.config.message.as_ref(),
-        Tab::Download(_) => None,
+        Tab::Downloads => None,
     }
 }
 
@@ -209,7 +212,7 @@ fn tab_hints(app: &App) -> (Vec<&'static str>, Option<&'static str>) {
     match app.active_tab() {
         Tab::Home => home_tab_hints(&app.home),
         Tab::Config => (config_hints(&app.config), Some(HINT_QUIT)),
-        Tab::Download(_) => download_hints(app),
+        Tab::Downloads => downloads_hints(app),
     }
 }
 
@@ -225,17 +228,30 @@ fn login_hints(app: &App) -> Vec<&'static str> {
     segments
 }
 
-/// Download-page middle hints + trailing back key. `s defer` acts only on a row
-/// parked on an inline cooldown now (`defer_rate_limited` wakes inline waiters);
-/// `S drop` also drains deferred-pending queue items, so it shows under the
+/// Downloads-tab middle hints + trailing back key.
+///
+/// List focused: select/open keys, `q quit` trails. Preview focused, the
+/// download-control keys scoped there: `s defer` acts only on a row parked on
+/// an inline cooldown now (`defer_rate_limited` wakes inline waiters); `S
+/// drop` also drains deferred-pending queue items, so it shows under the
 /// broader parked-or-deferred gate — matching `handle_download_tab_key` so
-/// neither hint advertises a dead key. `r retry failed` shows only when the page
-/// has a retryable failure (404s never are). The back key is `q abort` while
-/// running, `esc/q close` once settled (`Completed`/`Failed`).
-fn download_hints(app: &App) -> (Vec<&'static str>, Option<&'static str>) {
-    let page = app.download_for_tab(app.active_tab());
-    let settled = page
-        .is_some_and(|page| matches!(page.stage, DownloadStage::Completed | DownloadStage::Failed));
+/// neither hint advertises a dead key. `r retry failed` shows only when the
+/// page has a retryable failure (404s never are). While the previewed run is
+/// in flight the trailing key is `esc cancel` (destructive, must be
+/// advertised); a settled run / history record ascends on esc, unadvertised
+/// like every other browse.
+fn downloads_hints(app: &App) -> (Vec<&'static str>, Option<&'static str>) {
+    if !app.downloads_tab.preview_focused {
+        let segments = if app.downloads_rows().is_empty() {
+            Vec::new()
+        } else {
+            vec![HINT_MOVE, HINT_ENTER_OPEN]
+        };
+        return (segments, Some(HINT_QUIT));
+    }
+
+    let page = app.selected_download_page();
+    let running = page.is_some_and(|page| !page.is_settled());
     let mut segments = vec![HINT_SCROLL];
     if let Some(page) = page.filter(|page| matches!(page.stage, DownloadStage::Downloading)) {
         if page.any_active_rate_limited() {
@@ -247,8 +263,9 @@ fn download_hints(app: &App) -> (Vec<&'static str>, Option<&'static str>) {
     if page.is_some_and(|page| !page.retryable_ids(None).is_empty()) {
         segments.push(HINT_RETRY);
     }
-    let back = if settled { HINT_CLOSE } else { HINT_ABORT };
-    (segments, Some(back))
+    segments.push(HINT_FOCUS_LIST);
+    let back = running.then_some(HINT_CANCEL);
+    (segments, back)
 }
 
 fn join(segments: &[&str]) -> String {
