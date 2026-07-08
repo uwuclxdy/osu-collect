@@ -1,6 +1,6 @@
 [package]
 name = "osu-downloader"
-version = "0.17.0"
+version = "0.18.0"
 edition = "2024"
 autotests = false
 publish = false
@@ -44,10 +44,13 @@ tempfile = "3.27.0"
 criterion = { version = "0.8.2", features = ["html_reports"] }
 
 [features]
-default = ["collection", "size-fetch", "search"]
+default = ["collection", "size-fetch", "search", "filter"]
 
 # osucollector.com client + Collection types
 collection = []
+
+# nzbasic batch-beatmap-downloader filter API client
+filter = []
 
 # Beatmapset size fetching
 size-fetch = []

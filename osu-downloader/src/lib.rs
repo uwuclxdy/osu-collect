@@ -37,6 +37,7 @@
 //! - `collection` — osucollector.com client and `collection.db` writer
 //! - `size-fetch` — Nekoha-backed beatmapset size and availability probes
 //! - `search` — osu! API v2 beatmapset search client
+//! - `filter` — nzbasic batch-beatmap-downloader filter API client
 //! - `instrument` — per-attempt observer callback for scheduler tuning
 #![deny(missing_docs)]
 
@@ -56,6 +57,9 @@ pub(crate) mod worker;
 
 #[cfg(feature = "collection")]
 pub mod collection;
+
+#[cfg(feature = "filter")]
+pub mod filter;
 
 #[cfg(feature = "search")]
 pub mod search;
