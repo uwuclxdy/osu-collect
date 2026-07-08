@@ -2706,6 +2706,9 @@ impl App {
         if self.active_tab != Tab::Downloads {
             self.downloads_tab.preview_focused = false;
             if self.config.jump_to_downloads {
+                // Writes active_tab without close_login(): safe because the
+                // login focus-trap intercepts every queue keypress first.
+                debug_assert!(self.login.is_none());
                 self.active_tab = Tab::Downloads;
             }
         }

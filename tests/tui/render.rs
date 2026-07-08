@@ -952,7 +952,7 @@ fn config_tab_shows_mirrors_section_before_download() {
         .match_indices("download")
         .map(|(i, _)| i)
         .find(|&i| i > 120 && !content[i..].starts_with("downloads"));
-    if let (Some(m), Some(d)) = (mir_pos, dl_pos) {
-        assert!(m < d, "mirrors section should render before download");
-    }
+    let m = mir_pos.expect("mirrors section header must render at 120x60");
+    let d = dl_pos.expect("download section header must render at 120x60");
+    assert!(m < d, "mirrors section should render before download");
 }
