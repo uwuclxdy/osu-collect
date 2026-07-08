@@ -180,6 +180,18 @@ fn deserializes_filter_response() {
 }
 
 #[test]
+fn deserializes_response_missing_size_map_and_hashes() {
+    // Defensive default: a response omitting the (empty) map/array shapes
+    // still parses instead of failing the whole run.
+    let json = r#"{ "Ids": [], "SetIds": [] }"#;
+    let results: FilterResults = serde_json::from_str(json).expect("parse sparse response");
+    assert!(results.ids.is_empty());
+    assert!(results.set_ids.is_empty());
+    assert!(results.size_map.is_empty());
+    assert!(results.hashes.is_empty());
+}
+
+#[test]
 fn deserializes_beatmap_details_row() {
     // Captured live 2026-07-08, trimmed to the consumed fields; the real
     // response carries extras (TimingPoints, Tags, ...) that serde must ignore.

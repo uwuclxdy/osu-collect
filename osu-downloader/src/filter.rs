@@ -228,11 +228,12 @@ pub struct FilterResults {
     /// Deduplicated beatmapset ids — what the download pipeline consumes.
     #[serde(rename = "SetIds")]
     pub set_ids: Vec<u32>,
-    /// Archive size in bytes, keyed by set id.
-    #[serde(rename = "SizeMap")]
+    /// Archive size in bytes, keyed by set id. Defaulted so a response that
+    /// omits the map (empty match on a future server build) still parses.
+    #[serde(rename = "SizeMap", default)]
     pub size_map: HashMap<u32, u64>,
     /// Per-diff MD5 checksums.
-    #[serde(rename = "Hashes")]
+    #[serde(rename = "Hashes", default)]
     pub hashes: Vec<String>,
 }
 
