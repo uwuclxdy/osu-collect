@@ -108,6 +108,10 @@ fn parse_range_rejects_junk_and_inverted_bounds() {
     assert!(err.contains("stars"), "error names the field: {err}");
     let err = parse_range("bpm", "200-100").expect_err("inverted");
     assert!(err.contains("greater than max"), "{err}");
+    // f64::parse accepts these; the boundary must not let them reach the wire.
+    assert!(parse_range("ar", "nan").is_err());
+    assert!(parse_range("ar", "inf").is_err());
+    assert!(parse_range("ar", "1-inf").is_err());
 }
 
 #[test]

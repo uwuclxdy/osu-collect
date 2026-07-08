@@ -453,16 +453,26 @@ fn dispatch_command(
             );
         }
         Some(AppCommand::LoadFilterDetails) => {
-            // Pull the next unfetched page off the pager; a dry pager (every
-            // page requested) makes this a no-op.
-            let rewind_to = app.home.filter.details_cursor();
-            if let Some(page) = app.home.filter.next_details_page() {
-                schedule_filter_details(
-                    page,
-                    rewind_to,
-                    &mut tasks.filter_details,
-                    &tasks.home_filter_tx,
-                );
+            // One page in flight at a time: dispatching another would abort the
+            // in-flight page task AFTER the pager already advanced past it, so
+            // those rows would never get their metadata (rewind only fires on a
+            // failure event, not on abort-by-supersede). `m` no-ops while busy.
+            let busy = tasks
+                .filter_details
+                .as_ref()
+                .is_some_and(|handle| !handle.is_finished());
+            if !busy {
+                // Pull the next unfetched page off the pager; a dry pager
+                // (every page requested) makes this a no-op.
+                let rewind_to = app.home.filter.details_cursor();
+                if let Some(page) = app.home.filter.next_details_page() {
+                    schedule_filter_details(
+                        page,
+                        rewind_to,
+                        &mut tasks.filter_details,
+                        &tasks.home_filter_tx,
+                    );
+                }
             }
         }
         Some(AppCommand::ProbeMirrors) => {

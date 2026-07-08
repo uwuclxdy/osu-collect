@@ -515,7 +515,11 @@ fn parse_range(label: &str, value: &str) -> Result<FilterRange, String> {
     let parse = |part: &str| -> Result<f64, String> {
         part.trim()
             .parse::<f64>()
-            .map_err(|_| format!("{label}: \"{part}\" is not a number"))
+            .ok()
+            // `f64::parse` accepts "nan"/"inf"; neither is a usable bound and
+            // NaN would slip past the min>max guard, so reject at the boundary.
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| format!("{label}: \"{part}\" is not a number"))
     };
     let range = match value.split_once('-') {
         Some((min, max)) => FilterRange {
