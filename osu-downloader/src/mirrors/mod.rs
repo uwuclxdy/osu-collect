@@ -58,6 +58,12 @@ pub enum MirrorKind {
     /// `x-api-version` header; the caller must attach both via
     /// [`Mirror::with_headers`]. See [`MirrorKind::requires_auth`].
     OsuApi,
+    /// nzbasic batch-beatmap-downloader CDN (anonymous).
+    ///
+    /// Serves a cached set wrapped in a `multipart/form-data` envelope that
+    /// the pipeline unwraps before validation; a miss can be a `404` or a
+    /// `200` with a JSON/HTML error body, both treated as not-found.
+    Nzbasic,
     /// Custom mirror with user-provided URL template.
     Custom,
 }
@@ -136,6 +142,14 @@ impl MirrorKind {
                 // `?noVideo=1` is the verified no-video query param (osu-web).
                 template_no_video: "https://osu.ppy.sh/api/v2/beatmapsets/{id}/download?noVideo=1",
             }),
+            MirrorKind::Nzbasic => Some(ProviderMeta {
+                // No published rate limit; match the other anonymous mirrors'
+                // penalty backoff. The CDN has no no-video variant.
+                label: "nzbasic",
+                backoff_secs: 45,
+                template: "https://direct.nzbasic.com/{id}.osz",
+                template_no_video: "https://direct.nzbasic.com/{id}.osz",
+            }),
             MirrorKind::Custom => None,
         }
     }
@@ -152,6 +166,7 @@ impl MirrorKind {
         MirrorKind::Catboy,
         MirrorKind::Hinamizawa,
         MirrorKind::OsuApi,
+        MirrorKind::Nzbasic,
     ];
 
     /// Whether this mirror needs a caller-supplied `Authorization` header to
@@ -161,6 +176,14 @@ impl MirrorKind {
     #[inline]
     pub fn requires_auth(&self) -> bool {
         matches!(self, MirrorKind::OsuApi)
+    }
+
+    /// Whether this mirror wraps the served archive in a `multipart/form-data`
+    /// envelope the pipeline must strip before validation. Only
+    /// [`MirrorKind::Nzbasic`] does.
+    #[inline]
+    pub(crate) fn multipart_envelope(&self) -> bool {
+        matches!(self, MirrorKind::Nzbasic)
     }
 
     /// Display label for this mirror.
@@ -186,6 +209,7 @@ impl MirrorKind {
             MirrorKind::Catboy => "catboy.best",
             MirrorKind::Hinamizawa => "mirror.hinamizawa.ai",
             MirrorKind::OsuApi => "osu.ppy.sh",
+            MirrorKind::Nzbasic => "direct.nzbasic.com",
             MirrorKind::Custom => "custom",
         }
     }
@@ -420,6 +444,15 @@ impl Mirror {
         Self::new_builtin(MirrorKind::OsuApi)
     }
 
+    /// nzbasic batch-beatmap-downloader CDN mirror.
+    ///
+    /// A cached set arrives wrapped in a `multipart/form-data` envelope; the
+    /// pipeline strips it before validation. Coverage is whatever the BBD
+    /// backend has cached — a miss rotates to the next mirror.
+    pub fn nzbasic() -> Self {
+        Self::new_builtin(MirrorKind::Nzbasic)
+    }
+
     /// Every built-in mirror, in the library's default preference order.
     ///
     /// Includes [`MirrorKind::OsuApi`], which requires a caller-supplied auth
@@ -435,6 +468,7 @@ impl Mirror {
             Mirror::catboy(),
             Mirror::hinamizawa(),
             Mirror::osu_api(),
+            Mirror::nzbasic(),
         ]
     }
 

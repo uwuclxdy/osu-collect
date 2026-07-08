@@ -48,21 +48,11 @@ impl HashWorker {
     fn new() -> Self {
         let (sender, receiver) = mpsc::channel::<Bytes>();
         let handle = task::spawn_blocking(move || {
-            const HEX: &[u8; 16] = b"0123456789abcdef";
             let mut hasher = Md5::new();
             while let Ok(chunk) = receiver.recv() {
                 hasher.update(&chunk);
             }
-            let digest = hasher.finalize();
-            let mut buf = [0u8; 32];
-            for (i, &b) in digest.iter().enumerate() {
-                buf[i * 2] = HEX[(b >> 4) as usize];
-                buf[i * 2 + 1] = HEX[(b & 0xf) as usize];
-            }
-            // buf contains only ASCII hex digits — valid UTF-8 by construction
-            std::str::from_utf8(&buf)
-                .expect("hex digits are valid utf-8")
-                .into()
+            finalize_md5(hasher)
         });
 
         Self {
@@ -91,8 +81,7 @@ impl HashWorker {
     }
 }
 
-#[cfg(test)]
-pub(super) fn finalize_md5(hasher: Md5) -> Box<str> {
+pub(crate) fn finalize_md5(hasher: Md5) -> Box<str> {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let digest = hasher.finalize();
     let mut buf = [0u8; 32];

@@ -38,6 +38,10 @@ fn mirror_templates() {
         Mirror::osu_api().url_for(320118),
         "https://osu.ppy.sh/api/v2/beatmapsets/320118/download"
     );
+    assert_eq!(
+        Mirror::nzbasic().url_for(320118),
+        "https://direct.nzbasic.com/320118.osz"
+    );
 }
 
 #[test]
@@ -64,6 +68,11 @@ fn no_video_templates_for_new_mirrors() {
         Mirror::osu_api().no_video().url_for(42),
         "https://osu.ppy.sh/api/v2/beatmapsets/42/download?noVideo=1"
     );
+    // nzbasic's CDN has no no-video variant; both templates match.
+    assert_eq!(
+        Mirror::nzbasic().no_video().url_for(42),
+        "https://direct.nzbasic.com/42.osz"
+    );
 }
 
 #[test]
@@ -78,9 +87,23 @@ fn only_osu_api_requires_auth() {
         MirrorKind::Osudl,
         MirrorKind::Catboy,
         MirrorKind::Hinamizawa,
+        MirrorKind::Nzbasic,
         MirrorKind::Custom,
     ] {
         assert!(!kind.requires_auth(), "{kind:?} must download anonymously");
+    }
+}
+
+#[test]
+fn nzbasic_is_last_builtin_and_the_only_envelope_mirror() {
+    assert_eq!(MirrorKind::BUILTINS.last(), Some(&MirrorKind::Nzbasic));
+    assert_eq!(MirrorKind::Nzbasic.host(), "direct.nzbasic.com");
+    for kind in MirrorKind::BUILTINS.iter().copied() {
+        assert_eq!(
+            kind.multipart_envelope(),
+            kind == MirrorKind::Nzbasic,
+            "only nzbasic serves a multipart envelope: {kind:?}"
+        );
     }
 }
 

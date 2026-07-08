@@ -6,6 +6,7 @@
 use crate::{
     config::{TRANSIENT_RETRY_ATTEMPTS, TRANSIENT_RETRY_BASE_DELAY},
     downloader::OnExists,
+    envelope,
     event::{Skip, Status},
     mirrors::{Acquire, Mirror, MirrorKind, MirrorPool, MirrorRef},
     output_entry::parse_beatmapset_filename,
@@ -337,7 +338,7 @@ pub(crate) async fn download_beatmapset(
                         // a set that 404s on every mirror escape the all-missing
                         // → skip detection below.
                         not_found.insert(idx);
-                        last_error = Some(failed(Some(mirror.kind()), "not found (404)"));
+                        last_error = Some(failed(Some(mirror.kind()), "not found"));
                         candidates.retain(|&c| c != idx);
                     }
                     MirrorAttempt::RateLimited { retry_after } => {
@@ -485,6 +486,16 @@ enum MirrorAttempt {
     RateLimited { retry_after: Option<Duration> },
     Transient(String),
     Definitive(String),
+}
+
+/// Failure while handling a 2xx response's body, split so a body-level miss
+/// (an envelope mirror answering `200` with a "set does not exist" body) can
+/// join the same not-found accounting as an HTTP 404.
+enum ResponseError {
+    /// The body says the set does not exist on this mirror.
+    NotFound(String),
+    /// Any other definitive body or IO failure.
+    Failed(String),
 }
 
 async fn find_existing_beatmapset(
@@ -771,7 +782,26 @@ async fn try_mirror_once(
             );
             MirrorAttempt::Done(outcome)
         }
-        Err(reason) => {
+        Err(ResponseError::NotFound(reason)) => {
+            trace!(
+                beatmapset_id = params.beatmapset_id,
+                mirror = mirror.kind().label(),
+                reason = %reason,
+                "mirror body reported a miss"
+            );
+            #[cfg(feature = "instrument")]
+            record_attempt(
+                params,
+                mirror,
+                idx,
+                crate::instrument::AttemptOutcome::NotFound,
+                Some(status.as_u16()),
+                None,
+                latency,
+            );
+            MirrorAttempt::NotFound
+        }
+        Err(ResponseError::Failed(reason)) => {
             #[cfg(feature = "instrument")]
             record_attempt(
                 params,
@@ -848,7 +878,7 @@ async fn process_mirror_response(
     response: reqwest::Response,
     params: &DownloadParams<'_>,
     probed_size: Option<u64>,
-) -> std::result::Result<BeatmapsetDownloadOutcome, String> {
+) -> std::result::Result<BeatmapsetDownloadOutcome, ResponseError> {
     let content_length = response.content_length().or(probed_size);
     if let Some(content_type) = response
         .headers()
@@ -856,10 +886,18 @@ async fn process_mirror_response(
         .and_then(|value| value.to_str().ok())
         && !is_archive_content_type(content_type)
     {
-        return Err(format!(
+        let reason = format!(
             "unexpected content type '{content_type}' from {}",
             mirror.kind().label()
-        ));
+        );
+        // An envelope mirror labels a hit with no content type at all; a
+        // labeled non-archive body is its JSON/HTML "set does not exist"
+        // answer, caught here before the body streams.
+        return Err(if mirror.kind().multipart_envelope() {
+            ResponseError::NotFound(reason)
+        } else {
+            ResponseError::Failed(reason)
+        });
     }
 
     let filename = extract_filename(&response, params.beatmapset_id);
@@ -885,14 +923,14 @@ async fn process_mirror_response(
                         run_cancelable(tokio::fs::remove_file(&output_path), &params.cancel_rx)
                             .await
                     {
-                        remove_result.map_err(|err| err.to_string())?;
+                        remove_result.map_err(|err| ResponseError::Failed(err.to_string()))?;
                     } else {
                         return Ok(BeatmapsetDownloadOutcome::Aborted);
                     }
                 }
             },
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(err.to_string()),
+            Err(err) => return Err(ResponseError::Failed(err.to_string())),
         }
     } else {
         return Ok(BeatmapsetDownloadOutcome::Aborted);
@@ -923,7 +961,7 @@ async fn write_archive(
     output_path: PathBuf,
     filename: String,
     content_length: Option<u64>,
-) -> std::result::Result<BeatmapsetDownloadOutcome, String> {
+) -> std::result::Result<BeatmapsetDownloadOutcome, ResponseError> {
     let stream = stream_download(
         response,
         &output_path,
@@ -933,22 +971,24 @@ async fn write_archive(
         params.cancel_rx.clone(),
     )
     .await
-    .map_err(|err| err.to_string())?;
+    .map_err(|err| ResponseError::Failed(err.to_string()))?;
 
     if stream.aborted {
         return Ok(BeatmapsetDownloadOutcome::Aborted);
     }
 
+    // Compared against the raw streamed bytes, so it must run before any
+    // envelope strip shrinks the file.
     if let Some(expected) = content_length
         && stream.bytes_written < expected
     {
         let _ = tokio::fs::remove_file(&stream.temp_path).await;
-        return Err(format!(
+        return Err(ResponseError::Failed(format!(
             "download incomplete from {} (received {} of {} bytes)",
             mirror.kind().label(),
             stream.bytes_written,
             expected
-        ));
+        )));
     }
 
     emit_status(
@@ -957,6 +997,32 @@ async fn write_archive(
             mirror: mirror.mirror_ref(),
         },
     );
+
+    let mut hash = stream.hash;
+    let mut size_bytes = stream.bytes_written;
+    if mirror.kind().multipart_envelope() {
+        match envelope::unwrap_envelope(&stream.temp_path).await {
+            Ok(envelope::Unwrap::Bare) => {}
+            Ok(envelope::Unwrap::Stripped { md5, len }) => {
+                hash = Some(md5);
+                size_bytes = len;
+            }
+            Ok(envelope::Unwrap::Miss) => {
+                let _ = tokio::fs::remove_file(&stream.temp_path).await;
+                return Err(ResponseError::NotFound(format!(
+                    "{} reports the set unavailable",
+                    mirror.kind().label()
+                )));
+            }
+            Err(reason) => {
+                let _ = tokio::fs::remove_file(&stream.temp_path).await;
+                return Err(ResponseError::Failed(format!(
+                    "{} served a malformed body: {reason}",
+                    mirror.kind().label()
+                )));
+            }
+        }
+    }
 
     let verify_start = Instant::now();
     if let Some(validate_result) = run_cancelable(
@@ -967,10 +1033,10 @@ async fn write_archive(
     {
         if let Err(err) = validate_result {
             let _ = tokio::fs::remove_file(&stream.temp_path).await;
-            return Err(format!(
+            return Err(ResponseError::Failed(format!(
                 "{} returned an invalid archive: {err}",
                 mirror.kind().label()
-            ));
+            )));
         }
     } else {
         let _ = tokio::fs::remove_file(&stream.temp_path).await;
@@ -986,17 +1052,14 @@ async fn write_archive(
             });
         }
         FinalizeResult::Aborted => return Ok(BeatmapsetDownloadOutcome::Aborted),
-        FinalizeResult::Failed(reason) => return Err(reason),
+        FinalizeResult::Failed(reason) => return Err(ResponseError::Failed(reason)),
     }
 
     Ok(BeatmapsetDownloadOutcome::Success {
         filename,
-        hash: stream
-            .hash
-            .unwrap_or_else(|| "unknown".into())
-            .into_string(),
+        hash: hash.unwrap_or_else(|| "unknown".into()).into_string(),
         mirror: mirror.mirror_ref(),
-        size_bytes: stream.bytes_written,
+        size_bytes,
         verify_duration_us,
     })
 }

@@ -45,6 +45,7 @@ pub(crate) mod batch;
 pub(crate) mod config;
 pub(crate) mod download;
 mod downloader;
+mod envelope;
 mod error;
 mod event;
 pub(crate) mod http;

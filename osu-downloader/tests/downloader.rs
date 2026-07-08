@@ -31,6 +31,7 @@ fn default_mirrors_include_every_builtin_mirror() {
             MirrorKind::Catboy,
             MirrorKind::Hinamizawa,
             MirrorKind::OsuApi,
+            MirrorKind::Nzbasic,
         ]
     );
 }
