@@ -1,6 +1,6 @@
 //! State for the Get Maps `Search` source: the query form (free-text +
 //! mode/status/sort chips) plus the results browse. The osu! API v2 contract and
-//! token plan live in `docs/plan/search-thin-slice.md`; this module holds the UI
+//! token plan live in `docs/plan/get-maps-rework.md`; this module holds the UI
 //! state the source drives. Search is CTA-triggered — nothing here fires a query
 //! on keystroke; the app dispatches [`AppCommand::RunSearch`] on the `search`
 //! button and on `load more`.

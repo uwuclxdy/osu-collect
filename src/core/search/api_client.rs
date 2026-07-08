@@ -61,7 +61,9 @@ impl HttpSearchService {
             return Ok(auth.bearer_token().to_string());
         }
 
-        // Logged out: guest client_credentials from the app's own creds.
+        // Logged out: guest client_credentials from the app's own creds. Own
+        // registered client required — lazer's public client (id 5) is refused
+        // this grant ("client is missing owner", probed live 2026-07-05).
         let (Some(client_id), Some(client_secret)) = (OSU_CLIENT_ID, OSU_CLIENT_SECRET) else {
             return Err(AppError::api(
                 "log in to search (no search credentials in this build)",

@@ -63,6 +63,9 @@ impl BeatmapReader for StableReader {
                 .push(LocalBeatmap { checksum: cksum });
         }
 
+        // Boxing growth-doubled vecs strands allocator pages: a measured shrink
+        // attempt (sorted `Box<[Md5]>`, 2026-05) saved ~nothing for that reason.
+        // If RSS matters again, reserve exact capacity upfront or swap allocators.
         Ok(sets
             .into_iter()
             .map(|(id, beatmaps)| LocalBeatmapset {
