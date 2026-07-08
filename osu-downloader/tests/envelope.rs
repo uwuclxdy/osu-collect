@@ -61,6 +61,26 @@ async fn strips_envelope_to_valid_archive() {
 }
 
 #[tokio::test]
+async fn strips_envelope_across_multiple_copy_chunks() {
+    // Larger than COPY_BUF and not chunk-aligned, so the copy-down loop runs
+    // more than once and ends on a partial chunk — the path every real
+    // multi-MB download takes.
+    let payload: Vec<u8> = (0..super::COPY_BUF + 12_347)
+        .map(|i| (i % 251) as u8)
+        .collect();
+    let tmp = write_temp(&envelope_bytes(&payload, true));
+
+    match unwrap_envelope(tmp.path()).await.unwrap() {
+        Unwrap::Stripped { md5, len } => {
+            assert_eq!(len, payload.len() as u64);
+            assert_eq!(md5, payload_md5(&payload));
+        }
+        other => panic!("expected Stripped, got {other:?}"),
+    }
+    assert_eq!(std::fs::read(tmp.path()).unwrap(), payload);
+}
+
+#[tokio::test]
 async fn strips_envelope_without_final_crlf() {
     let payload = minimal_zip_bytes_for_test();
     let tmp = write_temp(&envelope_bytes(&payload, false));

@@ -5,7 +5,8 @@
 //! part headers carry the filename, the real ZIP follows the blank line, and a
 //! closing `--boundary--` trails the EOCD. No response header declares the
 //! boundary, so it is sniffed from the body. A missing set can come back as a
-//! `200` with a JSON or HTML error body instead, which must read as a miss.
+//! `200` with a JSON or HTML error body instead, which must read as a miss
+//! (as does any other non-`PK`, non-boundary body, an empty one included).
 //!
 //! The unwrap runs on the fully streamed temp file (the incomplete-length
 //! check upstream compares raw bytes against the raw `Content-Length`, so
