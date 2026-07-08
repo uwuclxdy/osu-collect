@@ -35,7 +35,7 @@ osu!collect is a terminal app (TUI) that **downloads osu! beatmap collections fr
 - **Skips what you already own**: Reads your osu! library (stable `osu!.db` / lazer realm) and skips maps you've already imported instead of re-fetching them; they still go into the generated `collection.db`.
 - **Retry failed maps**: Failures persist between runs. Retry them with one key, or on the next download.
 - **Self-updating**: Checks for a newer release on launch and installs it. Flip auto-update off in config to just get a notice; then press <kbd>u</kbd> to read the changelog and update when you want.
-- **Parallel collection tabs**: Queue several collections and download them at once.
+- **Downloads tab with history**: Every run — active or past — lives on one list; open a run for live per-map progress. Past runs (including cancelled ones) survive restarts.
 
 ## Installation
 
@@ -101,16 +101,17 @@ Paste a collection link, pick a directory, press <kbd>↵</kbd>.
 |---|---|
 | <kbd>↑</kbd> <kbd>↓</kbd> | Move between rows |
 | <kbd>←</kbd> <kbd>→</kbd> <kbd>tab</kbd> <kbd>shift</kbd>+<kbd>tab</kbd> | Switch tabs (<kbd>tab</kbd> path-completes the directory while editing it) |
-| <kbd>↵</kbd> | Activate, toggle, start a download, or edit a field |
+| <kbd>↵</kbd> | Activate, toggle, start a download, or edit a field; on the downloads tab, open the highlighted run |
 | <kbd>space</kbd> | Toggle the focused checkbox or switch |
-| <kbd>s</kbd> | Jump to the download button; on a download tab, defer maps stuck on a rate-limit cooldown so they retry later |
-| <kbd>S</kbd> | On a download tab, drop maps stuck on a rate-limit cooldown for the rest of the run |
+| <kbd>s</kbd> | Jump to the download button; in an open run, defer maps stuck on a rate-limit cooldown so they retry later |
+| <kbd>S</kbd> | In an open run, drop maps stuck on a rate-limit cooldown for the rest of the run |
 | <kbd>+</kbd> <kbd>-</kbd> | Adjust thread count |
-| <kbd>r</kbd> | Retry all failed maps on a download tab |
+| <kbd>r</kbd> | Retry all failed maps in an open run |
 | <kbd>x</kbd> | Dismiss an error message |
 | <kbd>?</kbd> | Help overlay listing every key |
 | <kbd>u</kbd> | Open the changelog + update prompt when a newer release is available (shows only when auto-update is off) |
-| <kbd>q</kbd> | Back / quit (press twice to confirm; aborts a running download the same way) |
+| <kbd>esc</kbd> | Back; in an open running run it cancels the download (<kbd>←</kbd> steps back without cancelling) |
+| <kbd>q</kbd> | Quit (press twice to confirm; running downloads stop) |
 | <kbd>ctrl</kbd>+<kbd>c</kbd> | Quit immediately from anywhere |
 | <kbd>home</kbd> <kbd>end</kbd> | Jump to the first / last row of a list or form |
 | <kbd>pgup</kbd> <kbd>pgdn</kbd> | Page a list up / down |
@@ -197,10 +198,10 @@ Yes. See [Importing into osu!](#importing-into-osu). The generated `collection.d
 No. Logging in is optional and only adds the official osu! servers as an extra source.
 
 **Can it update a collection I downloaded earlier?**
-Yes. The updates tab diffs your downloaded collections against osu!collector and fetches only what's missing.
+Yes. The update source on the get maps tab diffs your downloaded collections against osu!collector and fetches only what's missing.
 
 **A download failed or got rate limited. What now?**
-Failures save per collection. Press <kbd>r</kbd> on the download tab to retry them all, or accept the retry prompt next time you download that collection. Rate-limited mirrors cool down on their own while the others keep going. A map that stays throttled past the auto-defer delay (60s by default, configurable) goes back in the queue on its own and retries later, so the run never stalls; press <kbd>s</kbd> to defer the currently-stuck maps yourself, or <kbd>S</kbd> to drop them for the rest of the run.
+Failures save per collection. Open the run on the downloads tab and press <kbd>r</kbd> to retry them all, or accept the retry prompt next time you download that collection. Rate-limited mirrors cool down on their own while the others keep going. A map that stays throttled past the auto-defer delay (60s by default, configurable) goes back in the queue on its own and retries later, so the run never stalls; press <kbd>s</kbd> to defer the currently-stuck maps yourself, or <kbd>S</kbd> to drop them for the rest of the run.
 
 ## Building from source
 
