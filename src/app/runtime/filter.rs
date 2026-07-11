@@ -5,7 +5,7 @@
 //! results land, `m` in the browse for more) so a huge result set never sweeps
 //! the free instance unprompted.
 
-use crate::app::{App, AppCommand, BrowseRow, FilterStatusMsg};
+use crate::app::{App, AppCommand, BrowseRow, FindBackend, FindStatusMsg};
 use osu_downloader::Error;
 use osu_downloader::filter::{BeatmapDetails, FilterClient, FilterQuery, FilterResults};
 use osu_downloader::search::BeatmapSetMeta;
@@ -130,7 +130,7 @@ pub fn schedule_filter_details(
 pub fn handle_home_filter_event(event: HomeFilterEvent, app: &mut App) -> Option<AppCommand> {
     match event {
         HomeFilterEvent::Loading => {
-            app.home.filter.status_msg = FilterStatusMsg::Loading;
+            app.home.find.status_msg = FindStatusMsg::Loading;
             None
         }
         HomeFilterEvent::Results { results } => {
@@ -141,13 +141,15 @@ pub fn handle_home_filter_event(event: HomeFilterEvent, app: &mut App) -> Option
                 .iter()
                 .map(|&id| BrowseRow { id, meta: None })
                 .collect();
-            let filter = &mut app.home.filter;
-            filter.set_results(results.ids, results.size_map);
-            filter.status_msg = FilterStatusMsg::Ready { sets, total_bytes };
-            filter.browse.set_rows(rows);
-            filter.mark_results_current();
+            let find = &mut app.home.find;
+            find.set_results(results.ids, results.size_map);
+            find.status_msg = FindStatusMsg::ReadyFilter { sets, total_bytes };
+            find.browse.set_rows(rows);
+            // These rows came from nzbasic; record the backend + snapshot inputs.
+            find.note_results_backend(FindBackend::Nzbasic);
+            find.mark_results_current();
             // Open the results immediately on a fresh fetch (search parity).
-            filter.browse.descend();
+            find.browse.descend();
             // Enrich what the user is about to look at: the first details page.
             Some(AppCommand::LoadFilterDetails)
         }
@@ -156,21 +158,21 @@ pub fn handle_home_filter_event(event: HomeFilterEvent, app: &mut App) -> Option
             None
         }
         HomeFilterEvent::DetailsFailed { reason, rewind_to } => {
-            app.home.filter.rewind_details(rewind_to);
+            app.home.find.rewind_details(rewind_to);
             app.toast_warn(format!("map details unavailable: {reason}"));
             None
         }
         HomeFilterEvent::Empty => {
-            let filter = &mut app.home.filter;
-            filter.status_msg = FilterStatusMsg::Empty;
-            filter.set_results(Vec::new(), HashMap::new());
-            filter.browse.set_rows(Vec::new());
-            filter.clear_results_snapshot();
+            let find = &mut app.home.find;
+            find.status_msg = FindStatusMsg::Empty;
+            find.set_results(Vec::new(), HashMap::new());
+            find.browse.set_rows(Vec::new());
+            find.clear_results_snapshot();
             None
         }
         HomeFilterEvent::Failed { reason } => {
-            app.home.filter.status_msg = FilterStatusMsg::Error(reason);
-            app.home.filter.clear_results_snapshot();
+            app.home.find.status_msg = FindStatusMsg::Error(reason);
+            app.home.find.clear_results_snapshot();
             None
         }
     }
@@ -194,7 +196,7 @@ fn fold_details(app: &mut App, rows: Vec<BeatmapDetails>) {
             video: false,
         });
     }
-    for row in &mut app.home.filter.browse.rows {
+    for row in &mut app.home.find.browse.rows {
         if row.meta.is_none()
             && let Some(meta) = meta_by_set.remove(&row.id)
         {

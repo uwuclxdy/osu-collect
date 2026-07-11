@@ -70,37 +70,22 @@ fn update_cursor_col(form: &HomeTab, library: &LibraryState, editing: bool) -> O
 /// source's two-level browse is handled separately by its own render.
 fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab) -> bool {
     match form.source {
-        GetMapsSource::Find => match form.find_backend {
-            FindBackend::Osu if form.search.browse.is_browsing() => {
-                let status = widgets::ratio_line(
-                    form.search.browse.selected_count(),
-                    form.search.browse.rows.len(),
-                );
-                set_browse::render(
-                    frame,
-                    area,
-                    &form.search.browse,
-                    search_source::BROWSE_LIST_TITLE,
-                    status,
-                );
-                true
-            }
-            FindBackend::Nzbasic if form.filter.browse.is_browsing() => {
-                let status = widgets::ratio_line(
-                    form.filter.browse.selected_count(),
-                    form.filter.browse.rows.len(),
-                );
-                set_browse::render(
-                    frame,
-                    area,
-                    &form.filter.browse,
-                    filter_source::BROWSE_LIST_TITLE,
-                    status,
-                );
-                true
-            }
-            _ => false,
-        },
+        // One union browse: both backends' results land in `find.browse`, so the
+        // list title is the shared ` RESULTS ` regardless of which form ran.
+        GetMapsSource::Find if form.find.browse.is_browsing() => {
+            let status = widgets::ratio_line(
+                form.find.browse.selected_count(),
+                form.find.browse.rows.len(),
+            );
+            set_browse::render(
+                frame,
+                area,
+                &form.find.browse,
+                search_source::BROWSE_LIST_TITLE,
+                status,
+            );
+            true
+        }
         GetMapsSource::Collection if form.collection_browse.is_browsing() => {
             let status = widgets::ratio_line(
                 form.collection_browse.selected_count(),
@@ -123,7 +108,7 @@ fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab) -> boo
 /// editing row.
 fn search_cursor_col(form: &HomeTab, editing: bool) -> Option<u16> {
     (editing && form.focus == HomeField::SearchQuery)
-        .then(|| widgets::input_cursor_col(&form.search.query, 0))
+        .then(|| widgets::input_cursor_col(&form.find.query, 0))
 }
 
 /// Caret column for whichever filter-source input is focused in edit mode; the
@@ -197,11 +182,11 @@ fn render_compact(
             );
             let cursor_col = match form.find_backend {
                 FindBackend::Osu => {
-                    search_source::push_form_rows(&mut items, &form.search, focus, editing, tick);
+                    search_source::push_form_rows(&mut items, &form.find, focus, editing, tick);
                     search_cursor_col(form, editing)
                 }
                 FindBackend::Nzbasic => {
-                    filter_source::push_form_rows(&mut items, &form.filter, focus, editing, tick);
+                    filter_source::push_form_rows(&mut items, &form.find, focus, editing, tick);
                     filter_cursor_col(form, editing)
                 }
             };
@@ -410,11 +395,11 @@ fn render_content(
             );
             let cursor_col = match form.find_backend {
                 FindBackend::Osu => {
-                    search_source::push_form_rows(&mut items, &form.search, focus, editing, tick);
+                    search_source::push_form_rows(&mut items, &form.find, focus, editing, tick);
                     search_cursor_col(form, editing)
                 }
                 FindBackend::Nzbasic => {
-                    filter_source::push_form_rows(&mut items, &form.filter, focus, editing, tick);
+                    filter_source::push_form_rows(&mut items, &form.find, focus, editing, tick);
                     filter_cursor_col(form, editing)
                 }
             };

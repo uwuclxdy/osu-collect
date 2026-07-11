@@ -202,12 +202,12 @@ fn search_view_maps_button_shows_when_results_loaded() {
     use osu_collect::app::{BrowseRow, GetMapsSource};
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
-    app.home.search.browse.set_rows(vec![
+    app.home.find.browse.set_rows(vec![
         BrowseRow { id: 1, meta: None },
         BrowseRow { id: 2, meta: None },
     ]);
     // Mirror the Ready handler, which snapshots the inputs the rows are for.
-    app.home.search.mark_results_current();
+    app.home.find.mark_results_current();
     let content = render_content(&app, 80, 26);
     assert!(
         content.contains("view 2 maps"),
@@ -274,10 +274,10 @@ fn collection_browse_shows_focus_caret_and_uppercase_title() {
 
 #[test]
 fn search_cta_shows_inline_spinner_while_loading() {
-    use osu_collect::app::{GetMapsSource, SearchStatusMsg};
+    use osu_collect::app::{FindStatusMsg, GetMapsSource};
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
-    app.home.search.status_msg = SearchStatusMsg::Loading;
+    app.home.find.status_msg = FindStatusMsg::Loading;
     let content = render_content(&app, 80, 24);
     // The CTA mirrors the scan CTA: an inline braille spinner replaces `search`
     // while a query is in flight (tick 0 → frame `⠋`), rather than a separate

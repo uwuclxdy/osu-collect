@@ -756,7 +756,7 @@ fn entry_has_new(entry: &CollectionEntry, with_new: &HashSet<u32>) -> bool {
 /// the last item lands on the first, stepping up past the first lands on the
 /// last (index arithmetic modulo `len`). Shared with [`SetBrowse`] scrolling.
 ///
-/// [`SetBrowse`]: super::search_source::SetBrowse
+/// [`SetBrowse`]: super::find_source::SetBrowse
 pub(crate) fn scroll_list(state: &mut Option<usize>, len: usize, delta: i64) {
     if len == 0 {
         return;

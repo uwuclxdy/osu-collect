@@ -386,29 +386,26 @@ fn source_strip_cycles_three_sources() {
 }
 
 #[test]
-fn backend_chip_cycles_find_backend_and_carries_mode() {
+fn backend_chip_switches_view_and_shares_mode() {
     use osu_collect::app::{FindBackend, GetMapsSource, HomeField};
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
     app.home.focus = HomeField::Backend;
     assert_eq!(app.home.find_backend, FindBackend::Osu);
 
-    // Pick a non-default game mode on the osu! backend (index 2 = taiko).
-    app.home.search.set_mode_idx(2);
+    // Both forms edit ONE union mode value, so there is no per-backend carry to
+    // copy: a mode picked stays put across a backend-chip cycle automatically.
+    app.home.find.set_mode_idx(2); // taiko
 
-    // space cycles the backend chip; the mode index carries across.
     app.handle_key(press(KeyCode::Char(' ')));
     assert_eq!(app.home.find_backend, FindBackend::Nzbasic);
-    assert_eq!(app.home.filter.mode_idx(), 2, "mode carries osu → nzbasic");
+    assert_eq!(app.home.find.mode_idx(), 2, "mode is shared, not copied");
 
-    // Change the mode on the nzbasic backend (index 3 = catch) so the carry-back
-    // is a genuine write, not the value osu already held.
-    app.home.filter.set_mode_idx(3);
-
-    // enter cycles back; the mode carries the other way too.
+    // enter cycles back; the same shared value is still there.
+    app.home.find.set_mode_idx(3); // catch
     app.handle_key(press(KeyCode::Enter));
     assert_eq!(app.home.find_backend, FindBackend::Osu);
-    assert_eq!(app.home.search.mode_idx(), 3, "mode carries nzbasic → osu");
+    assert_eq!(app.home.find.mode_idx(), 3, "mode is shared, not copied");
 }
 
 // ── character input ───────────────────────────────────────────────────────────
@@ -1193,20 +1190,20 @@ fn typing_into_updates_path_field_routes_to_library() {
 }
 
 #[test]
-fn request_search_download_uses_query_label_and_selected_ids() {
+fn request_find_download_osu_route_uses_query_label_and_ids() {
     use osu_collect::app::{BrowseRow, GetMapsSource};
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
-    app.home.search.query.set_value("tekno");
-    app.home.search.browse.set_rows(vec![
+    app.home.find.query.set_value("tekno");
+    app.home.find.browse.set_rows(vec![
         BrowseRow { id: 10, meta: None },
         BrowseRow { id: 20, meta: None },
         BrowseRow { id: 30, meta: None },
     ]);
-    app.home.search.browse.set_all_selected(true);
+    app.home.find.browse.set_all_selected(true);
 
     let (_, request) = app
-        .request_search_download()
+        .request_find_download()
         .expect("a selection with mirrors enabled builds a request");
     // The download folder + page title derive from the query text.
     assert_eq!(request.label, "tekno");
@@ -1218,20 +1215,20 @@ fn request_search_download_uses_query_label_and_selected_ids() {
 #[test]
 fn search_view_button_reopens_results_without_re_searching() {
     use crossterm::event::KeyCode;
-    use osu_collect::app::{BrowseRow, GetMapsSource, HomeField, SearchStatusMsg};
+    use osu_collect::app::{BrowseRow, FindStatusMsg, GetMapsSource, HomeField};
 
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
-    app.home.search.query.set_value("tekno");
-    app.home.search.status_msg = SearchStatusMsg::Ready { total: 2 };
-    app.home.search.browse.set_rows(vec![
+    app.home.find.query.set_value("tekno");
+    app.home.find.status_msg = FindStatusMsg::ReadySearch { total: 2 };
+    app.home.find.browse.set_rows(vec![
         BrowseRow { id: 10, meta: None },
         BrowseRow { id: 20, meta: None },
     ]);
     // Mirror the Ready handler: the loaded rows are for the current inputs.
-    app.home.search.mark_results_current();
+    app.home.find.mark_results_current();
     // On the form (not descended into the browse).
-    assert!(!app.home.search.browse.is_browsing());
+    assert!(!app.home.find.browse.is_browsing());
 
     app.home.focus = HomeField::SearchBrowse;
     let cmd = app.handle_key(press(KeyCode::Enter));
@@ -1241,12 +1238,12 @@ fn search_view_button_reopens_results_without_re_searching() {
         "the view button must not re-run the search query"
     );
     assert!(
-        app.home.search.browse.is_browsing(),
+        app.home.find.browse.is_browsing(),
         "the view button reopens the results browse"
     );
     assert_eq!(
-        app.home.search.status_msg,
-        SearchStatusMsg::Ready { total: 2 },
+        app.home.find.status_msg,
+        FindStatusMsg::ReadySearch { total: 2 },
         "the view button must not flip status back to Loading"
     );
 }
@@ -1254,26 +1251,26 @@ fn search_view_button_reopens_results_without_re_searching() {
 #[test]
 fn search_view_button_is_inert_once_the_query_diverges() {
     use crossterm::event::KeyCode;
-    use osu_collect::app::{BrowseRow, GetMapsSource, HomeField, SearchStatusMsg};
+    use osu_collect::app::{BrowseRow, FindStatusMsg, GetMapsSource, HomeField};
 
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
-    app.home.search.query.set_value("tekno");
-    app.home.search.status_msg = SearchStatusMsg::Ready { total: 2 };
-    app.home.search.browse.set_rows(vec![
+    app.home.find.query.set_value("tekno");
+    app.home.find.status_msg = FindStatusMsg::ReadySearch { total: 2 };
+    app.home.find.browse.set_rows(vec![
         BrowseRow { id: 10, meta: None },
         BrowseRow { id: 20, meta: None },
     ]);
-    app.home.search.mark_results_current();
+    app.home.find.mark_results_current();
 
     // Edit the query after results loaded: the snapshot no longer matches, so the
     // view button must go inert (no opening the now-stale results).
-    app.home.search.query.set_value("teknoz");
+    app.home.find.query.set_value("teknoz");
     app.home.focus = HomeField::SearchBrowse;
     let cmd = app.handle_key(press(KeyCode::Enter));
     assert!(cmd.is_none(), "stale view button fires nothing");
     assert!(
-        !app.home.search.browse.is_browsing(),
+        !app.home.find.browse.is_browsing(),
         "a stale view button must not reopen the old results"
     );
 }
@@ -1291,7 +1288,7 @@ fn search_view_button_is_inert_until_results_load() {
     let cmd = app.handle_key(press(KeyCode::Enter));
     assert!(cmd.is_none(), "disabled view button fires nothing");
     assert!(
-        !app.home.search.browse.is_browsing(),
+        !app.home.find.browse.is_browsing(),
         "an unloaded view button must not open an empty browse"
     );
 }
@@ -1377,15 +1374,18 @@ fn filter_cta_emits_run_filter_and_rejects_bad_ranges() {
     app.home.source = GetMapsSource::Find;
     app.home.find_backend = FindBackend::Nzbasic;
     app.home.focus = HomeField::FilterRun;
+    // A nzbasic-forcer (special) resolves the plan to the filter route, so the
+    // CTA dispatches a filter fetch rather than the default osu search.
+    app.home.find.cycle_special(true); // → farm
 
     let cmd = app.handle_key(press(KeyCode::Enter));
     assert!(
         matches!(cmd, Some(AppCommand::RunFilter { .. })),
-        "the filter CTA dispatches a fetch, got {cmd:?}"
+        "a nzbasic-forced find CTA dispatches a filter fetch, got {cmd:?}"
     );
 
     // An invalid range surfaces as a toast, nothing dispatches.
-    app.home.filter.stars.set_value("nope");
+    app.home.find.stars.set_value("nope");
     let cmd = app.handle_key(press(KeyCode::Enter));
     assert!(cmd.is_none(), "a bad range must not dispatch, got {cmd:?}");
 }
@@ -1399,7 +1399,7 @@ fn filter_chips_cycle_on_space_and_presets_seed_fields() {
 
     app.home.focus = HomeField::FilterSpecial;
     app.handle_key(press(KeyCode::Char(' ')));
-    assert_eq!(app.home.filter.special_label(), "farm");
+    assert_eq!(app.home.find.special_label(), "farm");
 
     // Preset cycling seeds the editable fields (space steps none → all ranked
     // → loved → farm; the farm seed pins mode to osu and resets special).
@@ -1407,9 +1407,9 @@ fn filter_chips_cycle_on_space_and_presets_seed_fields() {
     for _ in 0..3 {
         app.handle_key(press(KeyCode::Char(' ')));
     }
-    assert_eq!(app.home.filter.preset_label(), "farm");
-    assert_eq!(app.home.filter.mode_label(), "osu");
-    assert_eq!(app.home.filter.special_label(), "farm");
+    assert_eq!(app.home.find.preset_label(), "farm");
+    assert_eq!(app.home.find.mode_label(), "osu");
+    assert_eq!(app.home.find.special_label(), "farm");
 }
 
 #[test]
@@ -1419,16 +1419,18 @@ fn m_in_filter_browse_loads_more_details() {
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
     app.home.find_backend = FindBackend::Nzbasic;
+    // `m` routes by the backend that produced the results, so mark it nzbasic.
+    app.home.find.note_results_backend(FindBackend::Nzbasic);
     // 300 diff ids = two details pages; the first auto-fetch already pulled one.
     app.home
-        .filter
+        .find
         .set_results((0..300).collect(), HashMap::new());
-    let _ = app.home.filter.next_details_page();
+    let _ = app.home.find.next_details_page();
     app.home
-        .filter
+        .find
         .browse
         .set_rows(vec![BrowseRow { id: 10, meta: None }]);
-    app.home.filter.browse.descend();
+    app.home.find.browse.descend();
 
     let cmd = app.handle_key(press(KeyCode::Char('m')));
     assert!(
@@ -1437,13 +1439,13 @@ fn m_in_filter_browse_loads_more_details() {
     );
 
     // Drain the pager: `m` becomes a no-op once every page was requested.
-    let _ = app.home.filter.next_details_page();
+    let _ = app.home.find.next_details_page();
     let cmd = app.handle_key(press(KeyCode::Char('m')));
     assert!(cmd.is_none(), "a dry pager must not dispatch, got {cmd:?}");
 }
 
 #[test]
-fn request_filter_download_uses_label_tag_and_selected_ids() {
+fn request_find_download_nzbasic_route_uses_label_tag_and_ids() {
     use osu_collect::app::{BrowseRow, FindBackend, GetMapsSource};
     use osu_collect::download::IdsRunSource;
     let mut app = make_app();
@@ -1454,14 +1456,14 @@ fn request_filter_download_uses_label_tag_and_selected_ids() {
     for _ in 0..3 {
         app.handle_key(press(KeyCode::Char(' ')));
     }
-    app.home.filter.browse.set_rows(vec![
+    app.home.find.browse.set_rows(vec![
         BrowseRow { id: 10, meta: None },
         BrowseRow { id: 20, meta: None },
     ]);
-    app.home.filter.browse.set_all_selected(true);
+    app.home.find.browse.set_all_selected(true);
 
     let (_, request) = app
-        .request_filter_download()
+        .request_find_download()
         .expect("a selection with mirrors enabled builds a request");
     assert_eq!(request.source, IdsRunSource::Filter);
     assert_eq!(request.label, "farm");

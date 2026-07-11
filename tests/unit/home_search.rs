@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::{App, SearchStatusMsg};
+use crate::app::{App, FindStatusMsg};
 use crate::config::Config;
 use crate::core::search::BeatmapSetMeta;
 
@@ -25,7 +25,7 @@ fn meta(id: u32) -> BeatmapSetMeta {
 fn loading_sets_status() {
     let mut app = app();
     handle_home_search_event(HomeSearchEvent::Loading, &mut app);
-    assert_eq!(app.home.search.status_msg, SearchStatusMsg::Loading);
+    assert_eq!(app.home.find.status_msg, FindStatusMsg::Loading);
 }
 
 #[test]
@@ -41,13 +41,17 @@ fn fresh_results_populate_and_descend() {
         &mut app,
     );
     assert_eq!(
-        app.home.search.status_msg,
-        SearchStatusMsg::Ready { total: 42 }
+        app.home.find.status_msg,
+        FindStatusMsg::ReadySearch { total: 42 }
     );
-    assert_eq!(app.home.search.next_cursor.as_deref(), Some("NEXT"));
-    // A fresh search opens the results browse.
-    assert!(app.home.search.browse.is_browsing());
-    assert_eq!(app.home.search.browse.rows.len(), 2);
+    assert_eq!(app.home.find.next_cursor.as_deref(), Some("NEXT"));
+    // A fresh search opens the results browse and records the osu backend.
+    assert!(app.home.find.browse.is_browsing());
+    assert_eq!(app.home.find.browse.rows.len(), 2);
+    assert_eq!(
+        app.home.find.results_backend(),
+        Some(crate::app::FindBackend::Osu)
+    );
 }
 
 #[test]
@@ -72,21 +76,21 @@ fn append_page_dedups_and_keeps_browse_open() {
         },
         &mut app,
     );
-    let ids: Vec<u32> = app.home.search.browse.rows.iter().map(|r| r.id).collect();
+    let ids: Vec<u32> = app.home.find.browse.rows.iter().map(|r| r.id).collect();
     assert_eq!(ids, vec![1, 2, 3]);
     // Last page reached: no more paging.
-    assert!(app.home.search.next_cursor.is_none());
-    assert!(app.home.search.browse.is_browsing());
+    assert!(app.home.find.next_cursor.is_none());
+    assert!(app.home.find.browse.is_browsing());
 }
 
 #[test]
 fn empty_result_stays_on_form() {
     let mut app = app();
     handle_home_search_event(HomeSearchEvent::Empty, &mut app);
-    assert_eq!(app.home.search.status_msg, SearchStatusMsg::Empty);
+    assert_eq!(app.home.find.status_msg, FindStatusMsg::Empty);
     // No results → the form stays put, nothing to browse.
-    assert!(!app.home.search.browse.is_browsing());
-    assert!(app.home.search.browse.rows.is_empty());
+    assert!(!app.home.find.browse.is_browsing());
+    assert!(app.home.find.browse.rows.is_empty());
 }
 
 #[test]
@@ -99,7 +103,7 @@ fn failed_search_surfaces_reason() {
         &mut app,
     );
     assert_eq!(
-        app.home.search.status_msg,
-        SearchStatusMsg::Error("search requires login (401)".to_string())
+        app.home.find.status_msg,
+        FindStatusMsg::Error("search requires login (401)".to_string())
     );
 }

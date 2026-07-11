@@ -7,7 +7,7 @@
 //! Rows with [`BeatmapSetMeta`] render rich (title / artist / mapper); id-only
 //! rows (collection browse&pick) render as `#id`.
 
-use crate::app::search_source::{BrowseRow, SetBrowse};
+use crate::app::find_source::{BrowseRow, SetBrowse};
 use osu_downloader::search::BeatmapSetMeta;
 use ratatui::{
     Frame,

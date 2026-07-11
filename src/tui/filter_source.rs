@@ -4,7 +4,7 @@
 //! browse ([`super::set_browse`]) once results arrive. The source strip is
 //! drawn by the Home view; these form rows are pushed into the same Home panel.
 
-use crate::app::{FilterSource, FilterStatusMsg, HomeField, InputField};
+use crate::app::{FindSource, FindStatusMsg, HomeField, InputField};
 use crate::utils::format_bytes;
 use ratatui::{
     style::Style,
@@ -26,9 +26,6 @@ const LABEL_CTA: &str = "filter";
 /// the Home view computes the caret column with the same offset.
 pub(crate) const LABEL_WIDTH: usize = LABEL_SPECIAL.len();
 
-/// Left title of the results browse (the left pane of the master-detail).
-pub const BROWSE_LIST_TITLE: &str = " RESULTS ";
-
 /// Credit + risk line: the backing database is a community-hosted free
 /// instance, so the copy names the source and warns it can be unavailable.
 const CREDIT: &str = "data by nzbasic (batch beatmap downloader) · community-hosted";
@@ -36,7 +33,7 @@ const CREDIT: &str = "data by nzbasic (batch beatmap downloader) · community-ho
 /// Push the filter-source FORM rows into the Home panel.
 pub fn push_form_rows(
     items: &mut widgets::FormItems<HomeField>,
-    filter: &FilterSource,
+    filter: &FindSource,
     focus: HomeField,
     editing: bool,
     tick: u64,
@@ -115,7 +112,7 @@ pub fn push_form_rows(
 
     // A fetch in flight mirrors the search CTA: the static label swaps for an
     // inline braille spinner and the button is inert until results land.
-    let loading = matches!(filter.status_msg, FilterStatusMsg::Loading);
+    let loading = matches!(filter.status_msg, FindStatusMsg::Loading);
     let cta_label = if loading {
         format!("{} filtering", spinner_str(tick).trim())
     } else {
@@ -177,9 +174,9 @@ fn push_input(
 /// The inline outcome line beneath the buttons: the pre-download size summary
 /// (`N sets · X GB` from the response's `SizeMap`) once results are in, a
 /// warning for an empty match, the reason for a failure.
-fn status_row(msg: &FilterStatusMsg) -> Option<ListItem<'static>> {
+fn status_row(msg: &FindStatusMsg) -> Option<ListItem<'static>> {
     let (label, color) = match msg {
-        FilterStatusMsg::Ready { sets, total_bytes } => (
+        FindStatusMsg::ReadyFilter { sets, total_bytes } => (
             format!(
                 "{sets} set{} · {}",
                 if *sets == 1 { "" } else { "s" },
@@ -187,9 +184,11 @@ fn status_row(msg: &FilterStatusMsg) -> Option<ListItem<'static>> {
             ),
             text_faint(),
         ),
-        FilterStatusMsg::Empty => ("no matches".to_string(), warning()),
-        FilterStatusMsg::Error(reason) => (reason.clone(), danger()),
-        FilterStatusMsg::Idle | FilterStatusMsg::Loading => return None,
+        FindStatusMsg::Empty => ("no matches".to_string(), warning()),
+        FindStatusMsg::Error(reason) => (reason.clone(), danger()),
+        FindStatusMsg::Idle | FindStatusMsg::Loading | FindStatusMsg::ReadySearch { .. } => {
+            return None;
+        }
     };
     Some(ListItem::new(Line::from(vec![
         Span::raw("  "),

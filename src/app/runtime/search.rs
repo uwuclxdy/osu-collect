@@ -4,7 +4,7 @@
 //! unlike the collection resolve there is no debounce — a new run cancels any
 //! in-flight one immediately.
 
-use crate::app::{App, BrowseRow, SearchStatusMsg};
+use crate::app::{App, BrowseRow, FindBackend, FindStatusMsg};
 use crate::core::search::{HttpSearchService, SearchClient, SearchQuery, SearchService};
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -112,7 +112,7 @@ async fn run_search_task(
 pub fn handle_home_search_event(event: HomeSearchEvent, app: &mut App) {
     match event {
         HomeSearchEvent::Loading => {
-            app.home.search.status_msg = SearchStatusMsg::Loading;
+            app.home.find.status_msg = FindStatusMsg::Loading;
         }
         HomeSearchEvent::Results {
             entries,
@@ -127,20 +127,22 @@ pub fn handle_home_search_event(event: HomeSearchEvent, app: &mut App) {
                     meta: Some(meta),
                 })
                 .collect();
-            // Scope the search borrow so the guest nudge below can take `&mut app`.
+            // Scope the find borrow so the guest nudge below can take `&mut app`.
             {
-                let search = &mut app.home.search;
-                search.next_cursor = cursor;
-                search.status_msg = SearchStatusMsg::Ready { total };
+                let find = &mut app.home.find;
+                find.next_cursor = cursor;
+                find.status_msg = FindStatusMsg::ReadySearch { total };
                 if append {
-                    search.browse.append_rows(rows);
+                    find.browse.append_rows(rows);
                 } else {
-                    search.browse.set_rows(rows);
-                    // These rows are for the current inputs; snapshot them so the
+                    find.browse.set_rows(rows);
+                    // These rows came from osu for the current inputs; record the
+                    // backend (download subdir prefix) + snapshot the inputs so the
                     // `view N maps` button stays accurate after a later edit.
-                    search.mark_results_current();
+                    find.note_results_backend(FindBackend::Osu);
+                    find.mark_results_current();
                     // Open the results immediately on a fresh search.
-                    search.browse.descend();
+                    find.browse.descend();
                 }
             }
             // A search came back, so the token resolved. If that was a guest
@@ -148,15 +150,15 @@ pub fn handle_home_search_event(event: HomeSearchEvent, app: &mut App) {
             app.nudge_guest_search_if_logged_out();
         }
         HomeSearchEvent::Empty => {
-            let search = &mut app.home.search;
-            search.status_msg = SearchStatusMsg::Empty;
-            search.next_cursor = None;
-            search.browse.set_rows(Vec::new());
-            search.clear_results_snapshot();
+            let find = &mut app.home.find;
+            find.status_msg = FindStatusMsg::Empty;
+            find.next_cursor = None;
+            find.browse.set_rows(Vec::new());
+            find.clear_results_snapshot();
         }
         HomeSearchEvent::Failed { reason } => {
-            app.home.search.status_msg = SearchStatusMsg::Error(reason);
-            app.home.search.clear_results_snapshot();
+            app.home.find.status_msg = FindStatusMsg::Error(reason);
+            app.home.find.clear_results_snapshot();
         }
     }
 }

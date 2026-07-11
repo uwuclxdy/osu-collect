@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::{App, AppCommand, FilterStatusMsg};
+use crate::app::{App, AppCommand, FindStatusMsg};
 use crate::config::Config;
 use osu_downloader::filter::{BeatmapDetails, FilterResults};
 use std::collections::HashMap;
@@ -46,7 +46,7 @@ fn loading_sets_status() {
     let mut app = app();
     let follow_up = handle_home_filter_event(HomeFilterEvent::Loading, &mut app);
     assert!(follow_up.is_none());
-    assert_eq!(app.home.filter.status_msg, FilterStatusMsg::Loading);
+    assert_eq!(app.home.find.status_msg, FindStatusMsg::Loading);
 }
 
 #[test]
@@ -61,17 +61,17 @@ fn results_populate_descend_and_request_first_details_page() {
     // The auto-fetch of the first details page rides back as a command.
     assert!(matches!(follow_up, Some(AppCommand::LoadFilterDetails)));
     assert_eq!(
-        app.home.filter.status_msg,
-        FilterStatusMsg::Ready {
+        app.home.find.status_msg,
+        FindStatusMsg::ReadyFilter {
             sets: 2,
             total_bytes: 2_000_000
         }
     );
-    assert!(app.home.filter.browse.is_browsing());
-    assert_eq!(app.home.filter.browse.rows.len(), 2);
-    assert!(app.home.filter.browse.rows.iter().all(|r| r.meta.is_none()));
-    assert!(app.home.filter.results_current());
-    assert!(app.home.filter.has_more_details());
+    assert!(app.home.find.browse.is_browsing());
+    assert_eq!(app.home.find.browse.rows.len(), 2);
+    assert!(app.home.find.browse.rows.iter().all(|r| r.meta.is_none()));
+    assert!(app.home.find.results_current());
+    assert!(app.home.find.has_more_details());
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn details_fold_set_level_meta_first_diff_wins() {
         &mut app,
     );
     assert!(follow_up.is_none());
-    let rows = &app.home.filter.browse.rows;
+    let rows = &app.home.find.browse.rows;
     assert_eq!(
         rows[0].meta.as_ref().map(|m| m.title.as_str()),
         Some("first")
@@ -115,8 +115,8 @@ fn details_failure_rewinds_the_pager_for_retry() {
         &mut app,
     );
     // Simulate the first page having been pulled (as LoadFilterDetails would).
-    let rewind_to = app.home.filter.details_cursor();
-    let _ = app.home.filter.next_details_page().expect("page 1");
+    let rewind_to = app.home.find.details_cursor();
+    let _ = app.home.find.next_details_page().expect("page 1");
     handle_home_filter_event(
         HomeFilterEvent::DetailsFailed {
             reason: "HTTP 500".to_string(),
@@ -124,8 +124,8 @@ fn details_failure_rewinds_the_pager_for_retry() {
         },
         &mut app,
     );
-    assert_eq!(app.home.filter.details_cursor(), rewind_to);
-    assert!(app.home.filter.has_more_details());
+    assert_eq!(app.home.find.details_cursor(), rewind_to);
+    assert!(app.home.find.has_more_details());
 }
 
 #[test]
@@ -138,10 +138,10 @@ fn empty_clears_rows_and_snapshot() {
         &mut app,
     );
     handle_home_filter_event(HomeFilterEvent::Empty, &mut app);
-    assert_eq!(app.home.filter.status_msg, FilterStatusMsg::Empty);
-    assert!(app.home.filter.browse.rows.is_empty());
-    assert!(!app.home.filter.results_current());
-    assert!(!app.home.filter.has_more_details());
+    assert_eq!(app.home.find.status_msg, FindStatusMsg::Empty);
+    assert!(app.home.find.browse.rows.is_empty());
+    assert!(!app.home.find.results_current());
+    assert!(!app.home.find.has_more_details());
 }
 
 #[test]
@@ -154,8 +154,36 @@ fn failure_reports_the_reason_and_stales_results() {
         &mut app,
     );
     assert_eq!(
-        app.home.filter.status_msg,
-        FilterStatusMsg::Error("nzbasic unreachable".to_string())
+        app.home.find.status_msg,
+        FindStatusMsg::Error("nzbasic unreachable".to_string())
     );
-    assert!(!app.home.filter.results_current());
+    assert!(!app.home.find.results_current());
+}
+
+/// Cross-routed end-to-end (search-side mirror): the backend chip still shows
+/// the osu form, but a nzbasic-forcer routed the fetch — the handler records
+/// the nzbasic backend and the download follows it into `IdsRunSource::Filter`
+/// (the `filter-` subdir prefix), not the visible chip.
+#[test]
+fn results_record_nzbasic_backend_and_download_routes_filter() {
+    use crate::app::FindBackend;
+    use crate::download::IdsRunSource;
+    let mut app = app();
+    assert_eq!(app.home.find_backend, FindBackend::Osu, "chip untouched");
+    // A nzbasic-forcer, as the run that produced these results would have.
+    app.home.find.cycle_special(true); // → farm
+
+    handle_home_filter_event(
+        HomeFilterEvent::Results {
+            results: results(vec![10, 20], vec![1, 2]),
+        },
+        &mut app,
+    );
+    assert_eq!(app.home.find.results_backend(), Some(FindBackend::Nzbasic));
+
+    app.home.find.browse.set_all_selected(true);
+    let (_, request) = app
+        .request_find_download()
+        .expect("default config has mirrors enabled");
+    assert_eq!(request.source, IdsRunSource::Filter);
 }

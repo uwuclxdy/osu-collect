@@ -1,10 +1,9 @@
 use super::{
     custom_mirrors::CustomMirrorList,
-    filter_source::FilterSource,
+    find_source::{FindSource, SetBrowse},
     first_field, last_field,
     messages::AppMessage,
     next_field, prev_field,
-    search_source::{SearchSource, SetBrowse},
     update_source::UpdateSource,
 };
 use crate::{
@@ -63,9 +62,11 @@ impl GetMapsSource {
     }
 }
 
-/// Which backend the [`GetMapsSource::Find`] source queries. Both share the find
-/// form's shell (source strip + backend chip) but keep entirely separate query
-/// state ([`HomeTab.search`](HomeTab::search) / [`HomeTab.filter`](HomeTab::filter)).
+/// Which form subset the [`GetMapsSource::Find`] source shows. Both forms edit
+/// the SAME union criteria state ([`HomeTab.find`](HomeTab::find)); the chip is a
+/// view switcher, and the query it compiles to is routed per-criterion by
+/// [`FindSource::build_plan`](crate::app::FindSource::build_plan), so the shown
+/// subset need not match the backend a run actually hits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FindBackend {
     /// osu! api v2 text search.
@@ -512,15 +513,13 @@ pub struct HomeTab {
     pub list_offset: std::cell::Cell<usize>,
     /// State for the [`GetMapsSource::Update`] source (the former Updates tab).
     pub update: UpdateSource,
-    /// The find source's osu! backend ([`FindBackend::Osu`]): the query form +
-    /// results browse. Kept here so it survives source/backend switches (keep-both).
-    pub search: SearchSource,
-    /// The find source's nzbasic backend ([`FindBackend::Nzbasic`]): the attribute
-    /// filter form + results browse (keep-both, like `search`).
-    pub filter: FilterSource,
+    /// The find source's union criteria form + results browse (both backends land
+    /// their results here). Kept on `HomeTab` so it survives source/backend
+    /// switches (keep-both).
+    pub find: FindSource,
     /// Collection browse&pick browse state (the collection source's
     /// `view N maps` CTA). Fed from [`resolved_collection`](Self::resolved_collection);
-    /// separate from `search.browse` so each source's selection persists.
+    /// separate from `find.browse` so each source's selection persists.
     pub collection_browse: SetBrowse,
     /// The collection id snapshotted when the browse&pick browse was opened, so
     /// the download dispatches against the collection the rows came from even if
@@ -601,8 +600,7 @@ impl HomeTab {
             default_directory,
             list_offset: std::cell::Cell::new(0),
             update: UpdateSource::new(),
-            search: SearchSource::new(),
-            filter: FilterSource::new(),
+            find: FindSource::new(),
             collection_browse: SetBrowse::new(),
             collection_browse_id: None,
         }
@@ -718,21 +716,12 @@ impl HomeTab {
         self.source = self.source.cycled(forward);
     }
 
-    /// Flip the find backend (osu! api ↔ nzbasic), carrying the game-mode chip
-    /// index across so a mode picked on one backend survives the switch (both
-    /// index the same `["any", "osu", …]` order). Neither form is reset — the
-    /// carried mode staling the destination's `view maps` falls out of its own
-    /// `results_current` guard, so no explicit clear is needed.
+    /// Flip the find backend chip (osu! api ↔ nzbasic). It only swaps which form
+    /// subset renders — both edit the one union [`find`](Self::find) state, so the
+    /// game-mode selection (and every shared chip) carries across automatically,
+    /// no explicit copy needed.
     pub fn cycle_find_backend(&mut self, _forward: bool) {
-        let mode = match self.find_backend {
-            FindBackend::Osu => self.search.mode_idx(),
-            FindBackend::Nzbasic => self.filter.mode_idx(),
-        };
         self.find_backend = self.find_backend.toggled();
-        match self.find_backend {
-            FindBackend::Osu => self.search.set_mode_idx(mode),
-            FindBackend::Nzbasic => self.filter.set_mode_idx(mode),
-        }
     }
 
     pub fn next_field(&mut self) {
@@ -869,18 +858,18 @@ impl HomeTab {
         match self.focus {
             HomeField::Collection => Some(&self.collection),
             HomeField::Directory => Some(&self.directory),
-            HomeField::SearchQuery => Some(&self.search.query),
-            HomeField::FilterStars => Some(&self.filter.stars),
-            HomeField::FilterAr => Some(&self.filter.ar),
-            HomeField::FilterCs => Some(&self.filter.cs),
-            HomeField::FilterOd => Some(&self.filter.od),
-            HomeField::FilterHp => Some(&self.filter.hp),
-            HomeField::FilterBpm => Some(&self.filter.bpm),
-            HomeField::FilterLength => Some(&self.filter.length),
-            HomeField::FilterArtist => Some(&self.filter.artist),
-            HomeField::FilterCreator => Some(&self.filter.creator),
-            HomeField::FilterTitle => Some(&self.filter.title),
-            HomeField::FilterLimit => Some(&self.filter.limit),
+            HomeField::SearchQuery => Some(&self.find.query),
+            HomeField::FilterStars => Some(&self.find.stars),
+            HomeField::FilterAr => Some(&self.find.ar),
+            HomeField::FilterCs => Some(&self.find.cs),
+            HomeField::FilterOd => Some(&self.find.od),
+            HomeField::FilterHp => Some(&self.find.hp),
+            HomeField::FilterBpm => Some(&self.find.bpm),
+            HomeField::FilterLength => Some(&self.find.length),
+            HomeField::FilterArtist => Some(&self.find.artist),
+            HomeField::FilterCreator => Some(&self.find.creator),
+            HomeField::FilterTitle => Some(&self.find.title),
+            HomeField::FilterLimit => Some(&self.find.limit),
             _ => None,
         }
     }
@@ -889,18 +878,18 @@ impl HomeTab {
         match self.focus {
             HomeField::Collection => Some(&mut self.collection),
             HomeField::Directory => Some(&mut self.directory),
-            HomeField::SearchQuery => Some(&mut self.search.query),
-            HomeField::FilterStars => Some(&mut self.filter.stars),
-            HomeField::FilterAr => Some(&mut self.filter.ar),
-            HomeField::FilterCs => Some(&mut self.filter.cs),
-            HomeField::FilterOd => Some(&mut self.filter.od),
-            HomeField::FilterHp => Some(&mut self.filter.hp),
-            HomeField::FilterBpm => Some(&mut self.filter.bpm),
-            HomeField::FilterLength => Some(&mut self.filter.length),
-            HomeField::FilterArtist => Some(&mut self.filter.artist),
-            HomeField::FilterCreator => Some(&mut self.filter.creator),
-            HomeField::FilterTitle => Some(&mut self.filter.title),
-            HomeField::FilterLimit => Some(&mut self.filter.limit),
+            HomeField::SearchQuery => Some(&mut self.find.query),
+            HomeField::FilterStars => Some(&mut self.find.stars),
+            HomeField::FilterAr => Some(&mut self.find.ar),
+            HomeField::FilterCs => Some(&mut self.find.cs),
+            HomeField::FilterOd => Some(&mut self.find.od),
+            HomeField::FilterHp => Some(&mut self.find.hp),
+            HomeField::FilterBpm => Some(&mut self.find.bpm),
+            HomeField::FilterLength => Some(&mut self.find.length),
+            HomeField::FilterArtist => Some(&mut self.find.artist),
+            HomeField::FilterCreator => Some(&mut self.find.creator),
+            HomeField::FilterTitle => Some(&mut self.find.title),
+            HomeField::FilterLimit => Some(&mut self.find.limit),
             _ => None,
         }
     }

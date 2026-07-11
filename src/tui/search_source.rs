@@ -6,7 +6,7 @@
 //! Home panel. The results browse (and its status/action line) is rendered by
 //! [`super::set_browse`], shared with collection browse&pick.
 
-use crate::app::{HomeField, SearchSource, SearchStatusMsg};
+use crate::app::{FindSource, FindStatusMsg, HomeField};
 use ratatui::{
     style::Style,
     text::{Line, Span},
@@ -32,7 +32,7 @@ pub const BROWSE_LIST_TITLE: &str = " RESULTS ";
 /// focused), the `search` CTA, and a status line for the last run.
 pub fn push_form_rows(
     items: &mut widgets::FormItems<HomeField>,
-    search: &SearchSource,
+    search: &FindSource,
     focus: HomeField,
     editing: bool,
     tick: u64,
@@ -78,7 +78,7 @@ pub fn push_form_rows(
 
     // A search in flight mirrors the scan CTA: the static `search` label swaps
     // for an inline braille spinner and the button is inert until results land.
-    let loading = matches!(search.status_msg, SearchStatusMsg::Loading);
+    let loading = matches!(search.status_msg, FindStatusMsg::Loading);
     let cta_label = if loading {
         format!("{} searching", spinner_str(tick).trim())
     } else {
@@ -126,11 +126,14 @@ pub fn push_form_rows(
 /// The inline outcome line for an empty or failed search, or `None` otherwise
 /// (idle / in flight / results loaded — the loaded case has its own `view N
 /// maps` button, the in-flight spinner lives on the search CTA).
-fn status_row(msg: &SearchStatusMsg) -> Option<ListItem<'static>> {
+fn status_row(msg: &FindStatusMsg) -> Option<ListItem<'static>> {
     let (label, color) = match msg {
-        SearchStatusMsg::Empty => ("no results".to_string(), warning()),
-        SearchStatusMsg::Error(reason) => (reason.clone(), danger()),
-        SearchStatusMsg::Idle | SearchStatusMsg::Loading | SearchStatusMsg::Ready { .. } => {
+        FindStatusMsg::Empty => ("no results".to_string(), warning()),
+        FindStatusMsg::Error(reason) => (reason.clone(), danger()),
+        FindStatusMsg::Idle
+        | FindStatusMsg::Loading
+        | FindStatusMsg::ReadySearch { .. }
+        | FindStatusMsg::ReadyFilter { .. } => {
             return None;
         }
     };

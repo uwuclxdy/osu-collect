@@ -292,11 +292,7 @@ fn home_tab_hints(form: &HomeTab) -> (Vec<&'static str>, Option<&'static str>) {
 /// The active source's flat browse when it is descended, else `None`.
 fn active_set_browse(form: &HomeTab) -> Option<&crate::app::SetBrowse> {
     match form.source {
-        GetMapsSource::Find => match form.find_backend {
-            FindBackend::Osu if form.search.browse.is_browsing() => Some(&form.search.browse),
-            FindBackend::Nzbasic if form.filter.browse.is_browsing() => Some(&form.filter.browse),
-            _ => None,
-        },
+        GetMapsSource::Find if form.find.browse.is_browsing() => Some(&form.find.browse),
         GetMapsSource::Collection if form.collection_browse.is_browsing() => {
             Some(&form.collection_browse)
         }
@@ -319,19 +315,18 @@ fn set_browse_hints(
         HINT_SELECT_ALL_NONE,
         HINT_FOCUS_PREVIEW,
     ];
-    // `m` loads the next page of a search that still has one, or the next
-    // details page of a filter result set.
-    if form.source == GetMapsSource::Find
-        && form.find_backend == FindBackend::Osu
-        && form.search.next_cursor.is_some()
-    {
-        segments.push(HINT_MORE);
-    }
-    if form.source == GetMapsSource::Find
-        && form.find_backend == FindBackend::Nzbasic
-        && form.filter.has_more_details()
-    {
-        segments.push(HINT_MORE);
+    // `m` loads the next page of osu results that still have one, or the next
+    // details page of an nzbasic result set — keyed on the backend that produced
+    // the loaded results, matching the `m` key handler.
+    if form.source == GetMapsSource::Find {
+        let more = match form.find.results_backend() {
+            Some(FindBackend::Osu) => form.find.next_cursor.is_some(),
+            Some(FindBackend::Nzbasic) => form.find.has_more_details(),
+            None => false,
+        };
+        if more {
+            segments.push(HINT_MORE);
+        }
     }
     (segments, None)
 }

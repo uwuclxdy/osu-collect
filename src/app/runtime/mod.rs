@@ -464,8 +464,8 @@ fn dispatch_command(
             if !busy {
                 // Pull the next unfetched page off the pager; a dry pager
                 // (every page requested) makes this a no-op.
-                let rewind_to = app.home.filter.details_cursor();
-                if let Some(page) = app.home.filter.next_details_page() {
+                let rewind_to = app.home.find.details_cursor();
+                if let Some(page) = app.home.find.next_details_page() {
                     schedule_filter_details(
                         page,
                         rewind_to,

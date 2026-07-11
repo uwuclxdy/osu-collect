@@ -6,12 +6,11 @@ use super::{
     download_history::DownloadHistory,
     downloads_tab::{DownloadsRow, DownloadsTab},
     failed_maps,
-    filter_source::FilterStatusMsg,
+    find_source::{BrowseRow, FindPlan, FindStatusMsg, SetBrowse},
     home::{FindBackend, GetMapsSource, HomeField, HomeTab},
     ignored_maps,
     library::LibraryState,
     login::{LoginField, LoginPhase, LoginTab},
-    search_source::{BrowseRow, SearchStatusMsg, SetBrowse},
     snapshots,
     tab::Tab,
     toast::{Toast, Toasts},
@@ -1197,10 +1196,7 @@ impl App {
     /// or `None` for the update source (whose two-level browse is separate).
     fn active_set_browse(&self) -> Option<&SetBrowse> {
         match self.home.source {
-            GetMapsSource::Find => match self.home.find_backend {
-                FindBackend::Osu => Some(&self.home.search.browse),
-                FindBackend::Nzbasic => Some(&self.home.filter.browse),
-            },
+            GetMapsSource::Find => Some(&self.home.find.browse),
             GetMapsSource::Collection => Some(&self.home.collection_browse),
             GetMapsSource::Update => None,
         }
@@ -1208,10 +1204,7 @@ impl App {
 
     fn active_set_browse_mut(&mut self) -> Option<&mut SetBrowse> {
         match self.home.source {
-            GetMapsSource::Find => match self.home.find_backend {
-                FindBackend::Osu => Some(&mut self.home.search.browse),
-                FindBackend::Nzbasic => Some(&mut self.home.filter.browse),
-            },
+            GetMapsSource::Find => Some(&mut self.home.find.browse),
             GetMapsSource::Collection => Some(&mut self.home.collection_browse),
             GetMapsSource::Update => None,
         }
@@ -1224,34 +1217,46 @@ impl App {
         self.active_tab() == Tab::Home && self.active_set_browse().is_some_and(|b| b.is_browsing())
     }
 
-    /// Cycle the focused search filter chip (`←`/`→` and `enter`).
+    /// Cycle the focused search-form chip (`←`/`→` and `enter`). Shared with the
+    /// nzbasic chips: mode/status/sort edit the one union value.
     fn cycle_search_chip(&mut self, forward: bool) {
         match self.home.focus {
-            HomeField::SearchMode => self.home.search.cycle_mode(forward),
-            HomeField::SearchStatus => self.home.search.cycle_status(forward),
-            HomeField::SearchSort => self.home.search.cycle_sort(forward),
+            HomeField::SearchMode => self.home.find.cycle_mode(forward),
+            HomeField::SearchStatus => self.home.find.cycle_status(forward),
+            HomeField::SearchSort => self.home.find.cycle_sort(forward),
             _ => {}
         }
     }
 
-    /// Cycle the focused filter-source chip (`space`/`enter`).
+    /// Cycle the focused nzbasic-form chip (`space`/`enter`). mode/status/sort
+    /// edit the same union value as the osu-form chips.
     fn cycle_filter_chip(&mut self, forward: bool) {
         match self.home.focus {
-            HomeField::FilterPreset => self.home.filter.cycle_preset(forward),
-            HomeField::FilterSpecial => self.home.filter.cycle_special(forward),
-            HomeField::FilterMode => self.home.filter.cycle_mode(forward),
-            HomeField::FilterStatus => self.home.filter.cycle_status(forward),
-            HomeField::FilterSort => self.home.filter.cycle_sort(forward),
+            HomeField::FilterPreset => self.home.find.cycle_preset(forward),
+            HomeField::FilterSpecial => self.home.find.cycle_special(forward),
+            HomeField::FilterMode => self.home.find.cycle_mode(forward),
+            HomeField::FilterStatus => self.home.find.cycle_status(forward),
+            HomeField::FilterSort => self.home.find.cycle_sort(forward),
             _ => {}
         }
     }
 
-    /// Build + dispatch a fresh filter fetch from the form. An invalid input
-    /// (bad range / limit) surfaces as a toast and nothing dispatches.
-    fn request_filter(&mut self) -> Option<AppCommand> {
-        match self.home.filter.build_query() {
-            Ok(query) => {
-                self.home.filter.status_msg = FilterStatusMsg::Loading;
+    /// Build + dispatch a fresh find run from the form. Both CTAs (`search` /
+    /// `filter`) route here: the resolved plan runs the matching backend task; a
+    /// conflict or bad input surfaces as a toast and nothing dispatches. The
+    /// one-shot guest login nudge fires on a *successful* guest search (in
+    /// `handle_home_search_event`), not here, so a no-creds build never shows it.
+    fn dispatch_find_run(&mut self) -> Option<AppCommand> {
+        match self.home.find.build_plan(None) {
+            Ok(FindPlan::Osu(query)) => {
+                self.home.find.status_msg = FindStatusMsg::Loading;
+                Some(AppCommand::RunSearch {
+                    query,
+                    append: false,
+                })
+            }
+            Ok(FindPlan::Nzbasic(query)) => {
+                self.home.find.status_msg = FindStatusMsg::Loading;
                 Some(AppCommand::RunFilter { query })
             }
             Err(reason) => {
@@ -1261,28 +1266,22 @@ impl App {
         }
     }
 
-    /// Build + dispatch a fresh search from the form. The one-shot guest login
-    /// nudge fires on a *successful* guest search (in `handle_home_search_event`),
-    /// not here, so a no-creds build that can't search never shows it.
-    fn request_search(&mut self) -> Option<AppCommand> {
-        self.home.search.status_msg = SearchStatusMsg::Loading;
-        let query = self.home.search.build_query(None);
-        Some(AppCommand::RunSearch {
-            query,
-            append: false,
-        })
-    }
-
-    /// Load the next page of the current search (`m` in the browse). No-op once
-    /// the last page has been reached (`next_cursor` is `None`).
+    /// Load the next osu page (`m` in the browse). No-op once the last page has
+    /// been reached (`next_cursor` is `None`) or the form no longer routes osu.
     fn load_more_search(&mut self) -> Option<AppCommand> {
-        let cursor = self.home.search.next_cursor.clone()?;
-        self.home.search.status_msg = SearchStatusMsg::Loading;
-        let query = self.home.search.build_query(Some(cursor));
-        Some(AppCommand::RunSearch {
-            query,
-            append: true,
-        })
+        let cursor = self.home.find.next_cursor.clone()?;
+        match self.home.find.build_plan(Some(cursor)) {
+            Ok(FindPlan::Osu(query)) => {
+                self.home.find.status_msg = FindStatusMsg::Loading;
+                Some(AppCommand::RunSearch {
+                    query,
+                    append: true,
+                })
+            }
+            // The criteria drifted to force nzbasic (or errored): don't page a
+            // query that no longer produced these results.
+            _ => None,
+        }
     }
 
     /// One-shot "searching as guest" nudge: fires once per logged-out session
@@ -1291,10 +1290,10 @@ impl App {
     /// shows when a guest search succeeded (never in a no-creds build that errors).
     pub(crate) fn nudge_guest_search_if_logged_out(&mut self) {
         let logged_in = matches!(self.config.login_state, AuthLoginState::LoggedIn);
-        if logged_in || self.home.search.login_nudged {
+        if logged_in || self.home.find.login_nudged {
             return;
         }
-        self.home.search.login_nudged = true;
+        self.home.find.login_nudged = true;
         self.push_toast(
             Toast::info("searching as guest")
                 .with_detail("log in from the config auth chip for more filters"),
@@ -1312,16 +1311,19 @@ impl App {
                     browse.set_all_selected(ch == 'a');
                 }
             }
+            // Route `m` by the backend that produced the loaded results, not the
+            // form chip (a cross-routed run can differ): osu pages the next
+            // results page…
             'm' if self.home.source == GetMapsSource::Find
-                && self.home.find_backend == FindBackend::Osu =>
+                && self.home.find.results_backend() == Some(FindBackend::Osu) =>
             {
                 return self.load_more_search();
             }
-            // Filter results are all in hand; `m` enriches the next page of
+            // …nzbasic results are all in hand, so `m` enriches the next page of
             // rows with `beatmapDetails` metadata instead.
             'm' if self.home.source == GetMapsSource::Find
-                && self.home.find_backend == FindBackend::Nzbasic
-                && self.home.filter.has_more_details() =>
+                && self.home.find.results_backend() == Some(FindBackend::Nzbasic)
+                && self.home.find.has_more_details() =>
             {
                 return Some(AppCommand::LoadFilterDetails);
             }
@@ -1347,16 +1349,10 @@ impl App {
                     Some(AppCommand::StartDownload { id, request })
                 }
             }
-            GetMapsSource::Find => match self.home.find_backend {
-                FindBackend::Osu => {
-                    let (id, request) = self.request_search_download()?;
-                    Some(AppCommand::StartIdsDownload { id, request })
-                }
-                FindBackend::Nzbasic => {
-                    let (id, request) = self.request_filter_download()?;
-                    Some(AppCommand::StartIdsDownload { id, request })
-                }
-            },
+            GetMapsSource::Find => {
+                let (id, request) = self.request_find_download()?;
+                Some(AppCommand::StartIdsDownload { id, request })
+            }
             GetMapsSource::Update => {
                 let (id, request) = self.request_selective_download()?;
                 Some(AppCommand::StartSelectiveDownload { id, request })
@@ -1395,9 +1391,12 @@ impl App {
         self.home.collection_browse_id = Some(collection_id);
     }
 
-    /// Build a fetch-skipping search download from the picked search results.
-    pub fn request_search_download(&mut self) -> Option<(DownloadId, IdsDownloadRequest)> {
-        let beatmapset_ids = self.home.search.browse.selected_ids();
+    /// Build a fetch-skipping download from the picked find results. The run
+    /// source (`search-` / `filter-` subdir prefix + uploader label) follows the
+    /// RESOLVED backend of the loaded results, falling back to the form's planned
+    /// route when no fetch recorded one (e.g. test-seeded rows).
+    pub fn request_find_download(&mut self) -> Option<(DownloadId, IdsDownloadRequest)> {
+        let beatmapset_ids = self.home.find.browse.selected_ids();
         if beatmapset_ids.is_empty() {
             self.toast_warn("no beatmaps selected for download");
             return None;
@@ -1411,69 +1410,31 @@ impl App {
             return None;
         }
 
-        let label = self.home.search.run_label();
-        let config = self.build_run_config();
-        let id = self.next_download_id;
-        self.next_download_id += 1;
-
-        let concurrent = usize::from(config.concurrent.max(1));
-        let mut page = CollectionPage::new(id, format!("search \"{label}\""), concurrent);
-        page.stage = DownloadStage::Resolving;
-        page.download_config = Some(config.clone());
-        self.downloads.push(page);
-        self.focus_new_download_run();
-
-        self.push_toast(
-            Toast::success(format!("queued search download #{id}"))
-                .with_detail(format!("{} beatmaps", beatmapset_ids.len())),
-        );
-
-        let request = IdsDownloadRequest {
-            beatmapset_ids,
-            // The search subdir tag is the same query-derived label as the title.
-            folder_tag: label.clone(),
-            label,
-            source: IdsRunSource::Search,
-            config,
-            auto_overwrite: self.home.auto_overwrite,
-            skip_already_imported: self.config.skip_already_imported,
-            osu_client: self.library.client_type,
-            osu_path: self.library.osu_path(),
+        let source = match self
+            .home
+            .find
+            .results_backend()
+            .unwrap_or_else(|| self.home.find.planned_backend())
+        {
+            FindBackend::Nzbasic => IdsRunSource::Filter,
+            FindBackend::Osu => IdsRunSource::Search,
         };
-        Some((id, request))
-    }
-
-    /// Build a fetch-skipping filter download from the picked filter results.
-    pub fn request_filter_download(&mut self) -> Option<(DownloadId, IdsDownloadRequest)> {
-        let beatmapset_ids = self.home.filter.browse.selected_ids();
-        if beatmapset_ids.is_empty() {
-            self.toast_warn("no beatmaps selected for download");
-            return None;
-        }
-        if self.home.mirror_count() == 0 {
-            self.toast_warn("no mirrors enabled (configure in the config tab)");
-            return None;
-        }
-        if self.downloads.len() >= usize::MAX - 1 {
-            self.toast_err("too many downloads queued");
-            return None;
-        }
-
-        let label = self.home.filter.run_label();
-        let folder_tag = self.home.filter.folder_tag();
+        let word = source.uploader();
+        let label = self.home.find.run_label();
+        let folder_tag = self.home.find.folder_tag();
         let config = self.build_run_config();
         let id = self.next_download_id;
         self.next_download_id += 1;
 
         let concurrent = usize::from(config.concurrent.max(1));
-        let mut page = CollectionPage::new(id, format!("filter \"{label}\""), concurrent);
+        let mut page = CollectionPage::new(id, format!("{word} \"{label}\""), concurrent);
         page.stage = DownloadStage::Resolving;
         page.download_config = Some(config.clone());
         self.downloads.push(page);
         self.focus_new_download_run();
 
         self.push_toast(
-            Toast::success(format!("queued filter download #{id}"))
+            Toast::success(format!("queued {word} download #{id}"))
                 .with_detail(format!("{} beatmaps", beatmapset_ids.len())),
         );
 
@@ -1481,7 +1442,7 @@ impl App {
             beatmapset_ids,
             label,
             folder_tag,
-            source: IdsRunSource::Filter,
+            source,
             config,
             auto_overwrite: self.home.auto_overwrite,
             skip_already_imported: self.config.skip_already_imported,
@@ -2210,30 +2171,21 @@ impl App {
                             // the query. Inert until fresh results are loaded and
                             // still match the current inputs — guard the descend so
                             // an unloaded / stale view button never opens the browse.
-                            HomeField::SearchBrowse => {
-                                if !self.home.search.browse.rows.is_empty()
-                                    && self.home.search.results_current()
+                            HomeField::SearchBrowse | HomeField::FilterBrowse => {
+                                if !self.home.find.browse.rows.is_empty()
+                                    && self.home.find.results_current()
                                 {
-                                    self.home.search.browse.descend();
+                                    self.home.find.browse.descend();
                                 }
                             }
-                            // Search filter chips step forward on enter (like the
-                            // source strip); the `search` CTA runs the query.
+                            // Find chips step forward on enter (like the source
+                            // strip); both CTAs dispatch the resolved find plan.
                             HomeField::SearchMode
                             | HomeField::SearchStatus
                             | HomeField::SearchSort => self.cycle_search_chip(true),
-                            HomeField::SearchRun => return self.request_search(),
-                            // Same guarded-descend as `SearchBrowse`: inert until
-                            // fresh results still matching the inputs are loaded.
-                            HomeField::FilterBrowse => {
-                                if !self.home.filter.browse.rows.is_empty()
-                                    && self.home.filter.results_current()
-                                {
-                                    self.home.filter.browse.descend();
-                                }
-                            }
+                            HomeField::SearchRun => return self.dispatch_find_run(),
                             field if field.is_filter_chip() => self.cycle_filter_chip(true),
-                            HomeField::FilterRun => return self.request_filter(),
+                            HomeField::FilterRun => return self.dispatch_find_run(),
                             field if field.is_toggle() => self.home.toggle_current(),
                             // Text inputs and the threads stepper have nothing to activate.
                             _ => {}
