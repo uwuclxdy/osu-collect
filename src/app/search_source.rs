@@ -439,6 +439,8 @@ impl SearchSource {
             status: STATUS_VALUES[self.status_idx],
             sort: Some((preset.field, preset.order)),
             cursor,
+            // Typed q-DSL criteria land in phase 2; the current form emits none.
+            ..SearchQuery::default()
         }
     }
 

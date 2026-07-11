@@ -1,7 +1,13 @@
 use super::{
-    BeatmapSetMeta, SearchMode, SearchQuery, SearchResults, SearchStatus, SortField, SortOrder,
-    build_query_params, encode_query_string,
+    BeatmapRow, BeatmapSetMeta, BeatmapsResponse, Error, MAX_BATCH_IDS, QueryRange, SearchClient,
+    SearchMode, SearchQuery, SearchResults, SearchStatus, SortField, SortOrder, build_query_params,
+    encode_query_string,
 };
+
+/// The emitted `q` value for a query (always the first param).
+fn q_of(query: &SearchQuery) -> String {
+    build_query_params(query)[0].1.clone()
+}
 
 #[test]
 fn empty_query_still_sends_q() {
@@ -17,6 +23,7 @@ fn full_query_encodes_every_param() {
         status: Some(SearchStatus::Loved),
         sort: Some((SortField::Plays, SortOrder::Asc)),
         cursor: Some("abc123".to_string()),
+        ..SearchQuery::default()
     };
     assert_eq!(
         build_query_params(&query),
@@ -70,6 +77,224 @@ fn query_string_percent_encodes_free_text() {
     );
 }
 
+// ── typed q-DSL criteria (byte-for-byte pins) ───────────────────────────────
+
+#[test]
+fn range_emits_ge_le_pair() {
+    let query = SearchQuery {
+        stars: Some(QueryRange::Range {
+            min: Some(5.0),
+            max: Some(6.5),
+        }),
+        ..SearchQuery::default()
+    };
+    assert_eq!(q_of(&query), "stars>=5 stars<=6.5");
+}
+
+#[test]
+fn range_open_lower_and_upper_bounds() {
+    let lower = SearchQuery {
+        ar: Some(QueryRange::Range {
+            min: Some(9.0),
+            max: None,
+        }),
+        ..SearchQuery::default()
+    };
+    assert_eq!(q_of(&lower), "ar>=9");
+
+    let upper = SearchQuery {
+        od: Some(QueryRange::Range {
+            min: None,
+            max: Some(4.0),
+        }),
+        ..SearchQuery::default()
+    };
+    assert_eq!(q_of(&upper), "od<=4");
+}
+
+#[test]
+fn hp_range_emits_dr_key() {
+    let query = SearchQuery {
+        hp: Some(QueryRange::Range {
+            min: Some(3.0),
+            max: Some(7.0),
+        }),
+        ..SearchQuery::default()
+    };
+    // HP drain serializes under the canonical `dr` key, not `hp`.
+    assert_eq!(q_of(&query), "dr>=3 dr<=7");
+}
+
+#[test]
+fn length_range_uses_raw_seconds() {
+    let query = SearchQuery {
+        length: Some(QueryRange::Range {
+            min: Some(60),
+            max: Some(120),
+        }),
+        ..SearchQuery::default()
+    };
+    assert_eq!(q_of(&query), "length>=60 length<=120");
+}
+
+#[test]
+fn keys_and_favourites_ranges() {
+    let query = SearchQuery {
+        keys: Some(QueryRange::Range {
+            min: Some(4),
+            max: Some(7),
+        }),
+        favourites: Some(QueryRange::Range {
+            min: Some(10_000),
+            max: None,
+        }),
+        ..SearchQuery::default()
+    };
+    assert_eq!(q_of(&query), "keys>=4 keys<=7 favourites>=10000");
+}
+
+#[test]
+fn ranked_date_range_accepts_partial_dates() {
+    let query = SearchQuery {
+        ranked: Some(QueryRange::Range {
+            min: Some("2020".to_string()),
+            max: Some("2024-06".to_string()),
+        }),
+        ..SearchQuery::default()
+    };
+    assert_eq!(q_of(&query), "ranked>=2020 ranked<=2024-06");
+}
+
+#[test]
+fn bare_exact_numeric_emits_equals() {
+    let query = SearchQuery {
+        stars: Some(QueryRange::Exact(5.0)),
+        ..SearchQuery::default()
+    };
+    // An exact value emits `key=a`; the server applies its tolerance band.
+    assert_eq!(q_of(&query), "stars=5");
+}
+
+#[test]
+fn text_fields_are_always_double_quoted_with_inner_escape() {
+    let plain = SearchQuery {
+        creator: Some("mrekk".to_string()),
+        ..SearchQuery::default()
+    };
+    assert_eq!(q_of(&plain), "creator=\"mrekk\"");
+
+    let quoted = SearchQuery {
+        title: Some("tri\"angle".to_string()),
+        ..SearchQuery::default()
+    };
+    // Inner `"` escapes to `\"`.
+    assert_eq!(q_of(&quoted), "title=\"tri\\\"angle\"");
+}
+
+#[test]
+fn approved_status_emits_q_term_and_any_category() {
+    let query = SearchQuery {
+        status: Some(SearchStatus::Approved),
+        ..SearchQuery::default()
+    };
+    let params = build_query_params(&query);
+    assert_eq!(q_of(&query), "status=approved");
+    // The category param is forced to `any` so it never masks the q term.
+    assert!(params.contains(&("s", "any".to_string())));
+}
+
+#[test]
+fn non_approved_status_stays_on_s_param_only() {
+    let query = SearchQuery {
+        status: Some(SearchStatus::Loved),
+        ..SearchQuery::default()
+    };
+    let params = build_query_params(&query);
+    // No status term leaks into `q` for any status other than `approved`.
+    assert_eq!(q_of(&query), "");
+    assert!(params.contains(&("s", "loved".to_string())));
+}
+
+#[test]
+fn combined_query_pins_full_fixed_order() {
+    let query = SearchQuery {
+        text: "tekno".to_string(),
+        status: Some(SearchStatus::Approved),
+        stars: Some(QueryRange::Range {
+            min: Some(5.0),
+            max: Some(6.5),
+        }),
+        ar: Some(QueryRange::Range {
+            min: Some(9.0),
+            max: None,
+        }),
+        cs: Some(QueryRange::Range {
+            min: None,
+            max: Some(4.0),
+        }),
+        od: Some(QueryRange::Exact(8.0)),
+        hp: Some(QueryRange::Range {
+            min: Some(3.0),
+            max: Some(7.0),
+        }),
+        bpm: Some(QueryRange::Range {
+            min: Some(180.0),
+            max: Some(200.0),
+        }),
+        length: Some(QueryRange::Range {
+            min: Some(60),
+            max: Some(120),
+        }),
+        keys: Some(QueryRange::Exact(7)),
+        ranked: Some(QueryRange::Range {
+            min: Some("2020".to_string()),
+            max: Some("2024-06".to_string()),
+        }),
+        favourites: Some(QueryRange::Range {
+            min: Some(10_000),
+            max: None,
+        }),
+        creator: Some("mrekk".to_string()),
+        artist: Some("Camellia".to_string()),
+        title: Some("tri\"angle".to_string()),
+        ..SearchQuery::default()
+    };
+    // Fixed order: free text, status=approved, then stars/ar/cs/od/dr/bpm/
+    // length/keys/ranked/favourites, then creator/artist/title.
+    assert_eq!(
+        q_of(&query),
+        "tekno status=approved stars>=5 stars<=6.5 ar>=9 cs<=4 od=8 dr>=3 dr<=7 \
+         bpm>=180 bpm<=200 length>=60 length<=120 keys=7 ranked>=2020 ranked<=2024-06 \
+         favourites>=10000 creator=\"mrekk\" artist=\"Camellia\" title=\"tri\\\"angle\""
+    );
+}
+
+#[test]
+fn all_none_range_emits_nothing() {
+    let query = SearchQuery {
+        stars: Some(QueryRange::Range {
+            min: None,
+            max: None,
+        }),
+        ..SearchQuery::default()
+    };
+    assert_eq!(q_of(&query), "");
+}
+
+#[test]
+fn from_bounds_collapses_absent_bounds_to_none() {
+    assert_eq!(QueryRange::<f64>::from_bounds(None, None), None);
+    assert_eq!(
+        QueryRange::from_bounds(Some(1.0), None),
+        Some(QueryRange::Range {
+            min: Some(1.0),
+            max: None,
+        })
+    );
+}
+
+// ── response deserialization ────────────────────────────────────────────────
+
 #[test]
 fn deserializes_search_response_fields() {
     // A compact envelope shaped like a real osu! API v2 response. The test fails
@@ -114,4 +339,80 @@ fn null_cursor_marks_last_page() {
     let results: SearchResults = serde_json::from_str(json).expect("parse empty response");
     assert!(results.beatmapsets.is_empty());
     assert_eq!(results.cursor_string, None);
+}
+
+#[test]
+fn deserializes_batch_beatmaps_envelope() {
+    // Shape from the live probe (2026-07-11): a `beatmaps` array where each row
+    // nests its parent `beatmapset`. `mode_int` is optional.
+    let json = r#"{
+        "beatmaps": [
+            {
+                "id": 75,
+                "beatmapset_id": 1,
+                "mode_int": 0,
+                "beatmapset": {
+                    "id": 1,
+                    "title": "DISCO PRINCE",
+                    "artist": "Kenji Ninuma",
+                    "creator": "peppy",
+                    "status": "ranked",
+                    "favourite_count": 42,
+                    "play_count": 123456,
+                    "nsfw": false,
+                    "video": false
+                }
+            },
+            {
+                "id": 129891,
+                "beatmapset_id": 41823,
+                "beatmapset": {
+                    "id": 41823,
+                    "title": "FREEDOM DiVE",
+                    "artist": "xi",
+                    "creator": "Nakagawa-Kanon",
+                    "status": "ranked"
+                }
+            }
+        ]
+    }"#;
+
+    let response: BeatmapsResponse = serde_json::from_str(json).expect("parse batch response");
+    assert_eq!(response.beatmaps.len(), 2);
+
+    let first: &BeatmapRow = &response.beatmaps[0];
+    assert_eq!(first.id, 75);
+    assert_eq!(first.beatmapset_id, 1);
+    assert_eq!(first.mode_int, Some(0));
+    assert_eq!(first.beatmapset.title, "DISCO PRINCE");
+    assert_eq!(first.beatmapset.creator, "peppy");
+    assert_eq!(first.beatmapset.favourite_count, 42);
+
+    // Second row omits `mode_int` and the set's optional count/flag fields; they
+    // default rather than failing the parse.
+    let second: &BeatmapRow = &response.beatmaps[1];
+    assert_eq!(second.mode_int, None);
+    assert_eq!(second.beatmapset.id, 41823);
+    assert_eq!(second.beatmapset.play_count, 0);
+    assert!(!second.beatmapset.video);
+}
+
+// ── batch guards (return before any network I/O) ────────────────────────────
+
+#[tokio::test]
+async fn beatmaps_empty_ids_short_circuits() {
+    let client = SearchClient::new();
+    let rows = client
+        .beatmaps("token", &[])
+        .await
+        .expect("empty ids is a no-op");
+    assert!(rows.is_empty());
+}
+
+#[tokio::test]
+async fn beatmaps_rejects_oversized_batch() {
+    let client = SearchClient::new();
+    let ids: Vec<u32> = (0..=MAX_BATCH_IDS as u32).collect(); // MAX_BATCH_IDS + 1
+    let result = client.beatmaps("token", &ids).await;
+    assert!(matches!(result, Err(Error::Config(_))));
 }
