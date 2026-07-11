@@ -201,7 +201,7 @@ fn collection_form_cta_reads_download_all() {
 fn search_view_maps_button_shows_when_results_loaded() {
     use osu_collect::app::{BrowseRow, GetMapsSource};
     let mut app = make_app();
-    app.home.source = GetMapsSource::Search;
+    app.home.source = GetMapsSource::Find;
     app.home.search.browse.set_rows(vec![
         BrowseRow { id: 1, meta: None },
         BrowseRow { id: 2, meta: None },
@@ -276,7 +276,7 @@ fn collection_browse_shows_focus_caret_and_uppercase_title() {
 fn search_cta_shows_inline_spinner_while_loading() {
     use osu_collect::app::{GetMapsSource, SearchStatusMsg};
     let mut app = make_app();
-    app.home.source = GetMapsSource::Search;
+    app.home.source = GetMapsSource::Find;
     app.home.search.status_msg = SearchStatusMsg::Loading;
     let content = render_content(&app, 80, 24);
     // The CTA mirrors the scan CTA: an inline braille spinner replaces `search`

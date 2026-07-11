@@ -1,4 +1,4 @@
-use crate::app::{GetMapsSource, HomeField, HomeTab, LibraryState, ResolveState};
+use crate::app::{FindBackend, GetMapsSource, HomeField, HomeTab, LibraryState, ResolveState};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -25,6 +25,7 @@ const SECTION_DOWNLOAD: &str = "download";
 const SECTION_NONE: &str = "";
 
 const LABEL_SOURCE: &str = "source";
+const LABEL_BACKEND: &str = "backend";
 const LABEL_OVERWRITE: &str = "overwrite existing";
 const LABEL_VIDEO: &str = "video";
 
@@ -69,34 +70,37 @@ fn update_cursor_col(form: &HomeTab, library: &LibraryState, editing: bool) -> O
 /// source's two-level browse is handled separately by its own render.
 fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab) -> bool {
     match form.source {
-        GetMapsSource::Search if form.search.browse.is_browsing() => {
-            let status = widgets::ratio_line(
-                form.search.browse.selected_count(),
-                form.search.browse.rows.len(),
-            );
-            set_browse::render(
-                frame,
-                area,
-                &form.search.browse,
-                search_source::BROWSE_LIST_TITLE,
-                status,
-            );
-            true
-        }
-        GetMapsSource::Filter if form.filter.browse.is_browsing() => {
-            let status = widgets::ratio_line(
-                form.filter.browse.selected_count(),
-                form.filter.browse.rows.len(),
-            );
-            set_browse::render(
-                frame,
-                area,
-                &form.filter.browse,
-                filter_source::BROWSE_LIST_TITLE,
-                status,
-            );
-            true
-        }
+        GetMapsSource::Find => match form.find_backend {
+            FindBackend::Osu if form.search.browse.is_browsing() => {
+                let status = widgets::ratio_line(
+                    form.search.browse.selected_count(),
+                    form.search.browse.rows.len(),
+                );
+                set_browse::render(
+                    frame,
+                    area,
+                    &form.search.browse,
+                    search_source::BROWSE_LIST_TITLE,
+                    status,
+                );
+                true
+            }
+            FindBackend::Nzbasic if form.filter.browse.is_browsing() => {
+                let status = widgets::ratio_line(
+                    form.filter.browse.selected_count(),
+                    form.filter.browse.rows.len(),
+                );
+                set_browse::render(
+                    frame,
+                    area,
+                    &form.filter.browse,
+                    filter_source::BROWSE_LIST_TITLE,
+                    status,
+                );
+                true
+            }
+            _ => false,
+        },
         GetMapsSource::Collection if form.collection_browse.is_browsing() => {
             let status = widgets::ratio_line(
                 form.collection_browse.selected_count(),
@@ -184,28 +188,23 @@ fn render_compact(
             );
             return;
         }
-        GetMapsSource::Search => {
-            search_source::push_form_rows(&mut items, &form.search, focus, editing, tick);
-            let cursor_col = search_cursor_col(form, editing);
-            let (items, focused_index) = items.into_parts();
-            widgets::render_scrollable_panel(
-                frame,
-                area,
-                PANEL_TITLE,
-                None,
-                items,
-                focused_index,
-                !focus.is_button(),
-                cursor_col,
-                true,
-                true,
-                &form.list_offset,
+        GetMapsSource::Find => {
+            // The backend chip heads the find form; the rest of the rows come
+            // from the active backend's own form builder.
+            items.push_focusable(
+                HomeField::Backend,
+                backend_row_item(form.find_backend, focus == HomeField::Backend),
             );
-            return;
-        }
-        GetMapsSource::Filter => {
-            filter_source::push_form_rows(&mut items, &form.filter, focus, editing, tick);
-            let cursor_col = filter_cursor_col(form, editing);
+            let cursor_col = match form.find_backend {
+                FindBackend::Osu => {
+                    search_source::push_form_rows(&mut items, &form.search, focus, editing, tick);
+                    search_cursor_col(form, editing)
+                }
+                FindBackend::Nzbasic => {
+                    filter_source::push_form_rows(&mut items, &form.filter, focus, editing, tick);
+                    filter_cursor_col(form, editing)
+                }
+            };
             let (items, focused_index) = items.into_parts();
             widgets::render_scrollable_panel(
                 frame,
@@ -402,28 +401,23 @@ fn render_content(
             );
             return;
         }
-        GetMapsSource::Search => {
-            search_source::push_form_rows(&mut items, &form.search, focus, editing, tick);
-            let cursor_col = search_cursor_col(form, editing);
-            let (items, focused_index) = items.into_parts();
-            widgets::render_scrollable_panel(
-                frame,
-                area,
-                PANEL_TITLE,
-                None,
-                items,
-                focused_index,
-                !focus.is_button(),
-                cursor_col,
-                true,
-                true,
-                &form.list_offset,
+        GetMapsSource::Find => {
+            // The backend chip heads the find form; the rest of the rows come
+            // from the active backend's own form builder.
+            items.push_focusable(
+                HomeField::Backend,
+                backend_row_item(form.find_backend, focus == HomeField::Backend),
             );
-            return;
-        }
-        GetMapsSource::Filter => {
-            filter_source::push_form_rows(&mut items, &form.filter, focus, editing, tick);
-            let cursor_col = filter_cursor_col(form, editing);
+            let cursor_col = match form.find_backend {
+                FindBackend::Osu => {
+                    search_source::push_form_rows(&mut items, &form.search, focus, editing, tick);
+                    search_cursor_col(form, editing)
+                }
+                FindBackend::Nzbasic => {
+                    filter_source::push_form_rows(&mut items, &form.filter, focus, editing, tick);
+                    filter_cursor_col(form, editing)
+                }
+            };
             let (items, focused_index) = items.into_parts();
             widgets::render_scrollable_panel(
                 frame,
@@ -615,9 +609,11 @@ fn home_section(field: HomeField) -> &'static str {
         Collection => SECTION_COLLECTION,
         Mirrors => SECTION_MIRRORS,
         Threads | AutoOverwrite | Video | Directory => SECTION_DOWNLOAD,
-        // The download buttons and the update / search source fields render in
+        // The download buttons and the update / find source fields render in
         // their own bodies, not the collection sections, so they light no header.
-        Download | CollectionBrowse | UpdateOsuPath | UpdateScan | UpdateBrowse => SECTION_NONE,
+        Backend | Download | CollectionBrowse | UpdateOsuPath | UpdateScan | UpdateBrowse => {
+            SECTION_NONE
+        }
         SearchQuery | SearchMode | SearchStatus | SearchSort | SearchRun | SearchBrowse => {
             SECTION_NONE
         }
@@ -635,6 +631,13 @@ fn home_section(field: HomeField) -> &'static str {
 fn source_row_item(active: GetMapsSource, focused: bool) -> ListItem<'static> {
     let options: Vec<&str> = GetMapsSource::ALL.iter().map(|s| s.label()).collect();
     widgets::cycle_item(LABEL_SOURCE, &options, active.label(), focused, 0)
+}
+
+/// The find-source backend chip (`osu! api` / `nzbasic`), the active one
+/// bracketed. Cycled by `space`/`enter`, carrying the game-mode selection across.
+fn backend_row_item(active: FindBackend, focused: bool) -> ListItem<'static> {
+    let options: Vec<&str> = FindBackend::ALL.iter().map(|b| b.label()).collect();
+    widgets::cycle_item(LABEL_BACKEND, &options, active.label(), focused, 0)
 }
 
 const RESOLVE_PREFIX: &str = "  └ ";

@@ -30,7 +30,7 @@ pub use custom_mirrors::CustomMirrorList;
 pub use download_history::{DownloadHistory, HistoryRecord, HistoryStage};
 pub use downloads_tab::{DownloadsRow, DownloadsTab};
 pub use filter_source::{FilterSource, FilterStatusMsg};
-pub use home::{GetMapsSource, HomeField, HomeTab, InputField, ResolveState};
+pub use home::{FindBackend, GetMapsSource, HomeField, HomeTab, InputField, ResolveState};
 pub use library::LibraryState;
 pub use login::{LoginField, LoginPhase, LoginTab};
 pub use runtime::run as run_app;

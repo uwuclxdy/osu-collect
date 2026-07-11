@@ -1,5 +1,5 @@
 use crate::app::{
-    App, ConfigField, ConfigTab, GetMapsSource, HomeField, HomeTab, LoginField, Tab,
+    App, ConfigField, ConfigTab, FindBackend, GetMapsSource, HomeField, HomeTab, LoginField, Tab,
     messages::AppMessage,
 };
 use crate::download::DownloadStage;
@@ -44,7 +44,7 @@ const HINT_SCROLL: &str = "↑↓ scroll";
 const HINT_REORDER: &str = "⇧↑↓ reorder";
 const HINT_SOURCE: &str = "↵ switch source";
 /// Get Maps: jump straight to a source by its strip digit.
-const HINT_SOURCE_JUMP: &str = "1-4 source";
+const HINT_SOURCE_JUMP: &str = "1-3 source";
 /// Search filter chip (mode / status / sort): `←`/`→` cycle the value.
 const HINT_CYCLE: &str = "space cycle";
 /// Search form's `search` CTA: run the query.
@@ -292,8 +292,11 @@ fn home_tab_hints(form: &HomeTab) -> (Vec<&'static str>, Option<&'static str>) {
 /// The active source's flat browse when it is descended, else `None`.
 fn active_set_browse(form: &HomeTab) -> Option<&crate::app::SetBrowse> {
     match form.source {
-        GetMapsSource::Search if form.search.browse.is_browsing() => Some(&form.search.browse),
-        GetMapsSource::Filter if form.filter.browse.is_browsing() => Some(&form.filter.browse),
+        GetMapsSource::Find => match form.find_backend {
+            FindBackend::Osu if form.search.browse.is_browsing() => Some(&form.search.browse),
+            FindBackend::Nzbasic if form.filter.browse.is_browsing() => Some(&form.filter.browse),
+            _ => None,
+        },
         GetMapsSource::Collection if form.collection_browse.is_browsing() => {
             Some(&form.collection_browse)
         }
@@ -318,10 +321,16 @@ fn set_browse_hints(
     ];
     // `m` loads the next page of a search that still has one, or the next
     // details page of a filter result set.
-    if form.source == GetMapsSource::Search && form.search.next_cursor.is_some() {
+    if form.source == GetMapsSource::Find
+        && form.find_backend == FindBackend::Osu
+        && form.search.next_cursor.is_some()
+    {
         segments.push(HINT_MORE);
     }
-    if form.source == GetMapsSource::Filter && form.filter.has_more_details() {
+    if form.source == GetMapsSource::Find
+        && form.find_backend == FindBackend::Nzbasic
+        && form.filter.has_more_details()
+    {
         segments.push(HINT_MORE);
     }
     (segments, None)
@@ -338,6 +347,7 @@ fn home_form_hints(form: &HomeTab) -> Vec<&'static str> {
         HomeField::Mirrors => segments.push(HINT_ENTER_OPEN),
         HomeField::SearchRun => segments.push(HINT_SEARCH),
         HomeField::FilterRun => segments.push(HINT_FILTER),
+        HomeField::Backend => segments.push(HINT_CYCLE),
         f if f.is_search_chip() || f.is_filter_chip() => segments.push(HINT_CYCLE),
         f if f.is_stepper() => segments.push(HINT_PLUS_MINUS),
         f if f.is_toggle() => segments.push(HINT_ENTER_TOGGLE),

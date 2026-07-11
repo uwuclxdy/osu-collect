@@ -392,6 +392,17 @@ impl SearchSource {
         MODE_LABELS[self.mode_idx]
     }
 
+    /// The game-mode chip index, for carrying the selection across a find-backend
+    /// switch (both backends share the `["any", "osu", …]` order).
+    pub fn mode_idx(&self) -> usize {
+        self.mode_idx
+    }
+
+    /// Set the game-mode chip index, clamped to the option count.
+    pub fn set_mode_idx(&mut self, idx: usize) {
+        self.mode_idx = idx.min(MODE_VALUES.len() - 1);
+    }
+
     pub fn status_label(&self) -> &'static str {
         STATUS_LABELS[self.status_idx]
     }

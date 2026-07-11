@@ -7,7 +7,7 @@ use super::{
     downloads_tab::{DownloadsRow, DownloadsTab},
     failed_maps,
     filter_source::FilterStatusMsg,
-    home::{GetMapsSource, HomeField, HomeTab},
+    home::{FindBackend, GetMapsSource, HomeField, HomeTab},
     ignored_maps,
     library::LibraryState,
     login::{LoginField, LoginPhase, LoginTab},
@@ -1197,8 +1197,10 @@ impl App {
     /// or `None` for the update source (whose two-level browse is separate).
     fn active_set_browse(&self) -> Option<&SetBrowse> {
         match self.home.source {
-            GetMapsSource::Search => Some(&self.home.search.browse),
-            GetMapsSource::Filter => Some(&self.home.filter.browse),
+            GetMapsSource::Find => match self.home.find_backend {
+                FindBackend::Osu => Some(&self.home.search.browse),
+                FindBackend::Nzbasic => Some(&self.home.filter.browse),
+            },
             GetMapsSource::Collection => Some(&self.home.collection_browse),
             GetMapsSource::Update => None,
         }
@@ -1206,8 +1208,10 @@ impl App {
 
     fn active_set_browse_mut(&mut self) -> Option<&mut SetBrowse> {
         match self.home.source {
-            GetMapsSource::Search => Some(&mut self.home.search.browse),
-            GetMapsSource::Filter => Some(&mut self.home.filter.browse),
+            GetMapsSource::Find => match self.home.find_backend {
+                FindBackend::Osu => Some(&mut self.home.search.browse),
+                FindBackend::Nzbasic => Some(&mut self.home.filter.browse),
+            },
             GetMapsSource::Collection => Some(&mut self.home.collection_browse),
             GetMapsSource::Update => None,
         }
@@ -1308,12 +1312,15 @@ impl App {
                     browse.set_all_selected(ch == 'a');
                 }
             }
-            'm' if self.home.source == GetMapsSource::Search => {
+            'm' if self.home.source == GetMapsSource::Find
+                && self.home.find_backend == FindBackend::Osu =>
+            {
                 return self.load_more_search();
             }
             // Filter results are all in hand; `m` enriches the next page of
             // rows with `beatmapDetails` metadata instead.
-            'm' if self.home.source == GetMapsSource::Filter
+            'm' if self.home.source == GetMapsSource::Find
+                && self.home.find_backend == FindBackend::Nzbasic
                 && self.home.filter.has_more_details() =>
             {
                 return Some(AppCommand::LoadFilterDetails);
@@ -1340,14 +1347,16 @@ impl App {
                     Some(AppCommand::StartDownload { id, request })
                 }
             }
-            GetMapsSource::Search => {
-                let (id, request) = self.request_search_download()?;
-                Some(AppCommand::StartIdsDownload { id, request })
-            }
-            GetMapsSource::Filter => {
-                let (id, request) = self.request_filter_download()?;
-                Some(AppCommand::StartIdsDownload { id, request })
-            }
+            GetMapsSource::Find => match self.home.find_backend {
+                FindBackend::Osu => {
+                    let (id, request) = self.request_search_download()?;
+                    Some(AppCommand::StartIdsDownload { id, request })
+                }
+                FindBackend::Nzbasic => {
+                    let (id, request) = self.request_filter_download()?;
+                    Some(AppCommand::StartIdsDownload { id, request })
+                }
+            },
             GetMapsSource::Update => {
                 let (id, request) = self.request_selective_download()?;
                 Some(AppCommand::StartSelectiveDownload { id, request })
@@ -2168,6 +2177,9 @@ impl App {
                             // The source picker is a cycle row: `enter` steps it
                             // forward, matching the config cycle fields.
                             HomeField::Source => self.home.cycle_source(true),
+                            // The find backend chip cycles like the strip, carrying
+                            // the game-mode selection across the switch.
+                            HomeField::Backend => self.home.cycle_find_backend(true),
                             // Per-source download button; routed by active source.
                             HomeField::Download => return self.dispatch_form_download(),
                             // Open the resolved collection in the checkbox browse.
@@ -2293,6 +2305,8 @@ impl App {
                         }
                     } else if self.home.focus == HomeField::Source {
                         self.home.cycle_source(true);
+                    } else if self.home.focus == HomeField::Backend {
+                        self.home.cycle_find_backend(true);
                     } else if self.home.focus.is_search_chip() {
                         self.cycle_search_chip(true);
                     } else if self.home.focus.is_filter_chip() {

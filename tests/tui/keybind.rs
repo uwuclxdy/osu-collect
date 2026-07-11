@@ -147,7 +147,7 @@ fn s_jumps_to_download_button_on_every_source() {
     use osu_collect::app::{GetMapsSource, HomeField};
     // Every source's form carries a download button now, so `s` reaches it on
     // all three — not just the collection source.
-    for source in [GetMapsSource::Search, GetMapsSource::Update] {
+    for source in [GetMapsSource::Find, GetMapsSource::Update] {
         let mut app = make_app();
         app.home.source = source;
         app.home.focus = HomeField::Source;
@@ -282,11 +282,11 @@ fn space_and_enter_cycle_source_when_strip_focused() {
     app.home.focus = HomeField::Source;
     assert_eq!(app.home.source, GetMapsSource::Collection);
     // space / enter cycle forward, wrapping; the tab never changes. Arrows no
-    // longer touch the source.
+    // longer touch the source. Strip order is [find, collection, update].
     app.handle_key(press(KeyCode::Char(' ')));
     assert_eq!(app.home.source, GetMapsSource::Update);
     app.handle_key(press(KeyCode::Enter));
-    assert_eq!(app.home.source, GetMapsSource::Search);
+    assert_eq!(app.home.source, GetMapsSource::Find);
     assert_eq!(app.active_tab(), Tab::Home);
 }
 
@@ -316,14 +316,15 @@ fn arrows_switch_tab_off_the_strip() {
 }
 
 #[test]
-fn search_source_down_focuses_query() {
+fn find_source_down_focuses_backend_chip() {
     use osu_collect::app::{GetMapsSource, HomeField};
     let mut app = make_app();
-    app.home.source = GetMapsSource::Search;
+    app.home.source = GetMapsSource::Find;
     app.home.focus = HomeField::Source;
-    // The search source has a real form now: Down from the strip focuses the query.
+    // The find form's first row under the strip is the backend chip; Down lands
+    // there before the backend-specific fields.
     app.handle_key(press(KeyCode::Down));
-    assert_eq!(app.home.focus, HomeField::SearchQuery);
+    assert_eq!(app.home.focus, HomeField::Backend);
     // (`s` jumps to the download button on every source — covered by
     // `s_jumps_to_download_button_on_every_source`. `d` stays collection-only.)
 }
@@ -336,9 +337,8 @@ fn switching_source_preserves_collection_input() {
     // Cycle all the way around with space; keep-both keeps the input alive.
     app.home.focus = HomeField::Source;
     app.handle_key(press(KeyCode::Char(' '))); // collection → update
-    app.handle_key(press(KeyCode::Char(' '))); // update → search
-    app.handle_key(press(KeyCode::Char(' '))); // search → filter
-    app.handle_key(press(KeyCode::Char(' '))); // filter → collection
+    app.handle_key(press(KeyCode::Char(' '))); // update → find
+    app.handle_key(press(KeyCode::Char(' '))); // find → collection
     assert_eq!(app.home.source, GetMapsSource::Collection);
     assert_eq!(app.home.collection.value, "12345");
 }
@@ -366,6 +366,49 @@ fn digit_does_not_jump_while_editing() {
     app.handle_key(press(KeyCode::Char('2')));
     assert_eq!(app.home.source, GetMapsSource::Collection);
     assert_eq!(app.home.collection.value, "2");
+}
+
+#[test]
+fn source_strip_cycles_three_sources() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.focus = HomeField::Source;
+    // Three sources now (find / collection / update); space visits each and wraps.
+    assert_eq!(GetMapsSource::ALL.len(), 3);
+    let start = app.home.source;
+    app.handle_key(press(KeyCode::Char(' ')));
+    app.handle_key(press(KeyCode::Char(' ')));
+    app.handle_key(press(KeyCode::Char(' ')));
+    assert_eq!(
+        app.home.source, start,
+        "three space presses wrap back to start"
+    );
+}
+
+#[test]
+fn backend_chip_cycles_find_backend_and_carries_mode() {
+    use osu_collect::app::{FindBackend, GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    app.home.focus = HomeField::Backend;
+    assert_eq!(app.home.find_backend, FindBackend::Osu);
+
+    // Pick a non-default game mode on the osu! backend (index 2 = taiko).
+    app.home.search.set_mode_idx(2);
+
+    // space cycles the backend chip; the mode index carries across.
+    app.handle_key(press(KeyCode::Char(' ')));
+    assert_eq!(app.home.find_backend, FindBackend::Nzbasic);
+    assert_eq!(app.home.filter.mode_idx(), 2, "mode carries osu → nzbasic");
+
+    // Change the mode on the nzbasic backend (index 3 = catch) so the carry-back
+    // is a genuine write, not the value osu already held.
+    app.home.filter.set_mode_idx(3);
+
+    // enter cycles back; the mode carries the other way too.
+    app.handle_key(press(KeyCode::Enter));
+    assert_eq!(app.home.find_backend, FindBackend::Osu);
+    assert_eq!(app.home.search.mode_idx(), 3, "mode carries nzbasic → osu");
 }
 
 // ── character input ───────────────────────────────────────────────────────────
@@ -1153,7 +1196,7 @@ fn typing_into_updates_path_field_routes_to_library() {
 fn request_search_download_uses_query_label_and_selected_ids() {
     use osu_collect::app::{BrowseRow, GetMapsSource};
     let mut app = make_app();
-    app.home.source = GetMapsSource::Search;
+    app.home.source = GetMapsSource::Find;
     app.home.search.query.set_value("tekno");
     app.home.search.browse.set_rows(vec![
         BrowseRow { id: 10, meta: None },
@@ -1178,7 +1221,7 @@ fn search_view_button_reopens_results_without_re_searching() {
     use osu_collect::app::{BrowseRow, GetMapsSource, HomeField, SearchStatusMsg};
 
     let mut app = make_app();
-    app.home.source = GetMapsSource::Search;
+    app.home.source = GetMapsSource::Find;
     app.home.search.query.set_value("tekno");
     app.home.search.status_msg = SearchStatusMsg::Ready { total: 2 };
     app.home.search.browse.set_rows(vec![
@@ -1214,7 +1257,7 @@ fn search_view_button_is_inert_once_the_query_diverges() {
     use osu_collect::app::{BrowseRow, GetMapsSource, HomeField, SearchStatusMsg};
 
     let mut app = make_app();
-    app.home.source = GetMapsSource::Search;
+    app.home.source = GetMapsSource::Find;
     app.home.search.query.set_value("tekno");
     app.home.search.status_msg = SearchStatusMsg::Ready { total: 2 };
     app.home.search.browse.set_rows(vec![
@@ -1243,7 +1286,7 @@ fn search_view_button_is_inert_until_results_load() {
     // Idle (no results): the view button renders disabled, so focus can land on
     // it — Enter must be a no-op, never opening an empty browse.
     let mut app = make_app();
-    app.home.source = GetMapsSource::Search;
+    app.home.source = GetMapsSource::Find;
     app.home.focus = HomeField::SearchBrowse;
     let cmd = app.handle_key(press(KeyCode::Enter));
     assert!(cmd.is_none(), "disabled view button fires nothing");
@@ -1329,9 +1372,10 @@ fn reopening_collection_browse_preserves_picks() {
 
 #[test]
 fn filter_cta_emits_run_filter_and_rejects_bad_ranges() {
-    use osu_collect::app::{GetMapsSource, HomeField};
+    use osu_collect::app::{FindBackend, GetMapsSource, HomeField};
     let mut app = make_app();
-    app.home.source = GetMapsSource::Filter;
+    app.home.source = GetMapsSource::Find;
+    app.home.find_backend = FindBackend::Nzbasic;
     app.home.focus = HomeField::FilterRun;
 
     let cmd = app.handle_key(press(KeyCode::Enter));
@@ -1348,9 +1392,10 @@ fn filter_cta_emits_run_filter_and_rejects_bad_ranges() {
 
 #[test]
 fn filter_chips_cycle_on_space_and_presets_seed_fields() {
-    use osu_collect::app::{GetMapsSource, HomeField};
+    use osu_collect::app::{FindBackend, GetMapsSource, HomeField};
     let mut app = make_app();
-    app.home.source = GetMapsSource::Filter;
+    app.home.source = GetMapsSource::Find;
+    app.home.find_backend = FindBackend::Nzbasic;
 
     app.home.focus = HomeField::FilterSpecial;
     app.handle_key(press(KeyCode::Char(' ')));
@@ -1369,10 +1414,11 @@ fn filter_chips_cycle_on_space_and_presets_seed_fields() {
 
 #[test]
 fn m_in_filter_browse_loads_more_details() {
-    use osu_collect::app::{BrowseRow, GetMapsSource};
+    use osu_collect::app::{BrowseRow, FindBackend, GetMapsSource};
     use std::collections::HashMap;
     let mut app = make_app();
-    app.home.source = GetMapsSource::Filter;
+    app.home.source = GetMapsSource::Find;
+    app.home.find_backend = FindBackend::Nzbasic;
     // 300 diff ids = two details pages; the first auto-fetch already pulled one.
     app.home
         .filter
@@ -1398,10 +1444,11 @@ fn m_in_filter_browse_loads_more_details() {
 
 #[test]
 fn request_filter_download_uses_label_tag_and_selected_ids() {
-    use osu_collect::app::{BrowseRow, GetMapsSource};
+    use osu_collect::app::{BrowseRow, FindBackend, GetMapsSource};
     use osu_collect::download::IdsRunSource;
     let mut app = make_app();
-    app.home.source = GetMapsSource::Filter;
+    app.home.source = GetMapsSource::Find;
+    app.home.find_backend = FindBackend::Nzbasic;
     // Seed the farm preset so the label + folder tag read "farm".
     app.home.focus = osu_collect::app::HomeField::FilterPreset;
     for _ in 0..3 {

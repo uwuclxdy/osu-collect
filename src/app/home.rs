@@ -26,20 +26,20 @@ pub enum ResolveState {
 }
 
 /// Which get-maps source the tab is showing. The strip is the first focusable
-/// row; `space`/`enter` cycle it. All four sources are wired.
+/// row; `space`/`enter` cycle it, digits jump to it. All three sources are wired.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GetMapsSource {
-    Search,
-    Filter,
+    /// Discovery: an osu! api text search or an nzbasic attribute filter, picked
+    /// by the [`FindBackend`] chip ([`HomeTab.find_backend`](HomeTab::find_backend)).
+    Find,
     Collection,
     Update,
 }
 
 impl GetMapsSource {
-    /// Strip order, left to right (the discovery sources sit adjacent).
-    pub const ALL: [GetMapsSource; 4] = [
-        GetMapsSource::Search,
-        GetMapsSource::Filter,
+    /// Strip order, left to right.
+    pub const ALL: [GetMapsSource; 3] = [
+        GetMapsSource::Find,
         GetMapsSource::Collection,
         GetMapsSource::Update,
     ];
@@ -47,8 +47,7 @@ impl GetMapsSource {
     /// Lowercase strip label.
     pub fn label(self) -> &'static str {
         match self {
-            GetMapsSource::Search => "search",
-            GetMapsSource::Filter => "filter",
+            GetMapsSource::Find => "find",
             GetMapsSource::Collection => "collection",
             GetMapsSource::Update => "update",
         }
@@ -57,10 +56,41 @@ impl GetMapsSource {
     /// The next source `forward` (right) or backward (left) along [`ALL`](Self::ALL),
     /// wrapping at the ends.
     fn cycled(self, forward: bool) -> Self {
-        let idx = Self::ALL.iter().position(|&s| s == self).unwrap_or(1);
+        let idx = Self::ALL.iter().position(|&s| s == self).unwrap_or(0);
         let len = Self::ALL.len();
         let next = if forward { idx + 1 } else { idx + len - 1 };
         Self::ALL[next % len]
+    }
+}
+
+/// Which backend the [`GetMapsSource::Find`] source queries. Both share the find
+/// form's shell (source strip + backend chip) but keep entirely separate query
+/// state ([`HomeTab.search`](HomeTab::search) / [`HomeTab.filter`](HomeTab::filter)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FindBackend {
+    /// osu! api v2 text search.
+    Osu,
+    /// nzbasic BBD attribute filter.
+    Nzbasic,
+}
+
+impl FindBackend {
+    /// Chip order; the cycle row shows both, the active one bracketed.
+    pub const ALL: [FindBackend; 2] = [FindBackend::Osu, FindBackend::Nzbasic];
+
+    /// Chip label.
+    pub fn label(self) -> &'static str {
+        match self {
+            FindBackend::Osu => "osu! api",
+            FindBackend::Nzbasic => "nzbasic",
+        }
+    }
+
+    fn toggled(self) -> Self {
+        match self {
+            FindBackend::Osu => FindBackend::Nzbasic,
+            FindBackend::Nzbasic => FindBackend::Osu,
+        }
     }
 }
 
@@ -198,9 +228,12 @@ fn char_to_byte(s: &str, idx: usize) -> usize {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HomeField {
-    /// The source strip (search / collection / update). First focusable row;
-    /// `space`/`enter` cycle the active source (arrows switch tabs).
+    /// The source strip (find / collection / update). First focusable row;
+    /// `space`/`enter` cycle the active source (arrows switch tabs), digits jump.
     Source,
+    /// The find source's backend chip (osu! api / nzbasic); `space`/`enter` cycle
+    /// it, carrying the game-mode selection across.
+    Backend,
     Collection,
     /// Read-only count of enabled mirrors; `enter` jumps to the Config tab's
     /// mirrors section, which owns all mirror editing (toggle / custom / order).
@@ -288,15 +321,15 @@ const COLLECTION_FIELDS: &[HomeField] = &[
     HomeField::Download,
 ];
 
-/// Focus order for the search source: the strip, the query input, the three
-/// filter chips, the `search` CTA, then the `download N selected` button. Like
-/// the update source, the run settings (folder / mirrors / threads / overwrite)
-/// are borrowed silently from the collection source's shared `self.home.*` fields
-/// rather than re-rendered here, so a search downloads with whatever those are
-/// set to. Descending into the results browse suspends this nav
-/// (`SetBrowse::descend`); the download itself fires from `Download` on the form.
-const SEARCH_FIELDS: &[HomeField] = &[
+/// Find-source focus order, osu! backend: the strip, the backend chip, the query
+/// input, the three filter chips, the `search` CTA, the `view N maps` button,
+/// then the download button. Like the update source, the run settings (folder /
+/// mirrors / threads / overwrite) are borrowed silently from the collection
+/// source's shared `self.home.*` fields. Descending into the results browse
+/// suspends this nav (`SetBrowse::descend`); the download fires from `Download`.
+const FIND_OSU_FIELDS: &[HomeField] = &[
     HomeField::Source,
+    HomeField::Backend,
     HomeField::SearchQuery,
     HomeField::SearchMode,
     HomeField::SearchStatus,
@@ -306,12 +339,12 @@ const SEARCH_FIELDS: &[HomeField] = &[
     HomeField::Download,
 ];
 
-/// Focus order for the filter source: the strip, the preset seed-macro, the
-/// criteria (chips → ranges → texts), the sort/limit knobs, then the CTA row.
-/// Like search, the run settings (folder / mirrors / threads / overwrite) are
-/// borrowed silently from the collection source's shared `self.home.*` fields.
-const FILTER_FIELDS: &[HomeField] = &[
+/// Find-source focus order, nzbasic backend: the strip, the backend chip, the
+/// preset seed-macro, the criteria (chips → ranges → texts), the sort/limit
+/// knobs, then the CTA row. Run settings are borrowed like the osu! backend.
+const FIND_NZBASIC_FIELDS: &[HomeField] = &[
     HomeField::Source,
+    HomeField::Backend,
     HomeField::FilterPreset,
     HomeField::FilterSpecial,
     HomeField::FilterMode,
@@ -447,10 +480,13 @@ pub struct HomeTab {
     /// Drives the enabled-mirror count and the pipeline try-order.
     pub mirror_order: Vec<MirrorKind>,
     pub video: bool,
-    /// Active get-maps source. `Collection` and `Update` are wired; `Search`
-    /// renders a placeholder body. Per keep-both, switching never clears another
+    /// Active get-maps source. Per keep-both, switching never clears another
     /// source's state (all of it lives on this struct).
     pub source: GetMapsSource,
+    /// Active backend for the [`GetMapsSource::Find`] source (osu! api / nzbasic).
+    /// Cycled by the backend chip; the two backends keep separate state on
+    /// [`search`](Self::search) / [`filter`](Self::filter).
+    pub find_backend: FindBackend,
     pub focus: HomeField,
     pub message: Option<AppMessage>,
     /// Resolve status shown below the collection URL field.
@@ -476,10 +512,10 @@ pub struct HomeTab {
     pub list_offset: std::cell::Cell<usize>,
     /// State for the [`GetMapsSource::Update`] source (the former Updates tab).
     pub update: UpdateSource,
-    /// State for the [`GetMapsSource::Search`] source: the query form + results
-    /// browse. Kept here so it survives source-strip switches (keep-both).
+    /// The find source's osu! backend ([`FindBackend::Osu`]): the query form +
+    /// results browse. Kept here so it survives source/backend switches (keep-both).
     pub search: SearchSource,
-    /// State for the [`GetMapsSource::Filter`] source: the nzbasic attribute
+    /// The find source's nzbasic backend ([`FindBackend::Nzbasic`]): the attribute
     /// filter form + results browse (keep-both, like `search`).
     pub filter: FilterSource,
     /// Collection browse&pick browse state (the collection source's
@@ -553,6 +589,7 @@ impl HomeTab {
             mirror_order: config.mirror.ordered_builtins(),
             video: config.download.video,
             source: GetMapsSource::Collection,
+            find_backend: FindBackend::Osu,
             focus: HomeField::Collection,
             message: None,
             collection_resolve: None,
@@ -667,8 +704,10 @@ impl HomeTab {
         match self.source {
             GetMapsSource::Collection => COLLECTION_FIELDS,
             GetMapsSource::Update => UPDATE_FIELDS,
-            GetMapsSource::Search => SEARCH_FIELDS,
-            GetMapsSource::Filter => FILTER_FIELDS,
+            GetMapsSource::Find => match self.find_backend {
+                FindBackend::Osu => FIND_OSU_FIELDS,
+                FindBackend::Nzbasic => FIND_NZBASIC_FIELDS,
+            },
         }
     }
 
@@ -677,6 +716,23 @@ impl HomeTab {
     /// so no re-clamp is needed.
     pub fn cycle_source(&mut self, forward: bool) {
         self.source = self.source.cycled(forward);
+    }
+
+    /// Flip the find backend (osu! api ↔ nzbasic), carrying the game-mode chip
+    /// index across so a mode picked on one backend survives the switch (both
+    /// index the same `["any", "osu", …]` order). Neither form is reset — the
+    /// carried mode staling the destination's `view maps` falls out of its own
+    /// `results_current` guard, so no explicit clear is needed.
+    pub fn cycle_find_backend(&mut self, _forward: bool) {
+        let mode = match self.find_backend {
+            FindBackend::Osu => self.search.mode_idx(),
+            FindBackend::Nzbasic => self.filter.mode_idx(),
+        };
+        self.find_backend = self.find_backend.toggled();
+        match self.find_backend {
+            FindBackend::Osu => self.search.set_mode_idx(mode),
+            FindBackend::Nzbasic => self.filter.set_mode_idx(mode),
+        }
     }
 
     pub fn next_field(&mut self) {
