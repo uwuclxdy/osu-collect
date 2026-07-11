@@ -43,6 +43,8 @@ const HINT_SCROLL: &str = "↑↓ scroll";
 /// ⇧↑↓ reorders the focused built-in mirror row in the Config try-order.
 const HINT_REORDER: &str = "⇧↑↓ reorder";
 const HINT_SOURCE: &str = "↵ switch source";
+/// Get Maps: jump straight to a source by its strip digit.
+const HINT_SOURCE_JUMP: &str = "1-4 source";
 /// Search filter chip (mode / status / sort): `←`/`→` cycle the value.
 const HINT_CYCLE: &str = "space cycle";
 /// Search form's `search` CTA: run the query.
@@ -342,6 +344,7 @@ fn home_form_hints(form: &HomeTab) -> Vec<&'static str> {
         f if f.is_text_input() => segments.push(HINT_EDIT),
         _ => {}
     }
+    segments.push(HINT_SOURCE_JUMP);
     segments
 }
 

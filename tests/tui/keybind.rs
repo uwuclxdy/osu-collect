@@ -343,6 +343,31 @@ fn switching_source_preserves_collection_input() {
     assert_eq!(app.home.collection.value, "12345");
 }
 
+#[test]
+fn digit_jumps_to_indexed_source() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.focus = HomeField::Collection;
+    // `1` selects the first strip source, `2` the second; each returns focus to
+    // the strip. Generic over ALL so it tracks the strip order.
+    app.handle_key(press(KeyCode::Char('1')));
+    assert_eq!(app.home.source, GetMapsSource::ALL[0]);
+    assert_eq!(app.home.focus, HomeField::Source);
+    app.handle_key(press(KeyCode::Char('2')));
+    assert_eq!(app.home.source, GetMapsSource::ALL[1]);
+}
+
+#[test]
+fn digit_does_not_jump_while_editing() {
+    use osu_collect::app::GetMapsSource;
+    let mut app = make_app();
+    // Editing the collection field: a digit types in, it never jumps the source.
+    app.editing = true;
+    app.handle_key(press(KeyCode::Char('2')));
+    assert_eq!(app.home.source, GetMapsSource::Collection);
+    assert_eq!(app.home.collection.value, "2");
+}
+
 // ── character input ───────────────────────────────────────────────────────────
 
 #[test]

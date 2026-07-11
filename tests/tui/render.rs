@@ -534,10 +534,11 @@ fn home_footer_toggle_focus_ends_with_help_then_quit() {
         footer.find("? help") < footer.find("q quit"),
         "help must precede quit: {footer:?}"
     );
+    assert!(footer.contains("source"), "must show the source-jump hint");
     assert_eq!(
         hint_count(&footer),
-        5,
-        "toggle focus must show move, toggle, switch-client, help, quit"
+        6,
+        "toggle focus must show move, toggle, source-jump, switch-client, help, quit"
     );
 }
 
@@ -556,10 +557,11 @@ fn home_footer_button_focus_shows_enter_download() {
         footer.contains("switch client"),
         "must show c switch client"
     );
+    assert!(footer.contains("source"), "must show the source-jump hint");
     assert_eq!(
         hint_count(&footer),
-        5,
-        "button focus must show move, download, quit, help, switch-client"
+        6,
+        "button focus must show move, download, source-jump, quit, help, switch-client"
     );
 }
 
@@ -581,10 +583,11 @@ fn home_footer_text_input_focus_has_four_hints_with_edit_and_quit() {
         footer.contains("switch client"),
         "must show c switch client"
     );
+    assert!(footer.contains("source"), "must show the source-jump hint");
     assert_eq!(
         hint_count(&footer),
-        5,
-        "selected text input must show move, edit, quit, help, switch-client"
+        6,
+        "selected text input must show move, edit, source-jump, quit, help, switch-client"
     );
 }
 

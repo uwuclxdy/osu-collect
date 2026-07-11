@@ -2397,6 +2397,17 @@ impl App {
                         // Collection-only: search/update borrow it silently.)
                         self.home.focus = HomeField::Download;
                         self.editing = false;
+                    } else if let Some(source) = ch
+                        .to_digit(10)
+                        .and_then(|d| (d as usize).checked_sub(1))
+                        .and_then(|idx| GetMapsSource::ALL.get(idx).copied())
+                    {
+                        // Digit `k` jumps straight to the k-th strip source;
+                        // generic over `ALL` so it tracks the strip as sources
+                        // change. Focus returns to the strip so the switch reads.
+                        self.home.source = source;
+                        self.home.focus = HomeField::Source;
+                        self.editing = false;
                     }
                 }
                 Tab::Config => {

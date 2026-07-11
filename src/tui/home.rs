@@ -631,7 +631,7 @@ fn home_section(field: HomeField) -> &'static str {
 
 /// The source strip: `‹active›  other  other`, the active source bracketed in
 /// accent, the rest dim. The first focusable row on the Get Maps tab; `space`/
-/// `enter` cycle it (the config-cycle convention); arrows switch tabs.
+/// `enter` cycle it, a strip digit jumps straight to a source, arrows switch tabs.
 fn source_row_item(active: GetMapsSource, focused: bool) -> ListItem<'static> {
     let options: Vec<&str> = GetMapsSource::ALL.iter().map(|s| s.label()).collect();
     widgets::cycle_item(LABEL_SOURCE, &options, active.label(), focused, 0)
