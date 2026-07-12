@@ -8,7 +8,7 @@
 /// One tab in the top strip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
-    /// The `home` / Get Maps tab (search / collection / update sources).
+    /// The `get maps` tab (search / collection / update sources).
     Home,
     /// The `downloads` tab — active runs + past-run history.
     Downloads,

@@ -17,7 +17,7 @@ fn strip_is_exactly_the_three_static_tabs() {
     let app = make_app();
     let titles = app.tab_titles();
     assert_eq!(titles.len(), STATIC_TABS);
-    assert_eq!(titles, vec!["home", "downloads", "config"]);
+    assert_eq!(titles, vec!["get maps", "downloads", "config"]);
 }
 
 #[test]

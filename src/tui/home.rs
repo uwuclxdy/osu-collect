@@ -15,7 +15,7 @@ use super::{
 use crate::utils::pretty_path;
 use std::path::Path;
 
-const PANEL_TITLE: &str = " HOME ";
+const PANEL_TITLE: &str = " GET MAPS ";
 
 const SECTION_COLLECTION: &str = "collection";
 /// The shared run-settings section: mirrors summary + directory / threads /

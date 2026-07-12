@@ -378,7 +378,7 @@ fn build_help_lines(active_tab: Tab, login_open: bool, vim_keys: bool) -> Vec<Li
         ("login", LOGIN_TAB)
     } else {
         match active_tab {
-            Tab::Home => ("home", HOME_TAB),
+            Tab::Home => ("get maps", HOME_TAB),
             Tab::Downloads => ("downloads", DOWNLOADS_TAB),
             Tab::Config => ("config", CONFIG_TAB),
         }

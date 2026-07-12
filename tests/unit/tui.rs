@@ -60,9 +60,9 @@ fn home_render_shows_sections_and_footer() {
 
     let output = render_app(&app, 80, 24);
 
-    assert!(output.contains("home"));
+    assert!(output.contains("get maps"));
     assert!(
-        !output.contains("[ home ]"),
+        !output.contains("[ get maps ]"),
         "active tab must not use brackets"
     );
     assert!(output.contains("COLLECTION"));
@@ -379,12 +379,15 @@ fn active_tab_has_accent_color_no_brackets_and_plain_bg() {
     let accent = Color::Rgb(67, 171, 229);
     let bg = Color::Rgb(30, 30, 46);
 
-    // active tab text ("home") must use accent (blue)
-    let has_accent_h = buf
+    // active tab text ("get maps") must use accent (blue)
+    let has_accent_g = buf
         .content
         .iter()
-        .any(|cell| cell.symbol() == "h" && cell.style().fg == Some(accent));
-    assert!(has_accent_h, "active tab 'home' must render with accent fg");
+        .any(|cell| cell.symbol() == "g" && cell.style().fg == Some(accent));
+    assert!(
+        has_accent_g,
+        "active tab 'get maps' must render with accent fg"
+    );
 
     // The only brackets allowed in the header are the client chip
     // (`[ stable ]` / `[ lazer ]`); tab titles must never be bracket-wrapped
@@ -1721,7 +1724,7 @@ fn header_renders_brand_tabs_and_version_regions() {
         output.contains("osu!collect"),
         "brand must render in header"
     );
-    assert!(output.contains("home"), "tabs must render in header");
+    assert!(output.contains("get maps"), "tabs must render in header");
     let version = concat!("v", env!("CARGO_PKG_VERSION"));
     assert!(
         output.contains(version),
