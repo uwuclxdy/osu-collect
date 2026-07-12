@@ -167,6 +167,27 @@ fn s_jumps_to_last_enabled_button_per_source() {
 }
 
 #[test]
+fn s_cycles_the_other_enabled_buttons_when_already_on_one() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Collection;
+    // Non-empty collection + default mirrors → download enabled; a resolved
+    // collection → `view N maps` enabled. Enabled buttons in field order are
+    // [CollectionBrowse, Download].
+    app.home.collection.set_value("123");
+    app.home.set_resolved_collection(7, vec![10, 20, 30]);
+    app.home.focus = HomeField::Collection;
+    // First `s` (not on a button) jumps to the last enabled button.
+    app.handle_key(press(KeyCode::Char('s')));
+    assert_eq!(app.home.focus, HomeField::Download);
+    // Repeat `s` cycles to the other enabled button, then wraps back.
+    app.handle_key(press(KeyCode::Char('s')));
+    assert_eq!(app.home.focus, HomeField::CollectionBrowse);
+    app.handle_key(press(KeyCode::Char('s')));
+    assert_eq!(app.home.focus, HomeField::Download);
+}
+
+#[test]
 fn s_types_literally_while_editing() {
     let mut app = make_app();
     app.editing = true;

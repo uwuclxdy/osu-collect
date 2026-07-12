@@ -222,7 +222,10 @@ fn render_form(
             }
             // `view N maps` sits with the collection field (mirroring find/update,
             // where the browse button follows their run/scan CTA), above the shared
-            // download section.
+            // download section, set off by a spacer (dropped in compact chrome).
+            if chrome {
+                items.push(widgets::spacer());
+            }
             let (browse_label, browse_enabled) = collection_browse_button(form);
             items.push_focusable(
                 HomeField::CollectionBrowse,

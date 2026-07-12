@@ -707,7 +707,7 @@ impl HomeTab {
 
     /// Whether `field` is a form button that is currently "clickable" (enabled).
     /// Single source of truth for the button enabled-state, read by the `s`
-    /// last-enabled-button jump ([`last_enabled_button`](Self::last_enabled_button))
+    /// button jump/cycle ([`cycle_enabled_button`](Self::cycle_enabled_button))
     /// and the collection view's button helpers; the find/update views compute the
     /// same predicate from the same accessors. Non-button fields return `false`.
     pub fn button_enabled(&self, field: HomeField) -> bool {
@@ -731,17 +731,25 @@ impl HomeTab {
         }
     }
 
-    /// The last enabled ("clickable") button in the active source's field list —
-    /// the furthest-along CTA (`find`/`scan` → `view N maps` → `download`), which
-    /// `s` jumps to. Falls back to the always-present `Download` button when no
-    /// button is enabled, so the jump always lands somewhere predictable.
-    pub fn last_enabled_button(&self) -> HomeField {
-        self.active_fields()
+    /// Focus target for a press of `s`, over the active source's enabled
+    /// ("clickable") buttons in field order. When focus is **not** already on one,
+    /// the *last* enabled button — the furthest-along CTA
+    /// (`find`/`scan` → `view N maps` → `download`), falling back to the
+    /// always-present `Download` button when none are enabled, so the jump always
+    /// lands somewhere predictable. When focus **is** on an enabled button, the
+    /// *next* enabled button (wrapping), so repeated `s` cycles the other
+    /// available buttons.
+    pub fn cycle_enabled_button(&self) -> HomeField {
+        let buttons: Vec<HomeField> = self
+            .active_fields()
             .iter()
-            .rev()
             .copied()
-            .find(|&field| field.is_button() && self.button_enabled(field))
-            .unwrap_or(HomeField::Download)
+            .filter(|&field| field.is_button() && self.button_enabled(field))
+            .collect();
+        match buttons.iter().position(|&field| field == self.focus) {
+            Some(idx) => buttons[(idx + 1) % buttons.len()],
+            None => buttons.last().copied().unwrap_or(HomeField::Download),
+        }
     }
 
     /// Run tab-completion on the directory input field.

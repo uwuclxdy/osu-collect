@@ -2387,10 +2387,11 @@ impl App {
                         // Jump to the last enabled ("clickable") button in the
                         // active source's form — the furthest-along CTA
                         // (find/scan → view maps → download), falling back to the
-                        // download button when none are enabled. (`d` for the
-                        // output-dir field stays Collection-only: search/update
-                        // borrow it silently.)
-                        self.home.focus = self.home.last_enabled_button();
+                        // download button when none are enabled. A repeat `s`
+                        // while already on a button cycles the other available
+                        // buttons. (`d` for the output-dir field stays
+                        // Collection-only: search/update borrow it silently.)
+                        self.home.focus = self.home.cycle_enabled_button();
                         self.editing = false;
                     } else if let Some(source) = ch
                         .to_digit(10)
