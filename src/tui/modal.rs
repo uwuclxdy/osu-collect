@@ -141,6 +141,17 @@ const DOWNLOADS_TAB: &[HelpRow] = &[
     HelpRow::new("esc", "back to the run list"),
 ];
 
+/// Get Maps numeric filter grammar, shown as a section on the Home tab. The
+/// operator sits either side of the value; `-` and `..` are range separators.
+const FILTER_SYNTAX: &[HelpRow] = &[
+    HelpRow::new("6", "exactly 6"),
+    HelpRow::new("7+  >=7", "7 or higher"),
+    HelpRow::new("<=7", "7 or lower"),
+    HelpRow::new("7>  >7", "more than 7"),
+    HelpRow::new("7<  <7", "less than 7"),
+    HelpRow::new("2-3  2..3", "between 2 and 3"),
+];
+
 /// Renders a centred keybindings overlay.
 ///
 /// Call this after all other tab content and the footer have been drawn —
@@ -392,6 +403,11 @@ fn build_help_lines(active_tab: Tab, login_open: bool, vim_keys: bool) -> Vec<Li
     }
     lines.push(Line::from(""));
     push_section(&mut lines, heading, rows);
+    // The numeric filter grammar is Get Maps-only, so it rides the home section.
+    if active_tab == Tab::Home && !login_open {
+        lines.push(Line::from(""));
+        push_section(&mut lines, "filter syntax", FILTER_SYNTAX);
+    }
     lines
 }
 

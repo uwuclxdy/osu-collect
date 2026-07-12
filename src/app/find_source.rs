@@ -20,7 +20,8 @@ use osu_downloader::filter::{
     FilterDirection, FilterMode, FilterQuery, FilterRange, FilterSort, FilterSpecial, FilterStatus,
 };
 use osu_downloader::search::{
-    BeatmapSetMeta, QueryRange, SearchMode, SearchQuery, SearchStatus, SortField, SortOrder,
+    BeatmapSetMeta, QueryRange, RangeBound, SearchMode, SearchQuery, SearchStatus, SortField,
+    SortOrder,
 };
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -619,19 +620,19 @@ impl FindSource {
             status_idx: STATUS_DEFAULT_IDX,
             sort_idx: 0,
             query: InputField::new("query", "", "artist, title, mapper, tags…"),
-            stars: InputField::new("stars", "", "min-max, e.g. 5.5-7"),
-            ar: InputField::new("ar", "", "min-max"),
-            cs: InputField::new("cs", "", "min-max"),
-            od: InputField::new("od", "", "min-max"),
-            hp: InputField::new("hp", "", "min-max"),
-            bpm: InputField::new("bpm", "", "min-max, e.g. 180-"),
-            length: InputField::new("length", "", "seconds, e.g. 90-300"),
+            stars: InputField::new("stars", "", "e.g. 7+  5.5..7  <9"),
+            ar: InputField::new("ar", "", "e.g. 9  8+"),
+            cs: InputField::new("cs", "", "e.g. 4+"),
+            od: InputField::new("od", "", "e.g. 8+"),
+            hp: InputField::new("hp", "", "e.g. 6+"),
+            bpm: InputField::new("bpm", "", "e.g. 180+  170..190"),
+            length: InputField::new("length", "", "seconds, e.g. 90+  60..300"),
             artist: InputField::new("artist", "", "contains…"),
             creator: InputField::new("mapper", "", "contains…"),
             title: InputField::new("title", "", "contains…"),
             limit: InputField::new("limit", "", "500"),
-            keys: InputField::new("keys", "", "min-max"),
-            favourites: InputField::new("favourites", "", "min-max"),
+            keys: InputField::new("keys", "", "e.g. 4  4..7"),
+            favourites: InputField::new("favourites", "", "e.g. 10000+"),
             ranked: InputField::new("ranked", "", "yyyy or 2020..2024"),
             status_msg: FindStatusMsg::Idle,
             next_cursor: None,
@@ -693,7 +694,7 @@ impl FindSource {
                 self.mode_idx = mode_idx_of("osu");
                 self.special_idx = special_idx_of("stream");
             }
-            "7★+" => self.stars.set_value("7-"),
+            "7★+" => self.stars.set_value("7+"),
             _ => {} // "none" = the plain reset above
         }
     }
@@ -874,13 +875,13 @@ impl FindSource {
             mode: MODE_NZBASIC[self.mode_idx],
             status: STATUS_NZBASIC[self.status_idx].flatten(),
             special: SPECIAL_VALUES[self.special_idx],
-            stars: parse_range(self.stars.label, &self.stars.value)?,
-            ar: parse_range(self.ar.label, &self.ar.value)?,
-            cs: parse_range(self.cs.label, &self.cs.value)?,
-            od: parse_range(self.od.label, &self.od.value)?,
-            hp: parse_range(self.hp.label, &self.hp.value)?,
-            bpm: parse_range(self.bpm.label, &self.bpm.value)?,
-            length: parse_range(self.length.label, &self.length.value)?,
+            stars: filter_range(&self.stars)?,
+            ar: filter_range(&self.ar)?,
+            cs: filter_range(&self.cs)?,
+            od: filter_range(&self.od)?,
+            hp: filter_range(&self.hp)?,
+            bpm: filter_range(&self.bpm)?,
+            length: filter_range(&self.length)?,
             artist: self.artist.value.trim().to_string(),
             creator: self.creator.value.trim().to_string(),
             title: self.title.value.trim().to_string(),
@@ -1104,63 +1105,82 @@ fn text_opt(field: &InputField) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
-/// Convert a min-max input into an osu float criterion. Bounds come straight
-/// from `str::parse` (never derived arithmetic) so the emitted `q` stays
-/// byte-stable; `from_bounds` collapses "no bound" to a single representation.
+/// Convert a range input into an osu float criterion (`stars`/`ar`/…). `Exact`
+/// (a bare value) emits `key=value` so the server applies its tolerance band;
+/// bounds carry their `>`/`>=`/`<`/`<=` operator through to the `q` string.
 fn osu_float_range(field: &InputField) -> Result<Option<QueryRange<f64>>, String> {
-    let range = parse_range(field.label, &field.value)?;
-    Ok(match (range.min, range.max) {
-        // A bare value parses to equal bounds; emit `key=value` so the server
-        // applies its tolerance band instead of a degenerate `>=`/`<=` pair.
-        (Some(min), Some(max)) if min == max => Some(QueryRange::Exact(min)),
-        (min, max) => QueryRange::from_bounds(min, max),
+    Ok(parse_range_criterion(field.label, &field.value)?.map(|c| c.to_query(|v| v)))
+}
+
+/// Convert a range input into an osu integer criterion (`length`/`keys`/
+/// `favourites`). Integer-only — a fractional bound is rejected. Operators carry
+/// through as in [`osu_float_range`].
+fn osu_int_range(field: &InputField) -> Result<Option<QueryRange<u32>>, String> {
+    let Some(criterion) = parse_range_criterion(field.label, &field.value)? else {
+        return Ok(None);
+    };
+    let label = field.label;
+    let to_u32 = |value: f64| -> Result<u32, String> {
+        if value.fract() != 0.0 {
+            return Err(format!(
+                "{label}: \"{}\" is not a whole number",
+                fmt_num(value)
+            ));
+        }
+        Ok(value as u32)
+    };
+    Ok(Some(criterion.try_to_query(to_u32)?))
+}
+
+/// The nzbasic inclusive [`FilterRange`] for a field. nzbasic has no strict
+/// bound, so `>`/`<` collapse to their inclusive form; a bare value pins both
+/// bounds. A blank field is the empty range.
+fn filter_range(field: &InputField) -> Result<FilterRange, String> {
+    let Some(criterion) = parse_range_criterion(field.label, &field.value)? else {
+        return Ok(FilterRange::default());
+    };
+    Ok(match criterion {
+        RangeCriterion::Exact(value) => FilterRange {
+            min: Some(value),
+            max: Some(value),
+        },
+        RangeCriterion::Bounds { lower, upper } => FilterRange {
+            min: lower.map(|b| b.value),
+            max: upper.map(|b| b.value),
+        },
     })
 }
 
-/// Canonical form of a numeric min-max input for the criteria string: parsed
-/// bounds re-rendered so equivalent spellings (`6-7` / `6.0-7.0`) share a folder
-/// tag and never read as diverged. An unparseable (mid-edit) value falls back to
-/// the raw string, so it correctly reads as diverged until it parses again.
+/// Canonical form of a range input for the criteria string: the parsed criterion
+/// re-rendered so equivalent spellings (`7>`/`>7`, `6..7`/`6.0..7.0`) share a
+/// folder tag and never read as diverged. An unparseable (mid-edit) value falls
+/// back to the raw string, so it correctly reads as diverged until it parses.
 fn canonical_range(field: &InputField) -> String {
-    match parse_range(field.label, &field.value) {
-        Ok(FilterRange {
-            min: None,
-            max: None,
-        }) => String::new(),
-        Ok(range) => {
-            let bound = |b: Option<f64>| b.map(|v| v.to_string()).unwrap_or_default();
-            format!("{}~{}", bound(range.min), bound(range.max))
-        }
+    match parse_range_criterion(field.label, &field.value) {
+        Ok(None) => String::new(),
+        Ok(Some(criterion)) => canonical_criterion(&criterion),
         Err(_) => field.value.trim().to_string(),
     }
 }
 
-/// Convert a min-max input into an osu integer criterion (`length` / `keys` /
-/// `favourites`). A bare value emits `key=value` (`Exact`); a pair emits the
-/// `>=`/`<=` range. Integer-only — a fractional bound is rejected.
-fn osu_int_range(field: &InputField) -> Result<Option<QueryRange<u32>>, String> {
-    let value = field.value.trim();
-    if value.is_empty() {
-        return Ok(None);
-    }
-    let label = field.label;
-    let parse = |part: &str| -> Result<u32, String> {
-        part.trim()
-            .parse::<u32>()
-            .map_err(|_| format!("{label}: \"{part}\" is not a whole number"))
-    };
-    match value.split_once('-') {
-        Some((min, max)) => {
-            let min = (!min.trim().is_empty()).then(|| parse(min)).transpose()?;
-            let max = (!max.trim().is_empty()).then(|| parse(max)).transpose()?;
-            if let (Some(a), Some(b)) = (min, max)
-                && a > b
-            {
-                return Err(format!("{label}: min {a} is greater than max {b}"));
+fn canonical_criterion(criterion: &RangeCriterion) -> String {
+    match criterion {
+        RangeCriterion::Exact(value) => format!("={}", fmt_num(*value)),
+        RangeCriterion::Bounds { lower, upper } => {
+            let mut out = String::new();
+            if let Some(bound) = lower {
+                let op = if bound.inclusive { ">=" } else { ">" };
+                out.push_str(&format!("{op}{}", fmt_num(bound.value)));
             }
-            Ok(QueryRange::from_bounds(min, max))
+            if let Some(bound) = upper {
+                if !out.is_empty() {
+                    out.push(' ');
+                }
+                let op = if bound.inclusive { "<=" } else { "<" };
+                out.push_str(&format!("{op}{}", fmt_num(bound.value)));
+            }
+            out
         }
-        None => Ok(Some(QueryRange::Exact(parse(value)?))),
     }
 }
 
@@ -1258,41 +1278,273 @@ fn date_token_inverted(
     }
 }
 
-/// Parse a min-max pair for the nzbasic route: empty = unconstrained, `a-b` =
-/// both bounds, `a-` = min only, `-b` = max only, a bare `a` = exactly that value.
-fn parse_range(label: &str, value: &str) -> Result<FilterRange, String> {
+/// A parsed numeric range criterion from one field. `Exact` is the bare-value
+/// form (`=N`), kept distinct from a bound because osu widens `=` to a tolerance
+/// band server-side. `Bounds` carries one or two sides, each with its own strict
+/// / inclusive flag. Blank fields never reach here — callers short-circuit first.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum RangeCriterion {
+    /// Bare `N` → `=N`.
+    Exact(f64),
+    /// One- or two-sided bounds; at least one side is set.
+    Bounds {
+        /// Lower bound (`>N` / `>=N`), if set.
+        lower: Option<NumBound>,
+        /// Upper bound (`<N` / `<=N`), if set.
+        upper: Option<NumBound>,
+    },
+}
+
+/// One side of a [`RangeCriterion::Bounds`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct NumBound {
+    value: f64,
+    /// `true` → inclusive (`>=`/`<=`); `false` → strict (`>`/`<`).
+    inclusive: bool,
+}
+
+impl RangeCriterion {
+    /// Map onto an [`QueryRange`] with an infallible value conversion (float).
+    fn to_query<T>(self, conv: impl Fn(f64) -> T) -> QueryRange<T> {
+        match self {
+            RangeCriterion::Exact(value) => QueryRange::Exact(conv(value)),
+            RangeCriterion::Bounds { lower, upper } => QueryRange::Range {
+                min: lower.map(|b| RangeBound {
+                    value: conv(b.value),
+                    inclusive: b.inclusive,
+                }),
+                max: upper.map(|b| RangeBound {
+                    value: conv(b.value),
+                    inclusive: b.inclusive,
+                }),
+            },
+        }
+    }
+
+    /// Map onto an [`QueryRange`] with a fallible value conversion (integer keys
+    /// reject a fractional bound).
+    fn try_to_query<T, E>(self, conv: impl Fn(f64) -> Result<T, E>) -> Result<QueryRange<T>, E> {
+        let bound = |b: NumBound| -> Result<RangeBound<T>, E> {
+            Ok(RangeBound {
+                value: conv(b.value)?,
+                inclusive: b.inclusive,
+            })
+        };
+        Ok(match self {
+            RangeCriterion::Exact(value) => QueryRange::Exact(conv(value)?),
+            RangeCriterion::Bounds { lower, upper } => QueryRange::Range {
+                min: lower.map(bound).transpose()?,
+                max: upper.map(bound).transpose()?,
+            },
+        })
+    }
+}
+
+/// Comparison operator parsed off a single-value range token.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum RangeOp {
+    Gt,
+    Ge,
+    Lt,
+    Le,
+    Eq,
+}
+
+/// Render a parsed numeric bound back to a stable, minimal string (`7`, `6.5`).
+fn fmt_num(value: f64) -> String {
+    value.to_string()
+}
+
+/// The find route's numeric range grammar (osu-native comparison concept),
+/// accepting the operator as a prefix or suffix:
+/// - `7>` / `>7` → `>7`, `7<` / `<7` → `<7` (strict)
+/// - `7+` / `>=7` / `7>=` → `≥7`, `<=7` / `7<=` → `≤7` (inclusive)
+/// - `2..3` / `2-3` (and open `2..` / `..3` / `2-` / `-3`) → an inclusive range;
+///   `..` and `-` are interchangeable separators (a value is never negative)
+/// - a bare `6` → `=6` (the server widens it to a tolerance band)
+///
+/// Returns `None` for a blank field. Values must be finite and non-negative.
+fn parse_range_criterion(label: &str, value: &str) -> Result<Option<RangeCriterion>, String> {
     let value = value.trim();
     if value.is_empty() {
-        return Ok(FilterRange::default());
+        return Ok(None);
     }
-    let parse = |part: &str| -> Result<f64, String> {
-        part.trim()
-            .parse::<f64>()
-            .ok()
-            // `f64::parse` accepts "nan"/"inf"; neither is a usable bound and
-            // NaN would slip past the min>max guard, so reject at the boundary.
-            .filter(|value| value.is_finite())
-            .ok_or_else(|| format!("{label}: \"{part}\" is not a number"))
-    };
-    let range = match value.split_once('-') {
-        Some((min, max)) => FilterRange {
-            min: (!min.trim().is_empty()).then(|| parse(min)).transpose()?,
-            max: (!max.trim().is_empty()).then(|| parse(max)).transpose()?,
-        },
-        None => {
-            let exact = parse(value)?;
-            FilterRange {
-                min: Some(exact),
-                max: Some(exact),
-            }
+    // A range separator (`..` or `-`) denotes an inclusive range. Numbers here are
+    // never negative, so any `-` is a separator, not a sign; comparison operators
+    // (`>` `<` `>=` `<=` `+` `=`) never contain `-`, so this never shadows one.
+    // Each side is optional and always inclusive (no strict range form).
+    if let Some((low, high)) = value.split_once("..").or_else(|| value.split_once('-')) {
+        let lower = parse_opt_bound(label, low)?;
+        let upper = parse_opt_bound(label, high)?;
+        if lower.is_none() && upper.is_none() {
+            return Ok(None);
         }
-    };
-    if let (Some(min), Some(max)) = (range.min, range.max)
-        && min > max
-    {
-        return Err(format!("{label}: min {min} is greater than max {max}"));
+        if let (Some(lo), Some(hi)) = (lower, upper)
+            && lo.value > hi.value
+        {
+            return Err(format!(
+                "{label}: min {} is greater than max {}",
+                fmt_num(lo.value),
+                fmt_num(hi.value)
+            ));
+        }
+        return Ok(Some(RangeCriterion::Bounds { lower, upper }));
     }
-    Ok(range)
+    let (op, number) = split_range_op(value);
+    let parsed = parse_num(label, number)?;
+    Ok(Some(match op {
+        RangeOp::Eq => RangeCriterion::Exact(parsed),
+        RangeOp::Gt => RangeCriterion::Bounds {
+            lower: Some(NumBound {
+                value: parsed,
+                inclusive: false,
+            }),
+            upper: None,
+        },
+        RangeOp::Ge => RangeCriterion::Bounds {
+            lower: Some(NumBound {
+                value: parsed,
+                inclusive: true,
+            }),
+            upper: None,
+        },
+        RangeOp::Lt => RangeCriterion::Bounds {
+            lower: None,
+            upper: Some(NumBound {
+                value: parsed,
+                inclusive: false,
+            }),
+        },
+        RangeOp::Le => RangeCriterion::Bounds {
+            lower: None,
+            upper: Some(NumBound {
+                value: parsed,
+                inclusive: true,
+            }),
+        },
+    }))
+}
+
+/// Split a single-value token into its comparison operator and the numeric rest.
+/// Operators are accepted as a prefix (`>7`) or suffix (`7>`); `+` is the
+/// inclusive at-least suffix (`7+` ≡ `>=7`). A bare token is `=`. `-` never
+/// reaches here — it is a range separator, split off before this is called.
+/// Two-char operators are matched before one-char so `>=` never reads as `>`.
+fn split_range_op(value: &str) -> (RangeOp, &str) {
+    const PREFIX: &[(&str, RangeOp)] = &[
+        (">=", RangeOp::Ge),
+        ("<=", RangeOp::Le),
+        (">", RangeOp::Gt),
+        ("<", RangeOp::Lt),
+        ("=", RangeOp::Eq),
+    ];
+    const SUFFIX: &[(&str, RangeOp)] = &[
+        (">=", RangeOp::Ge),
+        ("<=", RangeOp::Le),
+        ("+", RangeOp::Ge),
+        (">", RangeOp::Gt),
+        ("<", RangeOp::Lt),
+        ("=", RangeOp::Eq),
+    ];
+    for (token, op) in PREFIX {
+        if let Some(rest) = value.strip_prefix(token) {
+            return (*op, rest);
+        }
+    }
+    for (token, op) in SUFFIX {
+        if let Some(rest) = value.strip_suffix(token) {
+            return (*op, rest);
+        }
+    }
+    (RangeOp::Eq, value)
+}
+
+/// Parse one range side (`..` or `-`): blank = open (`None`), else inclusive.
+fn parse_opt_bound(label: &str, part: &str) -> Result<Option<NumBound>, String> {
+    let part = part.trim();
+    if part.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(NumBound {
+        value: parse_num(label, part)?,
+        inclusive: true,
+    }))
+}
+
+/// Parse a bound value: finite, non-negative (every stat here is `≥ 0`).
+fn parse_num(label: &str, part: &str) -> Result<f64, String> {
+    let part = part.trim();
+    if part.is_empty() {
+        return Err(format!("{label}: a comparison needs a number"));
+    }
+    let value = part
+        .parse::<f64>()
+        .ok()
+        // `f64::parse` accepts "nan"/"inf"; neither is a usable bound and NaN
+        // would slip past the min>max guard, so reject at the boundary.
+        .filter(|value| value.is_finite())
+        .ok_or_else(|| format!("{label}: \"{part}\" is not a number"))?;
+    if value < 0.0 {
+        return Err(format!("{label}: \"{part}\" must be 0 or more"));
+    }
+    Ok(value)
+}
+
+/// Live plain-english reading of a range field, for the on-focus hint.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RangeHint {
+    /// The field is blank.
+    Empty,
+    /// The value parses; the string is its reading (`maps with 7 stars or
+    /// higher`), example numbers wrapped in `[…]` for the highlight pass.
+    Valid(String),
+    /// The value fails to parse; the string is the reason.
+    Invalid(String),
+}
+
+/// Interpret a range field's current value against the numeric grammar.
+pub fn describe_range(label: &str, value: &str) -> RangeHint {
+    match parse_range_criterion(label, value) {
+        Ok(None) => RangeHint::Empty,
+        Ok(Some(criterion)) => RangeHint::Valid(describe_criterion(label, &criterion)),
+        Err(reason) => RangeHint::Invalid(reason),
+    }
+}
+
+/// Plain-english reading of a parsed criterion; example numbers are wrapped in
+/// `[…]` so the hint renderer can highlight them.
+fn describe_criterion(label: &str, criterion: &RangeCriterion) -> String {
+    // `length` values are seconds; every other field reads naturally as its label.
+    let unit = if label == "length" { "seconds" } else { label };
+    let n = |value: f64| format!("[{}]", fmt_num(value));
+    match criterion {
+        RangeCriterion::Exact(value) => format!("maps with exactly {} {unit}", n(*value)),
+        RangeCriterion::Bounds {
+            lower: Some(lo),
+            upper: None,
+        } if lo.inclusive => format!("maps with {} {unit} or higher", n(lo.value)),
+        RangeCriterion::Bounds {
+            lower: Some(lo),
+            upper: None,
+        } => format!("maps above {} {unit}", n(lo.value)),
+        RangeCriterion::Bounds {
+            lower: None,
+            upper: Some(hi),
+        } if hi.inclusive => format!("maps with {} {unit} or lower", n(hi.value)),
+        RangeCriterion::Bounds {
+            lower: None,
+            upper: Some(hi),
+        } => format!("maps below {} {unit}", n(hi.value)),
+        RangeCriterion::Bounds {
+            lower: Some(lo),
+            upper: Some(hi),
+        } => format!("maps between {} and {} {unit}", n(lo.value), n(hi.value)),
+        // A `Bounds` with neither side is never produced (parse returns `None`).
+        RangeCriterion::Bounds {
+            lower: None,
+            upper: None,
+        } => String::new(),
+    }
 }
 
 /// Default 500; the cap protects the free nzbasic instance from megaqueries.

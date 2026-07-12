@@ -344,6 +344,92 @@ fn find_form_shows_conflict_in_indicator() {
     );
 }
 
+#[test]
+fn range_field_hint_reads_the_parsed_value() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    // A focused range field shows a live plain-english reading of its value; the
+    // `[…]` highlight markers are stripped in the rendered cells.
+    app.home.focus = HomeField::FindStars;
+
+    app.home.find.stars.set_value("7+");
+    let content = render_content(&app, 80, 40);
+    assert!(
+        content.contains("maps with 7 stars or higher"),
+        "an inclusive lower bound reads plainly: {content}"
+    );
+
+    app.home.find.stars.set_value(">9");
+    let content = render_content(&app, 80, 40);
+    assert!(
+        content.contains("maps above 9 stars"),
+        "a strict lower bound reads as 'above': {content}"
+    );
+
+    app.home.find.stars.set_value("5..7");
+    let content = render_content(&app, 80, 40);
+    assert!(
+        content.contains("maps between 5 and 7 stars"),
+        "a two-sided range reads as 'between … and …': {content}"
+    );
+
+    // `-` is interchangeable with `..` as a range separator.
+    app.home.find.stars.set_value("2-3");
+    let content = render_content(&app, 80, 40);
+    assert!(
+        content.contains("maps between 2 and 3 stars"),
+        "a dash range reads the same as a `..` range: {content}"
+    );
+}
+
+#[test]
+fn empty_range_field_shows_no_hint() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    // A focused-but-blank range field shows no tooltip at all (no example legend).
+    app.home.focus = HomeField::FindStars;
+    app.home.find.stars.set_value("");
+    let content = render_content(&app, 80, 40);
+    assert!(
+        !content.contains("maps between")
+            && !content.contains("or higher")
+            && !content.contains("maps above"),
+        "a blank range field renders no reading or legend: {content}"
+    );
+}
+
+#[test]
+fn range_field_hint_shows_parse_error() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    app.home.focus = HomeField::FindStars;
+    app.home.find.stars.set_value("abc");
+    let content = render_content(&app, 80, 40);
+    assert!(
+        content.contains("is not a number"),
+        "an unparseable value surfaces its error in the hint: {content}"
+    );
+}
+
+#[test]
+fn help_overlay_shows_filter_syntax_on_home() {
+    // The default active tab is Home (get maps), where the filter grammar applies.
+    let mut app = make_app();
+    app.help_open = true;
+    let content = render_content(&app, 100, 44);
+    assert!(
+        content.contains("FILTER SYNTAX"),
+        "the help overlay lists the filter grammar section: {content}"
+    );
+    assert!(
+        content.contains("between 2 and 3"),
+        "the filter grammar section names the range form: {content}"
+    );
+}
+
 // ── update source view ───────────────────────────────────────────────────────
 
 #[test]

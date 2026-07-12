@@ -151,35 +151,107 @@ impl SortOrder {
     }
 }
 
+/// One bound of a [`QueryRange`], carrying whether it is inclusive. Inclusive
+/// emits `>=`/`<=`; strict emits `>`/`<` (osu q-DSL supports both).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RangeBound<T> {
+    /// The bound value.
+    pub value: T,
+    /// `true` → inclusive (`>=`/`<=`); `false` → strict (`>`/`<`).
+    pub inclusive: bool,
+}
+
+impl<T> RangeBound<T> {
+    /// An inclusive bound (`>=`/`<=`).
+    pub fn inclusive(value: T) -> Self {
+        Self {
+            value,
+            inclusive: true,
+        }
+    }
+
+    /// A strict bound (`>`/`<`).
+    pub fn strict(value: T) -> Self {
+        Self {
+            value,
+            inclusive: false,
+        }
+    }
+}
+
 /// One filter criterion serialized into the `q` string for a single key.
 ///
 /// [`Exact`](Self::Exact) emits `key=value` — for numeric keys the server widens
 /// that to its tolerance band (e.g. `ar=9` ≈ `8.95..9.05`). [`Range`](Self::Range)
-/// emits `key>=min` and/or `key<=max` for whichever bound is set; an all-`None`
-/// range emits nothing. Reused for float (stars/ar/…), integer (length/keys/…),
-/// and date-string (`ranked`) keys.
+/// emits a `>`/`>=` and/or `<`/`<=` term per set bound (strict vs inclusive per
+/// [`RangeBound::inclusive`]); an all-`None` range emits nothing. Reused for
+/// float (stars/ar/…), integer (length/keys/…), and date-string (`ranked`) keys.
 #[derive(Debug, Clone, PartialEq)]
 pub enum QueryRange<T> {
     /// Single value: emits `key=value`.
     Exact(T),
-    /// Bounded range: emits `key>=min` and/or `key<=max`.
+    /// Bounded range: emits a lower and/or upper comparison term.
     Range {
-        /// Lower inclusive bound (`key>=min`), if set.
-        min: Option<T>,
-        /// Upper inclusive bound (`key<=max`), if set.
-        max: Option<T>,
+        /// Lower bound (`key>min` / `key>=min`), if set.
+        min: Option<RangeBound<T>>,
+        /// Upper bound (`key<max` / `key<=max`), if set.
+        max: Option<RangeBound<T>>,
     },
 }
 
 impl<T> QueryRange<T> {
-    /// Collapse a pair of optional bounds into a criterion: `None` when both
-    /// bounds are absent, so "no criterion" has exactly one representation
-    /// (the outer `Option` on the [`SearchQuery`] field).
+    /// A `None`-collapsing inclusive pair: `None` when both bounds are absent, so
+    /// "no criterion" has exactly one representation (the outer `Option` on the
+    /// [`SearchQuery`] field). Both bounds inclusive — used for the `ranked` key,
+    /// whose `..` date grammar has no strict form.
     pub fn from_bounds(min: Option<T>, max: Option<T>) -> Option<Self> {
         if min.is_none() && max.is_none() {
             None
         } else {
-            Some(Self::Range { min, max })
+            Some(Self::Range {
+                min: min.map(RangeBound::inclusive),
+                max: max.map(RangeBound::inclusive),
+            })
+        }
+    }
+
+    /// Inclusive lower bound (`key>=value`).
+    pub fn at_least(value: T) -> Self {
+        Self::Range {
+            min: Some(RangeBound::inclusive(value)),
+            max: None,
+        }
+    }
+
+    /// Strict lower bound (`key>value`).
+    pub fn greater_than(value: T) -> Self {
+        Self::Range {
+            min: Some(RangeBound::strict(value)),
+            max: None,
+        }
+    }
+
+    /// Inclusive upper bound (`key<=value`).
+    pub fn at_most(value: T) -> Self {
+        Self::Range {
+            min: None,
+            max: Some(RangeBound::inclusive(value)),
+        }
+    }
+
+    /// Strict upper bound (`key<value`).
+    pub fn less_than(value: T) -> Self {
+        Self::Range {
+            min: None,
+            max: Some(RangeBound::strict(value)),
+        }
+    }
+
+    /// Inclusive two-sided range (`key>=min key<=max`).
+    pub fn between(min: T, max: T) -> Self {
+        Self::Range {
+            min: Some(RangeBound::inclusive(min)),
+            max: Some(RangeBound::inclusive(max)),
         }
     }
 }
@@ -191,10 +263,12 @@ impl<T: std::fmt::Display> QueryRange<T> {
             Self::Exact(value) => out.push(format!("{key}={value}")),
             Self::Range { min, max } => {
                 if let Some(min) = min {
-                    out.push(format!("{key}>={min}"));
+                    let op = if min.inclusive { ">=" } else { ">" };
+                    out.push(format!("{key}{op}{}", min.value));
                 }
                 if let Some(max) = max {
-                    out.push(format!("{key}<={max}"));
+                    let op = if max.inclusive { "<=" } else { "<" };
+                    out.push(format!("{key}{op}{}", max.value));
                 }
             }
         }

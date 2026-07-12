@@ -7,7 +7,9 @@
 //! ([`super::set_browse`]) once results arrive. The source strip is drawn by the
 //! Home view; these rows are pushed into the same Home panel.
 
-use crate::app::{FindRoute, FindSource, FindStatusMsg, HomeField, InputField};
+use crate::app::{
+    FindRoute, FindSource, FindStatusMsg, HomeField, InputField, RangeHint, describe_range,
+};
 use crate::utils::format_bytes;
 use ratatui::{
     style::Style,
@@ -189,18 +191,62 @@ fn push_input(
         field,
         widgets::input_item(input, focus == field, editing, LABEL_WIDTH),
     );
-    push_hint(items, field, focus);
+    push_hint(items, field, input, focus);
 }
 
-/// A `└ <hint>` tooltip below the row when it holds focus and carries a hint.
-/// Covers only the fields whose syntax isn't obvious from the label: the query
-/// q-DSL example, range grammar, the ranked date range, the limit cap.
-/// Rows that read plainly (preset/special/mode/status/sort/artist/title) get none.
-fn push_hint(items: &mut widgets::FormItems<HomeField>, field: HomeField, focus: HomeField) {
-    if focus == field
-        && let Some(hint) = field_hint(field)
-    {
+/// A `└ <hint>` tooltip below the row when it holds focus. A numeric range field
+/// gets a LIVE reading of its value ([`range_hint_item`]) ONLY once something is
+/// typed — an empty range field shows no tooltip. The rest get a static hint for
+/// the non-obvious syntax (query q-DSL, ranked date range, limit cap). Rows that
+/// read plainly (preset/special/mode/status/sort/artist/title) get none.
+fn push_hint(
+    items: &mut widgets::FormItems<HomeField>,
+    field: HomeField,
+    input: &InputField,
+    focus: HomeField,
+) {
+    if focus != field {
+        return;
+    }
+    if is_range_field(field) {
+        if let Some(item) = range_hint_item(input) {
+            items.push(item);
+        }
+    } else if let Some(hint) = field_hint(field) {
         items.push(widgets::help_item_keyed(hint));
+    }
+}
+
+/// The nine numeric range fields that parse the operator grammar (`7+`, `5..7`,
+/// `>9`). `ranked` is a date field on its own `..` grammar, so it is excluded.
+fn is_range_field(field: HomeField) -> bool {
+    use HomeField::*;
+    matches!(
+        field,
+        FindStars
+            | FindAr
+            | FindCs
+            | FindOd
+            | FindHp
+            | FindBpm
+            | FindLength
+            | FindKeys
+            | FindFavourites
+    )
+}
+
+/// Live reading of a numeric range field, shown only once a value is typed: a
+/// plain-english interpretation when it parses (`maps with 7 stars or higher`) or
+/// the parse error when it does not. `None` (no tooltip) while the field is blank.
+/// Example numbers highlight; errors are danger-tinted.
+fn range_hint_item(input: &InputField) -> Option<ListItem<'static>> {
+    match describe_range(input.label, &input.value) {
+        RangeHint::Empty => None,
+        RangeHint::Valid(reading) => Some(widgets::help_item_keyed(&reading)),
+        RangeHint::Invalid(reason) => Some(ListItem::new(Line::from(vec![
+            Span::styled("  └ ", Style::default().fg(line())),
+            Span::styled(reason, Style::default().fg(danger())),
+        ]))),
     }
 }
 
@@ -210,8 +256,6 @@ fn field_hint(field: HomeField) -> Option<&'static str> {
     use HomeField::*;
     Some(match field {
         FindQuery => "supports osu-native filter expressions like ar:10",
-        FindStars | FindAr | FindCs | FindOd | FindHp | FindBpm | FindLength | FindKeys
-        | FindFavourites => "e.g. [5-7], [5-], [-7], [6]",
         FindRanked => "e.g. [2020..2024], [2020-06-01..], [..2024]",
         FindLimit => "caps diff rows (default 500)",
         _ => return None,

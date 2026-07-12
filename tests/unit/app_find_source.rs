@@ -252,17 +252,11 @@ fn osu_only_new_criteria_force_osu_and_serialize() {
     let query = osu(&source);
     assert_eq!(query.keys, Some(QueryRange::Exact(7)));
 
-    // favourites → a min-only range; forces osu.
+    // favourites → a min-only range (`+` = at least); forces osu.
     let mut source = FindSource::new();
-    source.favourites.set_value("10000-");
+    source.favourites.set_value("10000+");
     let query = osu(&source);
-    assert_eq!(
-        query.favourites,
-        Some(QueryRange::Range {
-            min: Some(10000),
-            max: None
-        })
-    );
+    assert_eq!(query.favourites, Some(QueryRange::at_least(10000)));
 
     // ranked date → exact term; forces osu.
     let mut source = FindSource::new();
@@ -287,30 +281,21 @@ fn ranked_date_range_uses_dotdot_separator() {
     source.ranked.set_value("2020..2024");
     assert_eq!(
         osu(&source).ranked,
-        Some(QueryRange::Range {
-            min: Some("2020".to_string()),
-            max: Some("2024".to_string())
-        })
+        Some(QueryRange::between("2020".to_string(), "2024".to_string()))
     );
 
     let mut source = FindSource::new();
     source.ranked.set_value("2020-06-01..");
     assert_eq!(
         osu(&source).ranked,
-        Some(QueryRange::Range {
-            min: Some("2020-06-01".to_string()),
-            max: None
-        })
+        Some(QueryRange::at_least("2020-06-01".to_string()))
     );
 
     let mut source = FindSource::new();
     source.ranked.set_value("..2024");
     assert_eq!(
         osu(&source).ranked,
-        Some(QueryRange::Range {
-            min: None,
-            max: Some("2024".to_string())
-        })
+        Some(QueryRange::at_most("2024".to_string()))
     );
 }
 
@@ -349,10 +334,10 @@ fn ranked_rejects_inverted_range_comparing_shared_precision() {
     source.ranked.set_value("2020..2020-06");
     assert_eq!(
         osu(&source).ranked,
-        Some(QueryRange::Range {
-            min: Some("2020".to_string()),
-            max: Some("2020-06".to_string())
-        })
+        Some(QueryRange::between(
+            "2020".to_string(),
+            "2020-06".to_string()
+        ))
     );
 
     // Same year, comparable month: inverted, rejected.
@@ -364,23 +349,14 @@ fn ranked_rejects_inverted_range_comparing_shared_precision() {
 
 #[test]
 fn bare_float_value_emits_exact_on_osu() {
-    // A bare value parses to equal bounds and must emit `key=value` (server
-    // tolerance band), not a degenerate `>=`/`<=` pair — int-field parity.
+    // A bare value emits `key=value` (server tolerance band), not a `>=`/`<=`
+    // pair — so the server widens it, matching osu's own exact-search behaviour.
     let mut source = FindSource::new();
     source.cs.set_value("4");
     assert_eq!(osu(&source).cs, Some(QueryRange::Exact(4.0)));
-    // An explicit equal-bounds pair collapses the same way.
-    source.cs.set_value("4.0-4.0");
-    assert_eq!(osu(&source).cs, Some(QueryRange::Exact(4.0)));
-    // A real range stays a range.
-    source.cs.set_value("4-5");
-    assert_eq!(
-        osu(&source).cs,
-        Some(QueryRange::Range {
-            min: Some(4.0),
-            max: Some(5.0)
-        })
-    );
+    // A two-sided `..` range stays an inclusive range.
+    source.cs.set_value("4..5");
+    assert_eq!(osu(&source).cs, Some(QueryRange::between(4.0, 5.0)));
 }
 
 #[test]
@@ -443,7 +419,7 @@ fn shared_criteria_ride_the_resolved_route() {
     let mut source = FindSource::new();
     set_special(&mut source, "stream");
     source.artist.set_value("camellia");
-    source.stars.set_value("6-7");
+    source.stars.set_value("6..7");
     let query = nzbasic(&source);
     assert_eq!(query.artist, "camellia");
     assert_eq!(
@@ -483,10 +459,10 @@ fn shared_mode_maps_per_backend() {
 #[test]
 fn canonical_criteria_string_is_stable_and_sort_limit_independent() {
     let mut a = FindSource::new();
-    a.stars.set_value("6-7");
+    a.stars.set_value("6..7");
     a.artist.set_value("camellia");
     let mut b = FindSource::new();
-    b.stars.set_value("6-7");
+    b.stars.set_value("6..7");
     b.artist.set_value("camellia");
     assert_eq!(
         a.criteria_string(),
@@ -521,24 +497,24 @@ fn criteria_string_is_byte_pinned() {
     source.set_mode_idx(3); // catch
     set_status(&mut source, "approved");
     source.query.set_value("tekno");
-    source.stars.set_value("6-7");
-    source.ar.set_value("9.0-");
-    source.cs.set_value("-4.0");
+    source.stars.set_value("6..7");
+    source.ar.set_value("9+");
+    source.cs.set_value("<=4");
     source.od.set_value("8");
-    source.hp.set_value("5.5-6.5");
-    source.bpm.set_value("180-");
-    source.length.set_value("90-300");
+    source.hp.set_value("5.5..6.5");
+    source.bpm.set_value("180+");
+    source.length.set_value("90..300");
     source.keys.set_value("7");
-    source.favourites.set_value("100-");
+    source.favourites.set_value("100+");
     source.ranked.set_value("2024");
     source.artist.set_value("cam");
     source.creator.set_value("toby");
     source.title.set_value("night");
-    // Ranges render from parsed bounds (`9.0-` → `9~`, bare `8` → `8~8`);
-    // ranked/texts stay raw-trimmed.
+    // Ranges render from parsed bounds in operator form (`9+` → `>=9`, bare `8`
+    // → `=8`, `<=4` → `<=4`); ranked/texts stay raw-trimmed.
     assert_eq!(
         source.criteria_string(),
-        "special=farm|mode=catch|status=approved|q=tekno|stars=6~7|ar=9~|cs=~4|od=8~8|hp=5.5~6.5|bpm=180~|len=90~300|keys=7~7|fav=100~|ranked=2024|artist=cam|creator=toby|title=night"
+        "special=farm|mode=catch|status=approved|q=tekno|stars=>=6 <=7|ar=>=9|cs=<=4|od==8|hp=>=5.5 <=6.5|bpm=>=180|len=>=90 <=300|keys==7|fav=>=100|ranked=2024|artist=cam|creator=toby|title=night"
     );
 }
 
@@ -547,8 +523,8 @@ fn criteria_string_is_byte_pinned() {
 #[test]
 fn folder_tag_hash_is_byte_pinned() {
     let mut source = FindSource::new();
-    source.stars.set_value("5-");
-    assert_eq!(source.folder_tag(), "edd915d9");
+    source.stars.set_value("<=5");
+    assert_eq!(source.folder_tag(), "7f963648");
 }
 
 /// Fix for raw-input hashing: equivalent numeric spellings share a folder tag
@@ -556,19 +532,19 @@ fn folder_tag_hash_is_byte_pinned() {
 #[test]
 fn equivalent_range_spellings_share_tag_and_stay_current() {
     let mut a = FindSource::new();
-    a.stars.set_value("6-7");
+    a.stars.set_value("6..7");
     let mut b = FindSource::new();
-    b.stars.set_value("6.0-7.0");
+    b.stars.set_value("6.0..7.0");
     assert_eq!(a.folder_tag(), b.folder_tag());
 
     a.mark_results_current();
-    a.stars.set_value("6.0-7.0");
+    a.stars.set_value("6.0..7.0");
     assert!(
         a.results_current(),
         "an equivalent spelling is not a divergence"
     );
     // An unparseable value falls back to the raw string → reads as diverged.
-    a.stars.set_value("6.0-x");
+    a.stars.set_value("6.0..x");
     assert!(!a.results_current());
 }
 
@@ -670,8 +646,8 @@ fn folder_tag_falls_back_to_first_text_then_hash() {
 fn run_label_prefers_preset_free_text_then_descriptor() {
     let mut source = FindSource::new();
     assert_eq!(source.run_label(), "results");
-    source.stars.set_value("7-");
-    assert_eq!(source.run_label(), "stars 7-");
+    source.stars.set_value("7+");
+    assert_eq!(source.run_label(), "stars 7+");
     set_special(&mut source, "stream");
     assert_eq!(source.run_label(), "stream");
     source.title.set_value("nhelv");
@@ -742,16 +718,10 @@ fn seven_star_preset_seeds_stars_min() {
         source.cycle_preset(true);
     }
     assert_eq!(source.preset_label(), "7★+");
-    assert_eq!(source.stars.value, "7-");
-    // Fresh 7★+ has no forcer → osu route with the star lower bound.
+    assert_eq!(source.stars.value, "7+");
+    // Fresh 7★+ has no forcer → osu route with the inclusive star lower bound.
     let query = osu(&source);
-    assert_eq!(
-        query.stars,
-        Some(QueryRange::Range {
-            min: Some(7.0),
-            max: None
-        })
-    );
+    assert_eq!(query.stars, Some(QueryRange::at_least(7.0)));
 }
 
 // ── enrichment pager (per-browse) ─────────────────────────────────────────────
@@ -807,51 +777,144 @@ fn status_msg_defaults_to_idle() {
 // ── parsers ───────────────────────────────────────────────────────────────────
 
 #[test]
-fn parse_range_accepts_all_pair_shapes() {
+fn parse_range_criterion_accepts_prefix_and_suffix_operators() {
+    let ge5 = RangeCriterion::Bounds {
+        lower: Some(NumBound {
+            value: 5.0,
+            inclusive: true,
+        }),
+        upper: None,
+    };
+    // `+` suffix and `>=` prefix/suffix all mean the same inclusive lower bound.
+    assert_eq!(parse_range_criterion("stars", "5+").unwrap(), Some(ge5));
+    assert_eq!(parse_range_criterion("stars", ">=5").unwrap(), Some(ge5));
+    assert_eq!(parse_range_criterion("stars", "5>=").unwrap(), Some(ge5));
+
+    // strict `>` — suffix and prefix parse identically.
+    let gt7 = RangeCriterion::Bounds {
+        lower: Some(NumBound {
+            value: 7.0,
+            inclusive: false,
+        }),
+        upper: None,
+    };
+    assert_eq!(parse_range_criterion("ar", "7>").unwrap(), Some(gt7));
+    assert_eq!(parse_range_criterion("ar", ">7").unwrap(), Some(gt7));
+
+    // `<=` is the inclusive upper form; `<` is the strict upper form.
     assert_eq!(
-        parse_range("stars", "5.5-7").expect("both"),
-        FilterRange {
-            min: Some(5.5),
-            max: Some(7.0)
-        }
+        parse_range_criterion("cs", "<=4").unwrap(),
+        Some(RangeCriterion::Bounds {
+            lower: None,
+            upper: Some(NumBound {
+                value: 4.0,
+                inclusive: true
+            }),
+        })
     );
     assert_eq!(
-        parse_range("bpm", "180-").expect("min only"),
+        parse_range_criterion("cs", "<4").unwrap(),
+        Some(RangeCriterion::Bounds {
+            lower: None,
+            upper: Some(NumBound {
+                value: 4.0,
+                inclusive: false
+            }),
+        })
+    );
+
+    // `-` and `..` are interchangeable range separators: `2-3` ≡ `2..3`.
+    let between_5_7 = RangeCriterion::Bounds {
+        lower: Some(NumBound {
+            value: 5.0,
+            inclusive: true,
+        }),
+        upper: Some(NumBound {
+            value: 7.0,
+            inclusive: true,
+        }),
+    };
+    assert_eq!(
+        parse_range_criterion("stars", "5..7").unwrap(),
+        Some(between_5_7)
+    );
+    assert_eq!(
+        parse_range_criterion("stars", "5-7").unwrap(),
+        Some(between_5_7)
+    );
+    // open forms: `180-` / `180..` = min only; `-4` / `..4` = max only.
+    assert_eq!(
+        parse_range_criterion("bpm", "180-").unwrap(),
+        Some(RangeCriterion::Bounds {
+            lower: Some(NumBound {
+                value: 180.0,
+                inclusive: true
+            }),
+            upper: None,
+        })
+    );
+    assert_eq!(
+        parse_range_criterion("cs", "-4").unwrap(),
+        Some(RangeCriterion::Bounds {
+            lower: None,
+            upper: Some(NumBound {
+                value: 4.0,
+                inclusive: true
+            }),
+        })
+    );
+
+    // bare value = exact; blank = no criterion.
+    assert_eq!(
+        parse_range_criterion("cs", "4").unwrap(),
+        Some(RangeCriterion::Exact(4.0))
+    );
+    assert_eq!(parse_range_criterion("od", "  ").unwrap(), None);
+}
+
+#[test]
+fn strict_bounds_reach_osu_but_collapse_on_nzbasic() {
+    let mut source = FindSource::new();
+    source.stars.set_value("7>");
+    // osu keeps the strict `>`.
+    assert_eq!(osu(&source).stars, Some(QueryRange::greater_than(7.0)));
+    // nzbasic has no strict bound → it lands as an inclusive lower bound.
+    set_special(&mut source, "farm"); // force nzbasic
+    assert_eq!(
+        nzbasic(&source).stars,
         FilterRange {
-            min: Some(180.0),
+            min: Some(7.0),
             max: None
         }
-    );
-    assert_eq!(
-        parse_range("ar", "-9").expect("max only"),
-        FilterRange {
-            min: None,
-            max: Some(9.0)
-        }
-    );
-    assert_eq!(
-        parse_range("cs", "4").expect("exact"),
-        FilterRange {
-            min: Some(4.0),
-            max: Some(4.0)
-        }
-    );
-    assert_eq!(
-        parse_range("od", "  ").expect("blank"),
-        FilterRange::default()
     );
 }
 
 #[test]
-fn parse_range_rejects_junk_and_inverted_bounds() {
-    let err = parse_range("stars", "abc").expect_err("junk");
+fn parse_range_criterion_rejects_junk_and_inverted() {
+    let err = parse_range_criterion("stars", "abc").expect_err("junk");
     assert!(err.contains("stars"), "error names the field: {err}");
-    let err = parse_range("bpm", "200-100").expect_err("inverted");
+    // inverted bounds reject on either separator (`..` and `-`).
+    let err = parse_range_criterion("bpm", "200..100").expect_err("inverted ..");
+    assert!(err.contains("greater than max"), "{err}");
+    let err = parse_range_criterion("bpm", "3-2").expect_err("inverted -");
     assert!(err.contains("greater than max"), "{err}");
     // f64::parse accepts these; the boundary must not let them reach the wire.
-    assert!(parse_range("ar", "nan").is_err());
-    assert!(parse_range("ar", "inf").is_err());
-    assert!(parse_range("ar", "1-inf").is_err());
+    assert!(parse_range_criterion("ar", "nan").is_err());
+    assert!(parse_range_criterion("ar", "inf").is_err());
+    assert!(parse_range_criterion("ar", "1..inf").is_err());
+    // `-9` is the open max form `..9` (`≤9`), not a negative value.
+    assert_eq!(
+        parse_range_criterion("ar", "-9").unwrap(),
+        Some(RangeCriterion::Bounds {
+            lower: None,
+            upper: Some(NumBound {
+                value: 9.0,
+                inclusive: true
+            }),
+        })
+    );
+    // an operator with no number is rejected.
+    assert!(parse_range_criterion("ar", ">").is_err());
 }
 
 #[test]

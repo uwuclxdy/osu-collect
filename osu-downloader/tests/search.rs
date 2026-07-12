@@ -82,31 +82,37 @@ fn query_string_percent_encodes_free_text() {
 #[test]
 fn range_emits_ge_le_pair() {
     let query = SearchQuery {
-        stars: Some(QueryRange::Range {
-            min: Some(5.0),
-            max: Some(6.5),
-        }),
+        stars: Some(QueryRange::between(5.0, 6.5)),
         ..SearchQuery::default()
     };
     assert_eq!(q_of(&query), "stars>=5 stars<=6.5");
 }
 
 #[test]
+fn strict_bounds_emit_gt_lt() {
+    let lower = SearchQuery {
+        stars: Some(QueryRange::greater_than(5.0)),
+        ..SearchQuery::default()
+    };
+    assert_eq!(q_of(&lower), "stars>5");
+
+    let upper = SearchQuery {
+        ar: Some(QueryRange::less_than(3.0)),
+        ..SearchQuery::default()
+    };
+    assert_eq!(q_of(&upper), "ar<3");
+}
+
+#[test]
 fn range_open_lower_and_upper_bounds() {
     let lower = SearchQuery {
-        ar: Some(QueryRange::Range {
-            min: Some(9.0),
-            max: None,
-        }),
+        ar: Some(QueryRange::at_least(9.0)),
         ..SearchQuery::default()
     };
     assert_eq!(q_of(&lower), "ar>=9");
 
     let upper = SearchQuery {
-        od: Some(QueryRange::Range {
-            min: None,
-            max: Some(4.0),
-        }),
+        od: Some(QueryRange::at_most(4.0)),
         ..SearchQuery::default()
     };
     assert_eq!(q_of(&upper), "od<=4");
@@ -115,10 +121,7 @@ fn range_open_lower_and_upper_bounds() {
 #[test]
 fn hp_range_emits_dr_key() {
     let query = SearchQuery {
-        hp: Some(QueryRange::Range {
-            min: Some(3.0),
-            max: Some(7.0),
-        }),
+        hp: Some(QueryRange::between(3.0, 7.0)),
         ..SearchQuery::default()
     };
     // HP drain serializes under the canonical `dr` key, not `hp`.
@@ -128,10 +131,7 @@ fn hp_range_emits_dr_key() {
 #[test]
 fn length_range_uses_raw_seconds() {
     let query = SearchQuery {
-        length: Some(QueryRange::Range {
-            min: Some(60),
-            max: Some(120),
-        }),
+        length: Some(QueryRange::between(60, 120)),
         ..SearchQuery::default()
     };
     assert_eq!(q_of(&query), "length>=60 length<=120");
@@ -140,14 +140,8 @@ fn length_range_uses_raw_seconds() {
 #[test]
 fn keys_and_favourites_ranges() {
     let query = SearchQuery {
-        keys: Some(QueryRange::Range {
-            min: Some(4),
-            max: Some(7),
-        }),
-        favourites: Some(QueryRange::Range {
-            min: Some(10_000),
-            max: None,
-        }),
+        keys: Some(QueryRange::between(4, 7)),
+        favourites: Some(QueryRange::at_least(10_000)),
         ..SearchQuery::default()
     };
     assert_eq!(q_of(&query), "keys>=4 keys<=7 favourites>=10000");
@@ -156,10 +150,10 @@ fn keys_and_favourites_ranges() {
 #[test]
 fn ranked_date_range_accepts_partial_dates() {
     let query = SearchQuery {
-        ranked: Some(QueryRange::Range {
-            min: Some("2020".to_string()),
-            max: Some("2024-06".to_string()),
-        }),
+        ranked: Some(QueryRange::between(
+            "2020".to_string(),
+            "2024-06".to_string(),
+        )),
         ..SearchQuery::default()
     };
     assert_eq!(q_of(&query), "ranked>=2020 ranked<=2024-06");
@@ -220,40 +214,19 @@ fn combined_query_pins_full_fixed_order() {
     let query = SearchQuery {
         text: "tekno".to_string(),
         status: Some(SearchStatus::Approved),
-        stars: Some(QueryRange::Range {
-            min: Some(5.0),
-            max: Some(6.5),
-        }),
-        ar: Some(QueryRange::Range {
-            min: Some(9.0),
-            max: None,
-        }),
-        cs: Some(QueryRange::Range {
-            min: None,
-            max: Some(4.0),
-        }),
+        stars: Some(QueryRange::between(5.0, 6.5)),
+        ar: Some(QueryRange::at_least(9.0)),
+        cs: Some(QueryRange::at_most(4.0)),
         od: Some(QueryRange::Exact(8.0)),
-        hp: Some(QueryRange::Range {
-            min: Some(3.0),
-            max: Some(7.0),
-        }),
-        bpm: Some(QueryRange::Range {
-            min: Some(180.0),
-            max: Some(200.0),
-        }),
-        length: Some(QueryRange::Range {
-            min: Some(60),
-            max: Some(120),
-        }),
+        hp: Some(QueryRange::between(3.0, 7.0)),
+        bpm: Some(QueryRange::between(180.0, 200.0)),
+        length: Some(QueryRange::between(60, 120)),
         keys: Some(QueryRange::Exact(7)),
-        ranked: Some(QueryRange::Range {
-            min: Some("2020".to_string()),
-            max: Some("2024-06".to_string()),
-        }),
-        favourites: Some(QueryRange::Range {
-            min: Some(10_000),
-            max: None,
-        }),
+        ranked: Some(QueryRange::between(
+            "2020".to_string(),
+            "2024-06".to_string(),
+        )),
+        favourites: Some(QueryRange::at_least(10_000)),
         creator: Some("mrekk".to_string()),
         artist: Some("Camellia".to_string()),
         title: Some("tri\"angle".to_string()),
@@ -286,10 +259,7 @@ fn from_bounds_collapses_absent_bounds_to_none() {
     assert_eq!(QueryRange::<f64>::from_bounds(None, None), None);
     assert_eq!(
         QueryRange::from_bounds(Some(1.0), None),
-        Some(QueryRange::Range {
-            min: Some(1.0),
-            max: None,
-        })
+        Some(QueryRange::at_least(1.0))
     );
 }
 
