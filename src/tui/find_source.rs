@@ -49,7 +49,6 @@ pub fn push_form_rows(
     let route = find.resolved_route();
 
     push_input(items, HomeField::FindQuery, &find.query, focus, editing);
-    items.push(widgets::spacer());
 
     items.push_focusable(
         HomeField::FindPreset,
@@ -61,7 +60,7 @@ pub fn push_form_rows(
             LABEL_WIDTH,
         ),
     );
-    push_hint(items, HomeField::FindPreset, focus);
+    items.push(widgets::spacer());
     items.push_focusable(
         HomeField::FindSpecial,
         widgets::cycle_item(
@@ -72,7 +71,6 @@ pub fn push_form_rows(
             LABEL_WIDTH,
         ),
     );
-    push_hint(items, HomeField::FindSpecial, focus);
     items.push_focusable(
         HomeField::FindMode,
         widgets::cycle_item(
@@ -195,27 +193,27 @@ fn push_input(
 }
 
 /// A `└ <hint>` tooltip below the row when it holds focus and carries a hint.
-/// Covers only the fields whose syntax/route isn't obvious from the label —
-/// range grammar, the ranked date range, the free-text/special routing, and the
-/// nzbasic-only limit. Obvious rows (mode/status/sort/artist/title) get none.
+/// Covers only the fields whose syntax isn't obvious from the label: the query
+/// q-DSL example, range grammar, the ranked date range, the limit cap.
+/// Rows that read plainly (preset/special/mode/status/sort/artist/title) get none.
 fn push_hint(items: &mut widgets::FormItems<HomeField>, field: HomeField, focus: HomeField) {
     if focus == field
         && let Some(hint) = field_hint(field)
     {
-        items.push(widgets::help_item(hint));
+        items.push(widgets::help_item_keyed(hint));
     }
 }
 
+/// Example values wrapped in `[…]` render highlighted (accent) via
+/// [`widgets::help_item_keyed`]; the surrounding prose stays faint.
 fn field_hint(field: HomeField) -> Option<&'static str> {
     use HomeField::*;
     Some(match field {
-        FindQuery => "free text · routes via osu! api",
-        FindPreset => "resets the fields, then seeds a preset",
-        FindSpecial => "farm / stream / ranked mapper · routes via nzbasic",
+        FindQuery => "supports osu-native filter expressions like ar:10",
         FindStars | FindAr | FindCs | FindOd | FindHp | FindBpm | FindLength | FindKeys
-        | FindFavourites => "range: min-max · min- · -max · exact",
-        FindRanked => "date range: 2020..2024 · 2020-06-01.. · ..2024",
-        FindLimit => "nzbasic only · caps diff rows (default 500)",
+        | FindFavourites => "e.g. [5-7], [5-], [-7], [6]",
+        FindRanked => "e.g. [2020..2024], [2020-06-01..], [..2024]",
+        FindLimit => "caps diff rows (default 500)",
         _ => return None,
     })
 }

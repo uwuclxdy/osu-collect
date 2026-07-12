@@ -595,8 +595,9 @@ pub fn keyed_spans(text: &str, key_style: Style, rest_style: Style) -> Vec<Span<
     spans
 }
 
-/// [`help_item`] for copy that names keys: `[key]` tokens render in the
-/// footer-hint key style (`ACCENT + bold`) inside the faint tooltip text.
+/// [`help_item`] for copy that highlights bracketed tokens (key names or
+/// example values): each `[token]` renders in the footer-hint key style
+/// (`ACCENT + bold`) inside the faint tooltip text.
 pub fn help_item_keyed(text: &str) -> ListItem<'static> {
     let mut spans = vec![Span::styled("  └ ", Style::default().fg(line()))];
     spans.extend(keyed_spans(
