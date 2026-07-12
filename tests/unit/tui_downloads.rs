@@ -122,3 +122,26 @@ fn narrow_terminal_collapses_to_the_focused_pane() {
         "list meta must not render while collapsed to the preview"
     );
 }
+
+#[test]
+fn age_label_uses_weeks_then_iso_date_past_30_days() {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_secs();
+
+    assert_eq!(super::age_label(now.saturating_sub(8 * 86_400)), "1w ago");
+    assert_eq!(super::age_label(now.saturating_sub(20 * 86_400)), "2w ago");
+
+    // Past 30 days the label is an absolute ISO date (yyyy-mm-dd).
+    let iso = super::age_label(now.saturating_sub(40 * 86_400));
+    assert_eq!(iso.len(), 10, "iso date shape: {iso}");
+    assert!(
+        iso.chars().enumerate().all(|(i, c)| if i == 4 || i == 7 {
+            c == '-'
+        } else {
+            c.is_ascii_digit()
+        }),
+        "iso date shape: {iso}"
+    );
+}
