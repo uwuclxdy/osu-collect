@@ -111,8 +111,8 @@ Paste a collection link, pick a directory, press <kbd>↵</kbd>.
 | <kbd>x</kbd> | Dismiss an error message |
 | <kbd>?</kbd> | Help overlay listing every key |
 | <kbd>u</kbd> | Open the changelog + update prompt when a newer release is available (shows only when auto-update is off) |
-| <kbd>esc</kbd> | Back; in an open running run it cancels the download (<kbd>←</kbd> steps back without cancelling) |
-| <kbd>q</kbd> | Quit (press twice to confirm; running downloads stop) |
+| <kbd>esc</kbd> | Back; steps out of an open run without cancelling it (cancel is <kbd>q</kbd>) |
+| <kbd>q</kbd> | In an open running run, cancel it; otherwise quit (press twice to confirm; running downloads stop) |
 | <kbd>ctrl</kbd>+<kbd>c</kbd> | Quit immediately from anywhere |
 | <kbd>home</kbd> <kbd>end</kbd> | Jump to the first / last row of a list or form |
 | <kbd>pgup</kbd> <kbd>pgdn</kbd> | Page a list up / down |
@@ -127,7 +127,7 @@ Every run lives on the downloads tab, active ones first, then past ones (includi
 
 ### Finding maps
 
-The get maps tab's `find` source is one form: type a query and/or set criteria, press `find`, pick results, download. Under the hood two backends serve it: the osu! api and nzbasic's batch-beatmap-downloader database. The form routes automatically by what you asked for: farm/stream/ranked-mapper flags and a couple of sort orders only exist on nzbasic, free text and a few other criteria only exist on osu!. A `via osu! api` / `via nzbasic` line above the button always shows where the run will go. An impossible combination errors, naming the two clashing fields instead of guessing.
+The get maps tab's `find` source is one form: type a query and/or set criteria, press `find`, pick results, download. Under the hood two backends serve it: the osu! api and nzbasic's batch-beatmap-downloader database. The form routes automatically by what you asked for: farm/stream/ranked-mapper flags and a couple of sort orders only exist on nzbasic, free text and a few other criteria only exist on osu!. A `via osu! api` / `via nzbasic` tag on the `find` button's row always shows where the run will go. An impossible combination errors, naming the two clashing fields instead of guessing.
 
 Artist, mapper and title match as **exact phrases** on the osu! api route. The nzbasic route matches substrings instead, so force it with a farm/stream/ranked-mapper flag (or the `bpm ↓` / `length ↑` sorts) if you want contains-matching. The default sort is **newest ranked first**; cycling to `relevance` switches the route to the osu! api.
 
