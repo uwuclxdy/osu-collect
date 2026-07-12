@@ -76,8 +76,12 @@ fn list_shows_active_and_past_rows_with_counts_meta() {
     assert!(output.contains("fresh run"), "active row renders: {output}");
     assert!(output.contains("old run"), "settled row renders");
     assert!(
-        output.contains("1 active") && output.contains("1 past"),
-        "counts meta must render: {output}"
+        output.contains("1 active"),
+        "active count meta must render: {output}"
+    );
+    assert!(
+        !output.contains("1 past"),
+        "the past count is dropped from the meta: {output}"
     );
     assert!(output.contains("10/40"), "active row carries progress");
 }

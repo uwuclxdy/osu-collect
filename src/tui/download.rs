@@ -168,7 +168,10 @@ fn overview_lines(page: &CollectionPage) -> Vec<Line<'_>> {
     let speed = current_speed(page);
     let bytes = bytes_display(page);
 
-    let key_style = Style::default().fg(text_faint());
+    // First-column kv keys are static labels: TEXT_DIM + bold (cloudy-tui). The
+    // inline speed/eta/size sub-labels sit mid-line, so they stay recessive faint.
+    let key_style = Style::default().fg(text_dim()).bold();
+    let sub_key_style = Style::default().fg(text_faint());
     let value_style = Style::default().fg(text_dim());
 
     // Column-align the four key-value rows: every value starts at the same
@@ -185,17 +188,17 @@ fn overview_lines(page: &CollectionPage) -> Vec<Line<'_>> {
     )];
     status_spans.extend(widgets::status_pill(status, status_color(page.stage, rate_limited)).spans);
     if let Some(speed) = speed {
-        status_spans.push(Span::styled(KEY_SPEED, key_style));
+        status_spans.push(Span::styled(KEY_SPEED, sub_key_style));
         status_spans.push(Span::styled(speed, Style::default().fg(success())));
         // ETA sits next to speed (both derived from cumulative_speed) so the
         // gauge can drop the duplicate — every figure lives in exactly one place.
         if let Some(eta) = session_eta(page) {
-            status_spans.push(Span::styled(KEY_ETA, key_style));
+            status_spans.push(Span::styled(KEY_ETA, sub_key_style));
             status_spans.push(Span::styled(eta, Style::default().fg(accent())));
         }
     }
     if let Some(bytes) = bytes {
-        status_spans.push(Span::styled(KEY_SIZE, key_style));
+        status_spans.push(Span::styled(KEY_SIZE, sub_key_style));
         status_spans.push(Span::styled(bytes, Style::default().fg(warning())));
     }
 

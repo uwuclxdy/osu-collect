@@ -16,8 +16,8 @@ use ratatui::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::widgets::{self, SEPARATOR};
-use super::{accent, danger, line, success, text, text_dim, text_faint, warning};
+use super::widgets;
+use super::{accent, danger, success, text, text_dim, text_faint, warning};
 
 const PANEL_DOWNLOADS: &str = " DOWNLOADS ";
 
@@ -109,22 +109,17 @@ fn render_run_list(
     );
 }
 
-/// Title-right meta: `N active · M past` (active in accent while non-zero).
+/// Title-right meta: `N active` (accent while non-zero).
 fn counts_meta(rows: &[DownloadsRow<'_>]) -> Line<'static> {
     let active = rows
         .iter()
         .filter(|row| matches!(row, DownloadsRow::Page(page) if !page.is_settled()))
         .count();
-    let past = rows.len() - active;
     let active_color = if active > 0 { accent() } else { text_dim() };
-    Line::from(vec![
-        Span::styled(
-            format!("{active} active"),
-            Style::default().fg(active_color),
-        ),
-        Span::styled(SEPARATOR, Style::default().fg(line())),
-        Span::styled(format!("{past} past"), Style::default().fg(text_dim())),
-    ])
+    Line::from(Span::styled(
+        format!("{active} active"),
+        Style::default().fg(active_color),
+    ))
 }
 
 fn row_item(row: &DownloadsRow<'_>, is_cursor: bool, list_focused: bool) -> ListItem<'static> {
@@ -151,24 +146,30 @@ fn row_item(row: &DownloadsRow<'_>, is_cursor: bool, list_focused: bool) -> List
             );
             (glyph, page.title.clone(), page_suffix(page))
         }
+        // A settled record's state rides its `○` glyph color alone — the
+        // done/failed/cancelled word is dropped from the row.
         DownloadsRow::Record(record) => (
             Span::styled(GLYPH_PAST, Style::default().fg(record_color(record.stage))),
             record.title.clone(),
-            record_suffix(record),
+            None,
         ),
     };
 
     let mut spans = vec![caret, glyph, Span::styled(title, label_style)];
-    spans.push(Span::raw("  "));
-    spans.push(suffix);
+    // Only an in-progress run keeps a trailing count; a terminal state (settled
+    // page or history record) reads its outcome from the glyph color.
+    if let Some(suffix) = suffix {
+        spans.push(Span::raw("  "));
+        spans.push(suffix);
+    }
     ListItem::new(Line::from(spans))
 }
 
 /// Short trailing status for a live page row: progress counts while running,
-/// the outcome once settled.
-fn page_suffix(page: &crate::app::CollectionPage) -> Span<'static> {
+/// `None` once terminal (the `●`/`○` glyph color carries the outcome).
+fn page_suffix(page: &crate::app::CollectionPage) -> Option<Span<'static>> {
     let done = page.stats.downloaded as usize + page.stats.skipped as usize;
-    match page.stage {
+    Some(match page.stage {
         DownloadStage::Pending | DownloadStage::Resolving => {
             Span::styled("resolving…", Style::default().fg(text_faint()))
         }
@@ -177,25 +178,8 @@ fn page_suffix(page: &crate::app::CollectionPage) -> Span<'static> {
             format!("{done}/{}", page.total_maps),
             Style::default().fg(text_dim()),
         ),
-        DownloadStage::Completed => Span::styled(
-            format!("done {done}/{}", page.total_maps),
-            Style::default().fg(success()),
-        ),
-        DownloadStage::Failed => Span::styled(
-            format!("failed {}/{}", page.stats.failed, page.total_maps),
-            Style::default().fg(danger()),
-        ),
-    }
-}
-
-fn record_suffix(record: &HistoryRecord) -> Span<'static> {
-    let done = record.downloaded as usize + record.skipped as usize;
-    let label = match record.stage {
-        HistoryStage::Finished => format!("done {done}/{}", record.total_maps),
-        HistoryStage::Failed => format!("failed {}/{}", record.failed, record.total_maps),
-        HistoryStage::Cancelled => format!("cancelled {done}/{}", record.total_maps),
-    };
-    Span::styled(label, Style::default().fg(record_color(record.stage)))
+        DownloadStage::Completed | DownloadStage::Failed => return None,
+    })
 }
 
 fn record_color(stage: HistoryStage) -> ratatui::style::Color {
@@ -217,7 +201,8 @@ fn render_preview(frame: &mut Frame, area: Rect, row: &DownloadsRow<'_>, tick: u
 /// title (the run's name, case preserved) over kv rows, mirroring the update
 /// browse's preview idiom.
 fn render_record_preview(frame: &mut Frame, area: Rect, record: &HistoryRecord) {
-    let key_style = Style::default().fg(text_faint());
+    // Static kv key column: TEXT_DIM + bold (cloudy-tui static key:value rows).
+    let key_style = Style::default().fg(text_dim()).bold();
     let label_width = [
         "status",
         "downloaded",
