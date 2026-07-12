@@ -5,16 +5,9 @@
 //! in-flight one immediately.
 
 use crate::app::{App, BrowseRow, FindBackend, FindStatusMsg};
-use crate::core::search::{HttpSearchService, SearchClient, SearchQuery, SearchService};
-use std::sync::LazyLock;
+use crate::core::search::{SearchQuery, SearchService, shared_service};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::{sync::mpsc, sync::watch, task::JoinHandle};
-
-/// One shared search service for the whole session, so the cached guest
-/// `client_credentials` token survives across searches instead of being re-minted
-/// each run (the user-token path delegates freshness to `ensure_valid`).
-static SEARCH_SERVICE: LazyLock<HttpSearchService> =
-    LazyLock::new(|| HttpSearchService::new(SearchClient::new()));
 
 /// Monotonic search generation. Each `schedule_search` bumps it; a task whose
 /// generation is stale by the time its request resolves drops the result rather
@@ -78,7 +71,7 @@ async fn run_search_task(
     let _ = tx.send(HomeSearchEvent::Loading);
 
     tokio::select! {
-        result = SEARCH_SERVICE.search(&query) => {
+        result = shared_service().search(&query) => {
             // A newer search was dispatched while this one was in flight: drop the
             // stale result so it can't overwrite the current page/status.
             if SEARCH_GEN.load(Ordering::Relaxed) != generation {

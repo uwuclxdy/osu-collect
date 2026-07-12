@@ -103,6 +103,7 @@ fn resolve_success_event_sets_success_state() {
             map_count: 100,
             collection_id: 1,
             beatmapset_ids: Vec::new(),
+            enrich_ids: vec![101, 202],
             folder_name: "top 100 of 2024-1".to_string(),
         },
         &mut home,
@@ -120,6 +121,8 @@ fn resolve_success_event_sets_success_state() {
         home.resolved_folder_name.as_deref(),
         Some("top 100 of 2024-1")
     );
+    // The diff ids for browse&pick enrichment are stored alongside.
+    assert_eq!(home.resolved_enrich_ids, vec![101, 202]);
 }
 
 /// handle_home_resolve_event with Failed sets Error state.
@@ -166,6 +169,7 @@ fn resolve_single_map_uses_singular() {
             map_count: 1,
             collection_id: 2,
             beatmapset_ids: Vec::new(),
+            enrich_ids: Vec::new(),
             folder_name: "solo-2".to_string(),
         },
         &mut home,

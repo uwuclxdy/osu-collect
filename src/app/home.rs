@@ -497,6 +497,10 @@ pub struct HomeTab {
     /// Used by `App::request_download` to intersect with the persisted
     /// failed-maps file before dispatching the pipeline.
     pub resolved_collection: Option<(u32, Vec<u32>)>,
+    /// One diff id per unique set of the resolved collection, paired with
+    /// `resolved_collection` (same resolve). Seeds the browse&pick enrichment
+    /// pager so its id-only previews backfill from the osu-batch endpoint.
+    pub resolved_enrich_ids: Vec<u32>,
     /// Per-collection subfolder (`Collection::folder_name`) the resolved
     /// collection downloads into, e.g. `"my collection-1234"`. `None` until a
     /// collection resolves. Display-only: powers the download-directory tooltip
@@ -593,6 +597,7 @@ impl HomeTab {
             message: None,
             collection_resolve: None,
             resolved_collection: None,
+            resolved_enrich_ids: Vec::new(),
             resolved_folder_name: None,
             mirror_latency: HashMap::with_capacity(MirrorKind::BUILTINS.len()),
             quit_prompt: false,
@@ -621,6 +626,7 @@ impl HomeTab {
     pub fn clear_collection_resolve(&mut self) {
         self.collection_resolve = None;
         self.resolved_collection = None;
+        self.resolved_enrich_ids = Vec::new();
         self.resolved_folder_name = None;
     }
 

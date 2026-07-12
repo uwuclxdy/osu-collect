@@ -1,5 +1,6 @@
 use crate::{app::home::ResolveState, core::collection::CollectionService, utils};
 use osu_downloader::collection::CollectionClient;
+use std::collections::HashSet;
 use tokio::{sync::mpsc, sync::watch, time};
 
 const DEBOUNCE_MS: u64 = 300;
@@ -15,6 +16,9 @@ pub enum HomeResolveEvent {
         map_count: usize,
         collection_id: u32,
         beatmapset_ids: Vec<u32>,
+        /// One diff id per unique set — the batch-enrichment endpoint keys on diff
+        /// ids, so browse&pick previews page these to backfill set metadata.
+        enrich_ids: Vec<u32>,
         /// The per-collection subfolder this collection downloads into
         /// (`Collection::folder_name`), shown in the directory tooltip.
         folder_name: String,
@@ -83,6 +87,16 @@ async fn run_resolve(
                 Ok(collection) => {
                     let beatmapset_ids: Vec<u32> =
                         collection.beatmapsets.iter().map(|set| set.id).collect();
+                    // One diff id per unique set feeds the batch-enrichment pager
+                    // (the endpoint takes diff ids; the set metadata rides nested
+                    // in each row). Sets with no diffs stay id-only in the preview.
+                    let mut seen = HashSet::with_capacity(beatmapset_ids.len());
+                    let enrich_ids: Vec<u32> = collection
+                        .beatmapsets
+                        .iter()
+                        .filter(|set| seen.insert(set.id))
+                        .filter_map(|set| set.beatmaps.first().map(|diff| diff.id))
+                        .collect();
                     // Built from the full collection here (the app side only keeps
                     // name + id), so the lib stays the single source of folder naming.
                     let folder_name = collection.folder_name();
@@ -91,6 +105,7 @@ async fn run_resolve(
                         map_count: collection.beatmapsets.len(),
                         collection_id,
                         beatmapset_ids,
+                        enrich_ids,
                         folder_name,
                     }
                 }
@@ -127,6 +142,7 @@ pub fn handle_home_resolve_event(event: HomeResolveEvent, home: &mut crate::app:
             map_count,
             collection_id,
             beatmapset_ids,
+            enrich_ids,
             folder_name,
         } => {
             let maps_word = if map_count == 1 { "map" } else { "maps" };
@@ -135,6 +151,7 @@ pub fn handle_home_resolve_event(event: HomeResolveEvent, home: &mut crate::app:
                 format!("\"{}\" · {} {}", name, map_count, maps_word),
             );
             home.set_resolved_collection(collection_id, beatmapset_ids);
+            home.resolved_enrich_ids = enrich_ids;
             home.resolved_folder_name = Some(folder_name);
         }
         HomeResolveEvent::Failed { reason } => {

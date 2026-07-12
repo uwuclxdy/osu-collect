@@ -6,7 +6,7 @@ use super::{
     download_history::DownloadHistory,
     downloads_tab::{DownloadsRow, DownloadsTab},
     failed_maps,
-    find_source::{BrowseRow, FindPlan, FindStatusMsg, SetBrowse},
+    find_source::{BrowseRow, EnrichTarget, FindPlan, FindStatusMsg, SetBrowse},
     home::{FindBackend, GetMapsSource, HomeField, HomeTab},
     ignored_maps,
     library::LibraryState,
@@ -226,9 +226,11 @@ pub enum AppCommand {
     RunFilter {
         query: FilterQuery,
     },
-    /// Fetch the next `beatmapDetails` page for the current filter results
-    /// (auto once results land; `m` in the browse loads more).
-    LoadFilterDetails,
+    /// Fetch the next osu-batch enrichment page for an id-only browse's rows
+    /// (auto once results land / the browse descends; `m` loads more).
+    LoadEnrichment {
+        target: EnrichTarget,
+    },
     /// Probe latency for all built-in mirrors.
     ProbeMirrors,
     /// Switch to the home tab and focus the output directory field.
@@ -1301,7 +1303,8 @@ impl App {
     }
 
     /// Character keys inside a flat set browse: `a`/`A` select-all/clear on the
-    /// list pane, `m` loads the next search page.
+    /// list pane, `m` loads more (next osu results page, or the next osu-batch
+    /// enrichment page for id-only rows).
     fn handle_set_browse_char(&mut self, ch: char) -> Option<AppCommand> {
         match ch {
             'a' | 'A' => {
@@ -1319,13 +1322,23 @@ impl App {
             {
                 return self.load_more_search();
             }
-            // …nzbasic results are all in hand, so `m` enriches the next page of
-            // rows with `beatmapDetails` metadata instead.
+            // …nzbasic results are all in hand, so `m` backfills the next page of
+            // id-only rows with osu-batch metadata instead.
             'm' if self.home.source == GetMapsSource::Find
                 && self.home.find.results_backend() == Some(FindBackend::Nzbasic)
-                && self.home.find.has_more_details() =>
+                && self.home.find.browse.has_more_enrichment() =>
             {
-                return Some(AppCommand::LoadFilterDetails);
+                return Some(AppCommand::LoadEnrichment {
+                    target: EnrichTarget::Find,
+                });
+            }
+            // Collection browse&pick rows are id-only too; `m` enriches the next.
+            'm' if self.home.source == GetMapsSource::Collection
+                && self.home.collection_browse.has_more_enrichment() =>
+            {
+                return Some(AppCommand::LoadEnrichment {
+                    target: EnrichTarget::Collection,
+                });
             }
             _ => {}
         }
@@ -1363,15 +1376,17 @@ impl App {
     /// Open the resolved collection in the checkbox browse (the collection
     /// source's `view N maps` button). A fresh collection defaults all sets selected;
     /// re-opening the same collection preserves the prior picks. No-op with a
-    /// toast until a collection has resolved.
-    fn open_collection_browse(&mut self) {
+    /// toast until a collection has resolved. Returns the first-page enrichment
+    /// command (osu-batch metadata backfill for the id-only rows), or `None` when
+    /// there are no diff ids to enrich.
+    fn open_collection_browse(&mut self) -> Option<AppCommand> {
         let Some((collection_id, ids)) = self.home.resolved_collection.clone() else {
             self.toast_warn("resolve a collection first");
-            return;
+            return None;
         };
         if ids.is_empty() {
             self.toast_warn("collection has no beatmaps");
-            return;
+            return None;
         }
         // Re-opening the same collection keeps the user's selection alive;
         // `set_rows` retains checks for still-present ids, so only a fresh /
@@ -1385,10 +1400,21 @@ impl App {
         if fresh {
             self.home.collection_browse.set_all_selected(true);
         }
+        // Seed the enrichment pager from this resolve's diff ids so the previews
+        // backfill from the osu-batch endpoint (osu!collector exposes no set meta).
+        self.home
+            .collection_browse
+            .seed_enrichment(self.home.resolved_enrich_ids.clone());
         self.home.collection_browse.descend();
         // Snapshot the id so the dispatch stays paired with these rows even if a
         // late resolve updates `resolved_collection` while the browse is open.
         self.home.collection_browse_id = Some(collection_id);
+        self.home
+            .collection_browse
+            .has_more_enrichment()
+            .then_some(AppCommand::LoadEnrichment {
+                target: EnrichTarget::Collection,
+            })
     }
 
     /// Build a fetch-skipping download from the picked find results. The run
@@ -2144,7 +2170,7 @@ impl App {
                             // Per-source download button; routed by active source.
                             HomeField::Download => return self.dispatch_form_download(),
                             // Open the resolved collection in the checkbox browse.
-                            HomeField::CollectionBrowse => self.open_collection_browse(),
+                            HomeField::CollectionBrowse => return self.open_collection_browse(),
                             // The mirrors row is read-only here; hand off to the
                             // Config tab, which owns all mirror editing.
                             HomeField::Mirrors => self.open_config_mirrors(),

@@ -315,18 +315,20 @@ fn set_browse_hints(
         HINT_SELECT_ALL_NONE,
         HINT_FOCUS_PREVIEW,
     ];
-    // `m` loads the next page of osu results that still have one, or the next
-    // details page of an nzbasic result set — keyed on the backend that produced
-    // the loaded results, matching the `m` key handler.
-    if form.source == GetMapsSource::Find {
-        let more = match form.find.results_backend() {
+    // `m` loads more: the next osu results page, or the next osu-batch enrichment
+    // page for an id-only browse (nzbasic find results / collection browse&pick)
+    // — matching the `m` key handler.
+    let more = match form.source {
+        GetMapsSource::Find => match form.find.results_backend() {
             Some(FindBackend::Osu) => form.find.next_cursor.is_some(),
-            Some(FindBackend::Nzbasic) => form.find.has_more_details(),
+            Some(FindBackend::Nzbasic) => form.find.browse.has_more_enrichment(),
             None => false,
-        };
-        if more {
-            segments.push(HINT_MORE);
-        }
+        },
+        GetMapsSource::Collection => form.collection_browse.has_more_enrichment(),
+        GetMapsSource::Update => false,
+    };
+    if more {
+        segments.push(HINT_MORE);
     }
     (segments, None)
 }

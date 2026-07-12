@@ -1,4 +1,5 @@
 mod auth;
+mod enrich;
 mod filter;
 mod mirror_probe;
 mod resolve;
@@ -13,11 +14,12 @@ pub use scan::{
     should_hide_failed_beatmapset, snapshot_diffs_for_scan,
 };
 
+pub use enrich::{EnrichEvent, handle_enrich_event};
 pub use filter::{HomeFilterEvent, handle_home_filter_event};
 pub use resolve::{HomeResolveEvent, handle_home_resolve_event};
 pub use search::{HomeSearchEvent, handle_home_search_event};
 
-use super::{App, AppCommand, Tab};
+use super::{App, AppCommand, EnrichTarget, Tab};
 use crate::{
     config::Config,
     download::{self, DownloadEvent, DownloadHandle, DownloadId},
@@ -33,7 +35,8 @@ use auth::{
     AuthEvent, handle_auth_event, spawn_lazer_login_task, spawn_logout_task, spawn_reissue_task,
     spawn_verification_task,
 };
-use filter::{schedule_filter, schedule_filter_details};
+use enrich::{enrich_browse_mut, schedule_enrichment};
+use filter::schedule_filter;
 use mirror_probe::{handle_mirror_probe_event, schedule_probe};
 use resolve::schedule_resolve;
 use scan::{handle_updates_event, spawn_failed_map_recheck_task, spawn_scan_task};
@@ -83,6 +86,7 @@ pub async fn run(
     let (home_resolve_tx, mut home_resolve_rx) = mpsc::unbounded_channel::<HomeResolveEvent>();
     let (home_search_tx, mut home_search_rx) = mpsc::unbounded_channel::<HomeSearchEvent>();
     let (home_filter_tx, mut home_filter_rx) = mpsc::unbounded_channel::<HomeFilterEvent>();
+    let (home_enrich_tx, mut home_enrich_rx) = mpsc::unbounded_channel::<EnrichEvent>();
     let (mirror_probe_tx, mut mirror_probe_rx) = mpsc::unbounded_channel::<MirrorProbeEvent>();
     let (update_tx, mut update_rx) = mpsc::unbounded_channel::<UpdateEvent>();
     let input_handle = spawn_input_thread(input_tx.clone());
@@ -99,8 +103,10 @@ pub async fn run(
         home_search_tx,
         filter: None,
         filter_cancel: None,
-        filter_details: None,
         home_filter_tx,
+        enrich_find: None,
+        enrich_collection: None,
+        home_enrich_tx,
         mirror_probe: None,
         mirror_probe_cancel: None,
         mirror_probe_tx: mirror_probe_tx.clone(),
@@ -201,6 +207,10 @@ pub async fn run(
                     &mut tasks,
                 );
             }
+            Some(event) = home_enrich_rx.recv() => {
+                trace!(?event, "Received home enrich event");
+                handle_enrich_event(event, &mut app);
+            }
             Some(event) = mirror_probe_rx.recv() => {
                 trace!(?event, "Received mirror probe event");
                 handle_mirror_probe_event(event, &mut app.home);
@@ -225,7 +235,10 @@ pub async fn run(
     if let Some(handle) = tasks.filter.take() {
         handle.abort();
     }
-    if let Some(handle) = tasks.filter_details.take() {
+    if let Some(handle) = tasks.enrich_find.take() {
+        handle.abort();
+    }
+    if let Some(handle) = tasks.enrich_collection.take() {
         handle.abort();
     }
     if let Some(handle) = tasks.mirror_probe.take() {
@@ -448,29 +461,37 @@ fn dispatch_command(
                 query,
                 &mut tasks.filter,
                 &mut tasks.filter_cancel,
-                &mut tasks.filter_details,
                 &tasks.home_filter_tx,
             );
         }
-        Some(AppCommand::LoadFilterDetails) => {
-            // One page in flight at a time: dispatching another would abort the
-            // in-flight page task AFTER the pager already advanced past it, so
-            // those rows would never get their metadata (rewind only fires on a
-            // failure event, not on abort-by-supersede). `m` no-ops while busy.
-            let busy = tasks
-                .filter_details
+        Some(AppCommand::LoadEnrichment { target }) => {
+            let enrich_handle = match target {
+                EnrichTarget::Find => &mut tasks.enrich_find,
+                EnrichTarget::Collection => &mut tasks.enrich_collection,
+            };
+            let browse = enrich_browse_mut(app, target);
+            // The first page (cursor 0) follows a reseed: the reseed already
+            // invalidated any in-flight page via the generation guard, so start
+            // fresh (`schedule_enrichment` aborts the target's prior task). A
+            // `m`-triggered page (cursor > 0) respects busy — aborting an
+            // in-flight page AFTER the pager advanced past it would lose those
+            // rows (rewind fires on a failure event, not on abort-by-supersede).
+            let first_page = browse.enrich_cursor() == 0;
+            let busy = enrich_handle
                 .as_ref()
                 .is_some_and(|handle| !handle.is_finished());
-            if !busy {
-                // Pull the next unfetched page off the pager; a dry pager
-                // (every page requested) makes this a no-op.
-                let rewind_to = app.home.find.details_cursor();
-                if let Some(page) = app.home.find.next_details_page() {
-                    schedule_filter_details(
+            if first_page || !busy {
+                let generation = browse.enrich_generation();
+                let rewind_to = browse.enrich_cursor();
+                // A dry pager (every page requested) makes this a no-op.
+                if let Some(page) = browse.next_enrich_page() {
+                    schedule_enrichment(
+                        target,
+                        generation,
                         page,
                         rewind_to,
-                        &mut tasks.filter_details,
-                        &tasks.home_filter_tx,
+                        enrich_handle,
+                        &tasks.home_enrich_tx,
                     );
                 }
             }
@@ -592,9 +613,14 @@ struct BackgroundTasks {
     home_search_tx: mpsc::UnboundedSender<HomeSearchEvent>,
     filter: Option<tokio::task::JoinHandle<()>>,
     filter_cancel: Option<tokio::sync::watch::Sender<bool>>,
-    /// The in-flight `beatmapDetails` page task (one page at a time).
-    filter_details: Option<tokio::task::JoinHandle<()>>,
     home_filter_tx: mpsc::UnboundedSender<HomeFilterEvent>,
+    /// In-flight osu-batch enrichment page tasks, one slot per target browse
+    /// (one page per target; a find first page force-schedules and must never
+    /// abort an in-flight collection page, or vice versa — an aborted task
+    /// fires no event, so its rows would stay id-only with the cursor advanced).
+    enrich_find: Option<tokio::task::JoinHandle<()>>,
+    enrich_collection: Option<tokio::task::JoinHandle<()>>,
+    home_enrich_tx: mpsc::UnboundedSender<EnrichEvent>,
     mirror_probe: Option<tokio::task::JoinHandle<()>>,
     mirror_probe_cancel: Option<tokio::sync::watch::Sender<bool>>,
     mirror_probe_tx: mpsc::UnboundedSender<MirrorProbeEvent>,

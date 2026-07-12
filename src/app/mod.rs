@@ -28,7 +28,7 @@ pub use config::{AuthLoginState, ConfigField, ConfigTab};
 pub use custom_mirrors::CustomMirrorList;
 pub use download_history::{DownloadHistory, HistoryRecord, HistoryStage};
 pub use downloads_tab::{DownloadsRow, DownloadsTab};
-pub use find_source::{BrowseRow, FindPlan, FindSource, FindStatusMsg, SetBrowse};
+pub use find_source::{BrowseRow, EnrichTarget, FindPlan, FindSource, FindStatusMsg, SetBrowse};
 pub use home::{FindBackend, GetMapsSource, HomeField, HomeTab, InputField, ResolveState};
 pub use library::LibraryState;
 pub use login::{LoginField, LoginPhase, LoginTab};

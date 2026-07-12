@@ -4,7 +4,6 @@ use osu_downloader::filter::{
     FilterDirection, FilterMode, FilterRange, FilterSort, FilterSpecial, FilterStatus,
 };
 use osu_downloader::search::{QueryRange, SearchMode, SearchStatus, SortField, SortOrder};
-use std::collections::HashMap;
 
 fn row(id: u32) -> BrowseRow {
     BrowseRow { id, meta: None }
@@ -633,32 +632,49 @@ fn seven_star_preset_seeds_stars_min() {
     );
 }
 
-// ── nzbasic details pager ─────────────────────────────────────────────────────
+// ── enrichment pager (per-browse) ─────────────────────────────────────────────
 
 #[test]
-fn details_pager_walks_pages_then_dries_up() {
-    let mut source = FindSource::new();
-    source.set_results((0..600).collect(), HashMap::new());
-    let first = source.next_details_page().expect("page 1");
-    assert_eq!(first.len(), 250);
+fn enrichment_pager_walks_pages_then_dries_up() {
+    let mut browse = SetBrowse::new();
+    browse.seed_enrichment((0..600).collect());
+    let first = browse.next_enrich_page().expect("page 1");
+    assert_eq!(first.len(), ENRICH_PAGE);
     assert_eq!(first[0], 0);
-    let second = source.next_details_page().expect("page 2");
-    assert_eq!(second[0], 250);
-    let third = source.next_details_page().expect("page 3");
-    assert_eq!(third.len(), 100);
-    assert!(!source.has_more_details());
-    assert!(source.next_details_page().is_none());
+    let second = browse.next_enrich_page().expect("page 2");
+    assert_eq!(second[0], ENRICH_PAGE as u32);
+    let third = browse.next_enrich_page().expect("page 3");
+    assert_eq!(third.len(), 600 - 2 * ENRICH_PAGE);
+    assert!(!browse.has_more_enrichment());
+    assert!(browse.next_enrich_page().is_none());
 }
 
 #[test]
-fn details_pager_rewinds_after_a_failed_page() {
-    let mut source = FindSource::new();
-    source.set_results((0..300).collect(), HashMap::new());
-    let before = source.details_cursor();
-    let _ = source.next_details_page().expect("page 1");
-    source.rewind_details(before);
-    let retry = source.next_details_page().expect("retry page 1");
+fn enrichment_pager_rewinds_after_a_failed_page() {
+    let mut browse = SetBrowse::new();
+    browse.seed_enrichment((0..300).collect());
+    let before = browse.enrich_cursor();
+    let _ = browse.next_enrich_page().expect("page 1");
+    browse.rewind_enrichment(before);
+    let retry = browse.next_enrich_page().expect("retry page 1");
     assert_eq!(retry[0], 0);
+}
+
+#[test]
+fn seed_and_set_rows_bump_the_enrichment_generation() {
+    let mut browse = SetBrowse::new();
+    let g0 = browse.enrich_generation();
+    browse.seed_enrichment(vec![1, 2, 3]);
+    assert_ne!(
+        browse.enrich_generation(),
+        g0,
+        "reseed must bump generation"
+    );
+    let g1 = browse.enrich_generation();
+    // New rows are a new identity: `set_rows` clears the pager + bumps again.
+    browse.set_rows(rows(&[10]));
+    assert_ne!(browse.enrich_generation(), g1);
+    assert!(!browse.has_more_enrichment());
 }
 
 #[test]

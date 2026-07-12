@@ -1,6 +1,9 @@
 use super::{SearchQuery, SearchResults};
 use crate::utils::{AppError, Result};
-use osu_downloader::{Error, search::SearchClient};
+use osu_downloader::{
+    Error,
+    search::{BeatmapRow, MAX_BATCH_IDS, SearchClient},
+};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
@@ -88,6 +91,25 @@ impl HttpSearchService {
             expires_at: unix_now() + resp.expires_in,
         });
         Ok(access_token)
+    }
+
+    /// Batch-fetch beatmap rows by diff id, resolving the bearer through the same
+    /// per-call path as [`search`](Self::search) (stored user token, else cached
+    /// guest). `ids` is chunked into <=[`MAX_BATCH_IDS`] requests; the server
+    /// silently omits deleted / restricted ids, so the result may be shorter than
+    /// `ids` and in any order — callers key rows by `beatmapset_id`, never position.
+    pub async fn beatmaps(&self, ids: &[u32]) -> Result<Vec<BeatmapRow>> {
+        let token = self.resolve_token().await?;
+        let mut rows = Vec::with_capacity(ids.len());
+        for chunk in ids.chunks(MAX_BATCH_IDS) {
+            rows.extend(
+                self.client
+                    .beatmaps(&token, chunk)
+                    .await
+                    .map_err(map_search_error)?,
+            );
+        }
+        Ok(rows)
     }
 }
 

@@ -1413,33 +1413,35 @@ fn filter_chips_cycle_on_space_and_presets_seed_fields() {
 }
 
 #[test]
-fn m_in_filter_browse_loads_more_details() {
-    use osu_collect::app::{BrowseRow, FindBackend, GetMapsSource};
-    use std::collections::HashMap;
+fn m_in_filter_browse_loads_more_enrichment() {
+    use osu_collect::app::{BrowseRow, EnrichTarget, FindBackend, GetMapsSource};
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
     app.home.find_backend = FindBackend::Nzbasic;
     // `m` routes by the backend that produced the results, so mark it nzbasic.
     app.home.find.note_results_backend(FindBackend::Nzbasic);
-    // 300 diff ids = two details pages; the first auto-fetch already pulled one.
-    app.home
-        .find
-        .set_results((0..300).collect(), HashMap::new());
-    let _ = app.home.find.next_details_page();
     app.home
         .find
         .browse
         .set_rows(vec![BrowseRow { id: 10, meta: None }]);
+    // 300 diff ids = two enrichment pages; the first auto-fetch pulled one.
+    app.home.find.browse.seed_enrichment((0..300).collect());
+    let _ = app.home.find.browse.next_enrich_page();
     app.home.find.browse.descend();
 
     let cmd = app.handle_key(press(KeyCode::Char('m')));
     assert!(
-        matches!(cmd, Some(AppCommand::LoadFilterDetails)),
-        "`m` in the filter browse loads the next details page, got {cmd:?}"
+        matches!(
+            cmd,
+            Some(AppCommand::LoadEnrichment {
+                target: EnrichTarget::Find
+            })
+        ),
+        "`m` in the nzbasic browse loads the next enrichment page, got {cmd:?}"
     );
 
     // Drain the pager: `m` becomes a no-op once every page was requested.
-    let _ = app.home.find.next_details_page();
+    let _ = app.home.find.browse.next_enrich_page();
     let cmd = app.handle_key(press(KeyCode::Char('m')));
     assert!(cmd.is_none(), "a dry pager must not dispatch, got {cmd:?}");
 }

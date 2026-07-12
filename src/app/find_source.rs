@@ -12,9 +12,9 @@
 //! read-only resolved-backend indicator.
 //!
 //! Like the old pair, a fetch is CTA-triggered — nothing here fires on keystroke.
-//! The osu `next_cursor` pager and the nzbasic `beatmapDetails` pager both live
-//! on this struct; phase 3 replaces the details pager with a shared osu-batch
-//! enrichment service.
+//! The osu `next_cursor` pager lives on this struct; id-only rows (nzbasic
+//! results) are backfilled by the shared osu-batch enrichment pager that every
+//! [`SetBrowse`] carries.
 
 use super::home::{FindBackend, InputField};
 use super::update_source::{LIST_PAGE, scroll_list};
@@ -27,15 +27,79 @@ use osu_downloader::search::{
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 
-/// Diff ids per `beatmapDetails` request. The first page fetches automatically
-/// when nzbasic results land; `m` in the browse loads the next (a free solo-dev
-/// instance — never sweep every page unprompted).
-pub const DETAILS_PAGE: usize = 250;
+/// Diff ids per enrichment page. The first page auto-fetches when id-only results
+/// land / the browse descends; `m` loads the next. The osu-batch service chunks
+/// each page into <=50-id calls internally (a page of 250 = 5 calls).
+pub const ENRICH_PAGE: usize = 250;
+
+/// Which id-only browse an enrichment page targets, so one shared osu-batch pager
+/// service can fold set-level metadata into the right [`SetBrowse`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnrichTarget {
+    /// The find source's results browse ([`FindSource::browse`]) — nzbasic-routed
+    /// runs land id-only here (osu-routed runs arrive with metadata already).
+    Find,
+    /// The collection browse&pick surface (`HomeTab::collection_browse`).
+    Collection,
+}
+
+/// Lazy osu-batch enrichment cursor for one browse: walks a list of diff ids in
+/// [`ENRICH_PAGE`]-sized pages, feeding [`BrowseRow::meta`] backfill. `generation`
+/// bumps on every reseed / clear so a page from a superseded run (a new find run,
+/// a fresh collection open) is dropped by the handler instead of folding into the
+/// new rows. Advancing on dispatch + rewinding a failed page keeps the "`m`
+/// retries a failed page" contract the old `beatmapDetails` pager had.
+#[derive(Debug, Clone, Default)]
+struct EnrichPager {
+    diff_ids: Vec<u32>,
+    cursor: usize,
+    generation: u64,
+}
+
+impl EnrichPager {
+    /// Adopt a fresh diff-id list (new results / a new collection open), homing
+    /// the cursor and invalidating any in-flight page.
+    fn seed(&mut self, diff_ids: Vec<u32>) {
+        self.diff_ids = diff_ids;
+        self.cursor = 0;
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    /// Drop the pager (the rows it enriched are gone), invalidating any in-flight
+    /// page.
+    fn clear(&mut self) {
+        self.diff_ids = Vec::new();
+        self.cursor = 0;
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    /// The next unfetched page, advancing the cursor past it. `None` once every
+    /// diff id has been requested. Holes (ids the server omits) don't stall the
+    /// cursor — it advances by the requested count regardless.
+    fn next_page(&mut self) -> Option<Vec<u32>> {
+        if self.cursor >= self.diff_ids.len() {
+            return None;
+        }
+        let end = (self.cursor + ENRICH_PAGE).min(self.diff_ids.len());
+        let page = self.diff_ids[self.cursor..end].to_vec();
+        self.cursor = end;
+        Some(page)
+    }
+
+    /// Rewind to `cursor` (a failed page retries on the next `m`).
+    fn rewind(&mut self, cursor: usize) {
+        self.cursor = cursor.min(self.diff_ids.len());
+    }
+
+    fn has_more(&self) -> bool {
+        self.cursor < self.diff_ids.len()
+    }
+}
 
 /// One row in a [`SetBrowse`]: a beatmapset id plus optional metadata for the
-/// preview. Find rows carry full [`BeatmapSetMeta`] (osu results directly,
-/// nzbasic results once `beatmapDetails` pages fold in); collection browse&pick
-/// rows are id-only (osu!collector exposes no per-set metadata).
+/// preview. osu-routed find rows carry full [`BeatmapSetMeta`] straight from the
+/// search response; id-only rows (nzbasic results + collection browse&pick) land
+/// with `meta: None` and get it backfilled by the enrichment pager.
 #[derive(Debug, Clone)]
 pub struct BrowseRow {
     pub id: u32,
@@ -62,6 +126,9 @@ pub struct SetBrowse {
     list_cursor: Option<usize>,
     pub list_offset: Cell<usize>,
     pub preview_offset: Cell<usize>,
+    /// osu-batch metadata backfill for this browse's id-only rows. Empty (inert)
+    /// for a browse whose rows already carry `meta` (osu search results).
+    enrich: EnrichPager,
 }
 
 impl SetBrowse {
@@ -72,12 +139,15 @@ impl SetBrowse {
     // ── row population ────────────────────────────────────────────────────────
 
     /// Replace the rows (a fresh find / a fresh collection pick), homing the
-    /// cursor and dropping selections for ids no longer present.
+    /// cursor and dropping selections for ids no longer present. Clears the
+    /// enrichment pager — new rows are a new identity, so any in-flight page is
+    /// stale (the caller reseeds it afterwards for an id-only result set).
     pub fn set_rows(&mut self, rows: Vec<BrowseRow>) {
         let present: HashSet<u32> = rows.iter().map(|r| r.id).collect();
         self.selected.retain(|id| present.contains(id));
         self.rows = rows;
         self.list_cursor = Some(0);
+        self.enrich.clear();
     }
 
     /// Append more rows (search `load more`), dropping ids already present so a
@@ -216,6 +286,55 @@ impl SetBrowse {
             return;
         }
         scroll_list(&mut self.list_cursor, self.rows.len(), delta);
+    }
+
+    // ── enrichment pager ──────────────────────────────────────────────────────
+
+    /// Seed the enrichment pager with the diff ids that back these rows (one diff
+    /// per set is enough — the batch response nests each row's set metadata). The
+    /// runtime auto-fetches the first page after this.
+    pub fn seed_enrichment(&mut self, diff_ids: Vec<u32>) {
+        self.enrich.seed(diff_ids);
+    }
+
+    /// The pager generation, bumped on every reseed / clear. The runtime tags each
+    /// scheduled page with it and drops a returned page whose generation no longer
+    /// matches (a superseding run reseeded meanwhile).
+    pub fn enrich_generation(&self) -> u64 {
+        self.enrich.generation
+    }
+
+    /// The pager offset (captured before a fetch so a failure can rewind to it).
+    pub fn enrich_cursor(&self) -> usize {
+        self.enrich.cursor
+    }
+
+    /// Pull the next unfetched enrichment page, advancing the cursor.
+    pub fn next_enrich_page(&mut self) -> Option<Vec<u32>> {
+        self.enrich.next_page()
+    }
+
+    /// Rewind the pager to `cursor` (a failed page retries on the next `m`).
+    pub fn rewind_enrichment(&mut self, cursor: usize) {
+        self.enrich.rewind(cursor);
+    }
+
+    /// Whether `m` still has enrichment pages to load.
+    pub fn has_more_enrichment(&self) -> bool {
+        self.enrich.has_more()
+    }
+
+    /// Fold set-level metadata into the id-only rows. `meta_by_set` is keyed by
+    /// beatmapset id (the caller dedupes per set, first diff wins); only rows
+    /// still missing `meta` are filled, so a re-fetch never clobbers a preview.
+    pub fn fold_meta(&mut self, mut meta_by_set: HashMap<u32, BeatmapSetMeta>) {
+        for row in &mut self.rows {
+            if row.meta.is_none()
+                && let Some(meta) = meta_by_set.remove(&row.id)
+            {
+                row.meta = Some(meta);
+            }
+        }
     }
 }
 
@@ -448,12 +567,8 @@ pub struct FindSource {
     /// One-shot login-nudge gate: the guest-search nudge toast fires at most once
     /// per logged-out session.
     pub login_nudged: bool,
-    /// Every matching nzbasic diff id, in server order — the `beatmapDetails`
-    /// pager walks this via [`details_cursor`](Self::details_cursor).
-    pub diff_ids: Vec<u32>,
-    /// Offset into [`diff_ids`](Self::diff_ids) of the next unfetched details page.
-    details_cursor: usize,
-    /// Bytes per set id, from the nzbasic fetch response's `SizeMap`.
+    /// Bytes per set id, from the nzbasic fetch response's `SizeMap` (phase 5
+    /// surfaces this on the download button; write-only until then).
     pub size_map: HashMap<u32, u64>,
     /// Snapshot of the canonical inputs that produced the loaded rows, so the
     /// `view N maps` button can tell fresh results from stale ones.
@@ -491,8 +606,6 @@ impl FindSource {
             status_msg: FindStatusMsg::Idle,
             next_cursor: None,
             login_nudged: false,
-            diff_ids: Vec::new(),
-            details_cursor: 0,
             size_map: HashMap::new(),
             results_inputs: None,
             results_backend: None,
@@ -860,44 +973,6 @@ impl FindSource {
     /// fetch has recorded one.
     pub fn results_backend(&self) -> Option<FindBackend> {
         self.results_backend
-    }
-
-    // ── nzbasic details pager ───────────────────────────────────────────────
-
-    /// Adopt an nzbasic fetch response: remember the diff ids + sizes and rewind
-    /// the details pager. Row population happens caller-side (the runtime handler
-    /// owns the `BrowseRow` mapping).
-    pub fn set_results(&mut self, diff_ids: Vec<u32>, size_map: HashMap<u32, u64>) {
-        self.diff_ids = diff_ids;
-        self.size_map = size_map;
-        self.details_cursor = 0;
-    }
-
-    /// The next unfetched `beatmapDetails` page, advancing the pager. `None`
-    /// once every diff id has been requested.
-    pub fn next_details_page(&mut self) -> Option<Vec<u32>> {
-        if self.details_cursor >= self.diff_ids.len() {
-            return None;
-        }
-        let end = (self.details_cursor + DETAILS_PAGE).min(self.diff_ids.len());
-        let page = self.diff_ids[self.details_cursor..end].to_vec();
-        self.details_cursor = end;
-        Some(page)
-    }
-
-    /// Rewind the pager to `cursor` (a failed page retries on the next `m`).
-    pub fn rewind_details(&mut self, cursor: usize) {
-        self.details_cursor = cursor.min(self.diff_ids.len());
-    }
-
-    /// The pager offset (captured before a fetch so a failure can rewind).
-    pub fn details_cursor(&self) -> usize {
-        self.details_cursor
-    }
-
-    /// Whether `m` still has details pages to load.
-    pub fn has_more_details(&self) -> bool {
-        self.details_cursor < self.diff_ids.len()
     }
 }
 
