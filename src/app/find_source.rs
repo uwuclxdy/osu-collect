@@ -544,6 +544,17 @@ const _: () = assert!(SPECIAL_LABELS.len() == SPECIAL_VALUES.len());
 /// and editable, so there is no hidden query state. `none` is the plain reset.
 const PRESET_LABELS: &[&str] = &["none", "all ranked", "loved", "farm", "stream", "7★+"];
 
+/// Session-lived nekoha size-probe state for one osu-routed result set.
+#[derive(Debug, Clone, Copy)]
+enum SizeState {
+    /// A probe is in flight — dedupes a rapid re-trigger (another toggle).
+    Pending,
+    /// The mirror's download size in bytes.
+    Known(u64),
+    /// The mirror has no size record (or the probe failed); never re-probed.
+    Missing,
+}
+
 /// The Get Maps `Find` source: one union criteria form plus its results browse.
 /// Kept on `HomeTab` so its state survives source-strip / backend-chip switches
 /// (keep-both).
@@ -581,9 +592,14 @@ pub struct FindSource {
     /// One-shot login-nudge gate: the guest-search nudge toast fires at most once
     /// per logged-out session.
     pub login_nudged: bool,
-    /// Bytes per set id, from the nzbasic fetch response's `SizeMap` (phase 5
-    /// surfaces this on the download button; write-only until then).
-    pub size_map: HashMap<u32, u64>,
+    /// Per-set nekoha download-size cache for the OSU route, session-lived (a set
+    /// id's size is stable, so it outlives a re-search). `Pending` dedupes an
+    /// in-flight probe, `Known` feeds the download button's `· ~X` size suffix,
+    /// `Missing` records a set the mirror has no size for so it is probed at most
+    /// once. The nzbasic route sums its own fetch response straight into
+    /// [`FindStatusMsg::ReadyFilter`] (no per-set cache); the collection browse
+    /// never populates this.
+    size_cache: HashMap<u32, SizeState>,
     /// Snapshot of the canonical inputs that produced the loaded rows, so the
     /// `view N maps` button can tell fresh results from stale ones.
     results_inputs: Option<String>,
@@ -620,7 +636,7 @@ impl FindSource {
             status_msg: FindStatusMsg::Idle,
             next_cursor: None,
             login_nudged: false,
-            size_map: HashMap::new(),
+            size_cache: HashMap::new(),
             results_inputs: None,
             results_backend: None,
             browse: SetBrowse::new(),
@@ -999,6 +1015,51 @@ impl FindSource {
     /// fetch has recorded one.
     pub fn results_backend(&self) -> Option<FindBackend> {
         self.results_backend
+    }
+
+    // ── size backfill (osu route) ─────────────────────────────────────────────
+
+    /// Claim the checked results still needing a nekoha size probe, marking each
+    /// `Pending` so a rapid re-trigger (another toggle) never double-fetches. Only
+    /// checked sets are claimed, and an already-cached id (pending / known /
+    /// missing) is skipped — a set is probed at most once per session. The runtime
+    /// spawns the concurrency-capped probe for the returned ids; this is only
+    /// called on the osu route (the caller gates it), so nzbasic ids never land
+    /// here.
+    pub fn claim_size_probes(&mut self) -> Vec<u32> {
+        use std::collections::hash_map::Entry;
+        let mut claimed = Vec::new();
+        for id in self.browse.selected_ids() {
+            if let Entry::Vacant(slot) = self.size_cache.entry(id) {
+                slot.insert(SizeState::Pending);
+                claimed.push(id);
+            }
+        }
+        claimed
+    }
+
+    /// Fold a landed size probe into the cache: `Some` records the mirror's byte
+    /// count; `None` records the set as sizeless (no record, or a probe that
+    /// couldn't reach the mirror — sizes are progressive enhancement, so it just
+    /// stays absent) so it is not re-probed.
+    pub fn record_size(&mut self, id: u32, size: Option<u64>) {
+        self.size_cache
+            .insert(id, size.map_or(SizeState::Missing, SizeState::Known));
+    }
+
+    /// Sum of the known nekoha sizes among the currently-checked results, for the
+    /// download button's `· ~X` suffix. Pending / missing / un-probed sets add 0,
+    /// so this is a partial (hence approximate) total that grows as probes land;
+    /// zero while nothing is known, which drops the suffix entirely.
+    pub fn checked_known_bytes(&self) -> u64 {
+        self.browse
+            .selected_ids()
+            .iter()
+            .filter_map(|id| match self.size_cache.get(id) {
+                Some(SizeState::Known(bytes)) => Some(*bytes),
+                _ => None,
+            })
+            .sum()
     }
 }
 

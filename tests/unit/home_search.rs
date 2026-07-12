@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::{App, FindStatusMsg};
+use crate::app::{App, AppCommand, FindStatusMsg};
 use crate::config::Config;
 use crate::core::search::BeatmapSetMeta;
 
@@ -31,7 +31,7 @@ fn loading_sets_status() {
 #[test]
 fn fresh_results_populate_and_descend() {
     let mut app = app();
-    handle_home_search_event(
+    let follow_up = handle_home_search_event(
         HomeSearchEvent::Results {
             entries: vec![meta(1), meta(2)],
             total: 42,
@@ -40,6 +40,8 @@ fn fresh_results_populate_and_descend() {
         },
         &mut app,
     );
+    // Landed osu results hand back a size probe for whatever is checked.
+    assert!(matches!(follow_up, Some(AppCommand::ProbeFindSizes)));
     assert_eq!(
         app.home.find.status_msg,
         FindStatusMsg::ReadySearch { total: 42 }
@@ -86,7 +88,9 @@ fn append_page_dedups_and_keeps_browse_open() {
 #[test]
 fn empty_result_stays_on_form() {
     let mut app = app();
-    handle_home_search_event(HomeSearchEvent::Empty, &mut app);
+    // Nothing landed → no size probe follow-up.
+    let follow_up = handle_home_search_event(HomeSearchEvent::Empty, &mut app);
+    assert!(follow_up.is_none());
     assert_eq!(app.home.find.status_msg, FindStatusMsg::Empty);
     // No results → the form stays put, nothing to browse.
     assert!(!app.home.find.browse.is_browsing());

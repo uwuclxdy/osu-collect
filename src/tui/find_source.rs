@@ -161,8 +161,13 @@ pub fn push_form_rows(
         items.push(row);
     }
 
-    let (download_label, download_enabled) =
-        widgets::download_button_label(find.browse.selected_count());
+    // osu-routed results carry a nekoha size backfill, so the button reads
+    // `download (N) · ~X`; the nzbasic route (and un-probed sets) sums to 0, which
+    // drops the suffix and leaves the plain `download (N)`.
+    let (download_label, download_enabled) = widgets::download_button_label_with_size(
+        find.browse.selected_count(),
+        find.checked_known_bytes(),
+    );
     items.push_focusable(
         HomeField::Download,
         widgets::button_item(

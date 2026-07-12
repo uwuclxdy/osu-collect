@@ -108,3 +108,59 @@ fn update_modal_later_closes_and_keeps_availability() {
     assert!(app.update_modal.is_none());
     assert!(app.available_update.is_some());
 }
+
+// ── find_size_probe_cmd gate (phase 5 nekoha size backfill) ─────────────────
+//
+// `find_size_probe_cmd` is private; this test module is a descendant of
+// `state.rs` (linked via `#[path]`), so private methods are directly callable —
+// exercising the gate this way pins the three-way condition itself rather than
+// routing it through a specific keypress, so a regression that drops any leg of
+// `source == Find && results_backend == Osu` fails here regardless of which key
+// site forgot to check it.
+
+#[test]
+fn size_probe_cmd_fires_only_for_find_osu() {
+    use crate::app::{FindBackend, GetMapsSource};
+    let mut app = App::new(Config::default());
+    app.home.source = GetMapsSource::Find;
+    app.home.find.note_results_backend(FindBackend::Osu);
+    assert!(matches!(
+        app.find_size_probe_cmd(),
+        Some(AppCommand::ProbeFindSizes)
+    ));
+}
+
+#[test]
+fn size_probe_cmd_is_none_for_find_nzbasic() {
+    use crate::app::{FindBackend, GetMapsSource};
+    let mut app = App::new(Config::default());
+    app.home.source = GetMapsSource::Find;
+    app.home.find.note_results_backend(FindBackend::Nzbasic);
+    assert!(app.find_size_probe_cmd().is_none());
+}
+
+#[test]
+fn size_probe_cmd_is_none_for_collection_source() {
+    use crate::app::GetMapsSource;
+    let mut app = App::new(Config::default());
+    app.home.source = GetMapsSource::Collection;
+    assert!(app.find_size_probe_cmd().is_none());
+}
+
+#[test]
+fn size_probe_cmd_is_none_for_update_source() {
+    use crate::app::GetMapsSource;
+    let mut app = App::new(Config::default());
+    app.home.source = GetMapsSource::Update;
+    assert!(app.find_size_probe_cmd().is_none());
+}
+
+#[test]
+fn size_probe_cmd_is_none_for_find_with_no_recorded_backend() {
+    // A fresh find source with no fetch yet — `results_backend()` is `None`,
+    // which must not be mistaken for the osu route.
+    use crate::app::GetMapsSource;
+    let mut app = App::new(Config::default());
+    app.home.source = GetMapsSource::Find;
+    assert!(app.find_size_probe_cmd().is_none());
+}

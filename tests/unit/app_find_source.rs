@@ -862,3 +862,69 @@ fn parse_limit_defaults_and_bounds() {
     assert!(parse_limit("20000").is_err());
     assert!(parse_limit("many").is_err());
 }
+
+// ── nekoha size backfill (osu route) ────────────────────────────────────────
+
+/// A find source with `ids` loaded as osu results and exactly `checked` picked.
+/// The browse exposes no select-by-id, so each pick is a cursor walk + toggle.
+fn find_with_results(ids: &[u32], checked: &[u32]) -> FindSource {
+    let mut find = FindSource::new();
+    find.browse.set_rows(rows(ids));
+    find.note_results_backend(FindBackend::Osu);
+    for id in checked {
+        let index = ids
+            .iter()
+            .position(|x| x == id)
+            .expect("checked id present");
+        find.browse.scroll_to_edge(true);
+        for _ in 0..index {
+            find.browse.scroll_down();
+        }
+        find.browse.toggle_selected();
+    }
+    find
+}
+
+#[test]
+fn claim_size_probes_returns_checked_unprobed_then_dedupes() {
+    let mut find = find_with_results(&[1, 2, 3], &[1, 2]);
+    let mut first = find.claim_size_probes();
+    first.sort_unstable();
+    // Only the checked, un-probed ids are claimed (id 3 is unchecked).
+    assert_eq!(first, vec![1, 2]);
+    // Claiming marks them `Pending`, so an immediate re-claim (rapid toggling)
+    // fetches nothing — the in-flight dedupe.
+    assert!(find.claim_size_probes().is_empty());
+}
+
+#[test]
+fn known_sizes_sum_for_checked_missing_excluded_and_no_reprobe() {
+    let mut find = find_with_results(&[1, 2, 3], &[1, 2, 3]);
+    assert_eq!(find.claim_size_probes().len(), 3);
+    find.record_size(1, Some(20 * 1024 * 1024));
+    find.record_size(2, Some(30 * 1024 * 1024));
+    find.record_size(3, None); // mirror has no size record
+    // Only the known sizes sum; the missing set contributes nothing.
+    assert_eq!(find.checked_known_bytes(), 50 * 1024 * 1024);
+    // Every id now has a definitive state → probed at most once, nothing re-claimed.
+    assert!(find.claim_size_probes().is_empty());
+}
+
+#[test]
+fn unchecked_sets_are_never_claimed_or_summed() {
+    let mut find = find_with_results(&[1, 2], &[1]);
+    assert_eq!(find.claim_size_probes(), vec![1]);
+    find.record_size(1, Some(15 * 1024 * 1024));
+    // A size recorded for an unchecked set never reaches the checked sum.
+    find.record_size(2, Some(999 * 1024 * 1024));
+    assert_eq!(find.checked_known_bytes(), 15 * 1024 * 1024);
+}
+
+#[test]
+fn partial_coverage_sums_only_what_landed() {
+    let mut find = find_with_results(&[1, 2], &[1, 2]);
+    find.claim_size_probes();
+    find.record_size(1, Some(10 * 1024 * 1024));
+    // id 2 is still `Pending` → adds 0; the `~` on the label owns the partiality.
+    assert_eq!(find.checked_known_bytes(), 10 * 1024 * 1024);
+}

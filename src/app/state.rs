@@ -233,6 +233,10 @@ pub enum AppCommand {
     },
     /// Probe latency for all built-in mirrors.
     ProbeMirrors,
+    /// Backfill nekoha download sizes for the checked osu-routed find results
+    /// (the download button's `· ~X` suffix). The dispatch claims which checked
+    /// ids still need a probe, so emitting it on any selection change is cheap.
+    ProbeFindSizes,
     /// Switch to the home tab and focus the output directory field.
     /// Triggered by the disk-low / disk-full banner action.
     FocusOutputDir,
@@ -1219,6 +1223,16 @@ impl App {
         self.active_tab() == Tab::Home && self.active_set_browse().is_some_and(|b| b.is_browsing())
     }
 
+    /// A size-probe command when the active browse is the OSU-routed find results
+    /// — nzbasic keeps its `SizeMap` and the collection browse never gets sizes,
+    /// so both return `None`. Emitted after a selection change (toggle / select
+    /// all); the dispatch decides which checked ids actually need a probe.
+    fn find_size_probe_cmd(&self) -> Option<AppCommand> {
+        (self.home.source == GetMapsSource::Find
+            && self.home.find.results_backend() == Some(FindBackend::Osu))
+        .then_some(AppCommand::ProbeFindSizes)
+    }
+
     /// Cycle the focused find-form chip (`space`/`enter`). One union form: preset
     /// / special are nzbasic-flavored, mode / status / sort edit the shared value
     /// that either resolved backend reads.
@@ -1302,6 +1316,8 @@ impl App {
                     && !browse.preview_focused()
                 {
                     browse.set_all_selected(ch == 'a');
+                    // Selection changed → backfill sizes for the newly-checked osu sets.
+                    return self.find_size_probe_cmd();
                 }
             }
             // Route `m` by the backend that produced the loaded results, not the
@@ -2148,7 +2164,8 @@ impl App {
                             if let Some(browse) = self.active_set_browse_mut() {
                                 browse.toggle_selected();
                             }
-                            return None;
+                            // Selection changed → size probe (osu find route only).
+                            return self.find_size_probe_cmd();
                         }
                         match self.home.focus {
                             // The source picker is a cycle row: `enter` steps it
@@ -2262,8 +2279,12 @@ impl App {
                         let inert = self
                             .active_set_browse()
                             .is_some_and(|b| b.preview_focused());
-                        if !inert && let Some(browse) = self.active_set_browse_mut() {
-                            browse.toggle_selected();
+                        if !inert {
+                            if let Some(browse) = self.active_set_browse_mut() {
+                                browse.toggle_selected();
+                            }
+                            // Selection changed → size probe (osu find route only).
+                            return self.find_size_probe_cmd();
                         }
                     } else if self.home.focus == HomeField::Source {
                         self.home.cycle_source(true);

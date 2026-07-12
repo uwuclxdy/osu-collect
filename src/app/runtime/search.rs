@@ -4,7 +4,7 @@
 //! unlike the collection resolve there is no debounce — a new run cancels any
 //! in-flight one immediately.
 
-use crate::app::{App, BrowseRow, FindBackend, FindStatusMsg};
+use crate::app::{App, AppCommand, BrowseRow, FindBackend, FindStatusMsg};
 use crate::core::search::{SearchQuery, SearchService, shared_service};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::{sync::mpsc, sync::watch, task::JoinHandle};
@@ -101,11 +101,14 @@ async fn run_search_task(
 }
 
 /// Fold a search result into the app: update the status line, (re)populate the
-/// results browse, and descend into it on a fresh non-empty search.
-pub fn handle_home_search_event(event: HomeSearchEvent, app: &mut App) {
+/// results browse, and descend into it on a fresh non-empty search. Returns a
+/// follow-up command (a size probe of the checked osu results) for the runtime
+/// loop to dispatch, mirroring the filter handler.
+pub fn handle_home_search_event(event: HomeSearchEvent, app: &mut App) -> Option<AppCommand> {
     match event {
         HomeSearchEvent::Loading => {
             app.home.find.status_msg = FindStatusMsg::Loading;
+            None
         }
         HomeSearchEvent::Results {
             entries,
@@ -141,6 +144,9 @@ pub fn handle_home_search_event(event: HomeSearchEvent, app: &mut App) {
             // A search came back, so the token resolved. If that was a guest
             // token (logged out), nudge once toward login for the extra filters.
             app.nudge_guest_search_if_logged_out();
+            // Backfill sizes for whatever is checked (carried-over selections on a
+            // fresh page, the full page on `load more`); these rows are always osu.
+            Some(AppCommand::ProbeFindSizes)
         }
         HomeSearchEvent::Empty => {
             let find = &mut app.home.find;
@@ -148,10 +154,12 @@ pub fn handle_home_search_event(event: HomeSearchEvent, app: &mut App) {
             find.next_cursor = None;
             find.browse.set_rows(Vec::new());
             find.clear_results_snapshot();
+            None
         }
         HomeSearchEvent::Failed { reason } => {
             app.home.find.status_msg = FindStatusMsg::Error(reason);
             app.home.find.clear_results_snapshot();
+            None
         }
     }
 }

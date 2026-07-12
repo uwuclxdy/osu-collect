@@ -995,3 +995,27 @@ fn config_tab_shows_mirrors_section_before_download() {
     let d = dl_pos.expect("download section header must render at 120x60");
     assert!(m < d, "mirrors section should render before download");
 }
+
+#[test]
+fn find_download_button_shows_approx_size_for_checked_osu_results() {
+    use osu_collect::app::{BrowseRow, FindBackend, GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    app.home.find.browse.set_rows(vec![
+        BrowseRow { id: 1, meta: None },
+        BrowseRow { id: 2, meta: None },
+    ]);
+    // osu-routed results, both checked, with two landed nekoha probes.
+    app.home.find.note_results_backend(FindBackend::Osu);
+    app.home.find.browse.set_all_selected(true);
+    app.home.find.record_size(1, Some(20 * 1024 * 1024));
+    app.home.find.record_size(2, Some(30 * 1024 * 1024));
+    // Focus the button so it scrolls into view in the long merged find form.
+    app.home.focus = HomeField::Download;
+    let content = render_content(&app, 80, 30);
+    // The button reads `download (2) · ~50.0 MiB` (summed known sizes; `~` = approx).
+    assert!(
+        content.contains("download (2) · ~50.0 MiB"),
+        "osu find button shows the summed approx size: {content}"
+    );
+}

@@ -1,6 +1,7 @@
 use crate::{
     app::{ActiveDownloadLine, InputField},
     download::DownloadStage,
+    utils::format_bytes,
 };
 use ratatui::{
     Frame,
@@ -746,6 +747,25 @@ pub fn download_button_label(selected: usize) -> (String, bool) {
         (format!("download ({selected})"), true)
     } else {
         ("download".to_string(), false)
+    }
+}
+
+/// [`download_button_label`] with a `· ~<size>` suffix when `known_bytes > 0` —
+/// the summed nekoha sizes of the checked osu-routed find results. The `~` marks
+/// it approximate: coverage is partial until every checked set's probe lands, so
+/// the figure only grows. Reuses [`format_bytes`] (IEC units, `MiB` below a
+/// `GiB`) to match the nzbasic size line on the same form. A zero sum (nothing
+/// probed yet, or a route with no size cache) falls back to the plain label, so
+/// the update and collection sources — which pass no size — keep the bare label.
+pub fn download_button_label_with_size(selected: usize, known_bytes: u64) -> (String, bool) {
+    let (label, enabled) = download_button_label(selected);
+    if known_bytes > 0 {
+        (
+            format!("{label} · ~{}", format_bytes(known_bytes, "B")),
+            enabled,
+        )
+    } else {
+        (label, enabled)
     }
 }
 

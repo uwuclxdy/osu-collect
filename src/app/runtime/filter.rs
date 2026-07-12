@@ -7,7 +7,6 @@
 use crate::app::{App, AppCommand, BrowseRow, EnrichTarget, FindBackend, FindStatusMsg};
 use osu_downloader::Error;
 use osu_downloader::filter::{FilterClient, FilterQuery, FilterResults};
-use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::{sync::mpsc, sync::watch, task::JoinHandle};
@@ -100,7 +99,6 @@ pub fn handle_home_filter_event(event: HomeFilterEvent, app: &mut App) -> Option
                 .map(|&id| BrowseRow { id, meta: None })
                 .collect();
             let find = &mut app.home.find;
-            find.size_map = results.size_map;
             find.status_msg = FindStatusMsg::ReadyFilter { sets, total_bytes };
             // `set_rows` clears the pager; seed it with the matching diff ids so
             // the id-only rows backfill from the osu-batch endpoint.
@@ -119,7 +117,6 @@ pub fn handle_home_filter_event(event: HomeFilterEvent, app: &mut App) -> Option
         HomeFilterEvent::Empty => {
             let find = &mut app.home.find;
             find.status_msg = FindStatusMsg::Empty;
-            find.size_map = HashMap::new();
             // Clears the rows and the enrichment pager in one call.
             find.browse.set_rows(Vec::new());
             find.clear_results_snapshot();

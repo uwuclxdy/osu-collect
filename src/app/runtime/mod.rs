@@ -5,6 +5,7 @@ mod mirror_probe;
 mod resolve;
 mod scan;
 mod search;
+mod size;
 mod update;
 
 pub use mirror_probe::{MirrorProbeEvent, ProbeResult, probe_url};
@@ -18,6 +19,7 @@ pub use enrich::{EnrichEvent, handle_enrich_event};
 pub use filter::{HomeFilterEvent, handle_home_filter_event};
 pub use resolve::{HomeResolveEvent, handle_home_resolve_event};
 pub use search::{HomeSearchEvent, handle_home_search_event};
+pub use size::{HomeSizeEvent, handle_home_size_event};
 
 use super::{App, AppCommand, EnrichTarget, Tab};
 use crate::{
@@ -41,6 +43,7 @@ use mirror_probe::{handle_mirror_probe_event, schedule_probe};
 use resolve::schedule_resolve;
 use scan::{handle_updates_event, spawn_failed_map_recheck_task, spawn_scan_task};
 use search::schedule_search;
+use size::schedule_size_probe;
 use update::{UpdateEvent, handle_update_event, spawn_apply_update, spawn_update_check};
 
 /// Render one frame. A focused text field positions the terminal caret via
@@ -87,6 +90,7 @@ pub async fn run(
     let (home_search_tx, mut home_search_rx) = mpsc::unbounded_channel::<HomeSearchEvent>();
     let (home_filter_tx, mut home_filter_rx) = mpsc::unbounded_channel::<HomeFilterEvent>();
     let (home_enrich_tx, mut home_enrich_rx) = mpsc::unbounded_channel::<EnrichEvent>();
+    let (home_size_tx, mut home_size_rx) = mpsc::unbounded_channel::<HomeSizeEvent>();
     let (mirror_probe_tx, mut mirror_probe_rx) = mpsc::unbounded_channel::<MirrorProbeEvent>();
     let (update_tx, mut update_rx) = mpsc::unbounded_channel::<UpdateEvent>();
     let input_handle = spawn_input_thread(input_tx.clone());
@@ -107,6 +111,7 @@ pub async fn run(
         enrich_find: None,
         enrich_collection: None,
         home_enrich_tx,
+        home_size_tx,
         mirror_probe: None,
         mirror_probe_cancel: None,
         mirror_probe_tx: mirror_probe_tx.clone(),
@@ -189,7 +194,19 @@ pub async fn run(
             }
             Some(event) = home_search_rx.recv() => {
                 trace!(?event, "Received home search event");
-                handle_home_search_event(event, &mut app);
+                // The handler may hand back a follow-up (a size probe of the
+                // checked osu results); run it through the same dispatch.
+                let follow_up = handle_home_search_event(event, &mut app);
+                should_quit = dispatch_command(
+                    follow_up,
+                    &mut app,
+                    &download_tx,
+                    &updates_tx,
+                    &auth_tx,
+                    &update_tx,
+                    &mut active_downloads,
+                    &mut tasks,
+                );
             }
             Some(event) = home_filter_rx.recv() => {
                 trace!(?event, "Received home filter event");
@@ -210,6 +227,10 @@ pub async fn run(
             Some(event) = home_enrich_rx.recv() => {
                 trace!(?event, "Received home enrich event");
                 handle_enrich_event(event, &mut app);
+            }
+            Some(event) = home_size_rx.recv() => {
+                trace!(?event, "Received home size event");
+                handle_home_size_event(event, &mut app.home.find);
             }
             Some(event) = mirror_probe_rx.recv() => {
                 trace!(?event, "Received mirror probe event");
@@ -503,6 +524,12 @@ fn dispatch_command(
                 &tasks.mirror_probe_tx,
             );
         }
+        Some(AppCommand::ProbeFindSizes) => {
+            // Claim marks the newly-checked, un-probed osu ids `Pending`, so a
+            // burst of toggles never double-fetches; the spawn no-ops on empty.
+            let ids = app.home.find.claim_size_probes();
+            schedule_size_probe(ids, &tasks.home_size_tx);
+        }
         Some(AppCommand::ScanLocalDatabase) => {
             spawn_scan_task(app, updates_tx.clone());
         }
@@ -621,6 +648,9 @@ struct BackgroundTasks {
     enrich_find: Option<tokio::task::JoinHandle<()>>,
     enrich_collection: Option<tokio::task::JoinHandle<()>>,
     home_enrich_tx: mpsc::UnboundedSender<EnrichEvent>,
+    /// Nekoha size-probe channel. Fire-and-forget (no stored handle) — a probe
+    /// left running at quit just finds the receiver dropped and ends.
+    home_size_tx: mpsc::UnboundedSender<HomeSizeEvent>,
     mirror_probe: Option<tokio::task::JoinHandle<()>>,
     mirror_probe_cancel: Option<tokio::sync::watch::Sender<bool>>,
     mirror_probe_tx: mpsc::UnboundedSender<MirrorProbeEvent>,
