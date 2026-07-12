@@ -599,9 +599,9 @@ impl ConfigTab {
 
         let value = trimmed
             .parse::<u8>()
-            .map_err(|_| "Thread count must be a valid number between 1 and 100".to_string())?;
+            .map_err(|_| "thread count must be a number between 1 and 100".to_string())?;
         if value == 0 || value > 100 {
-            return Err("Thread count must be between 1 and 100".to_string());
+            return Err("thread count must be between 1 and 100".to_string());
         }
 
         Ok(Some(value))
@@ -614,7 +614,7 @@ impl ConfigTab {
         }
         trimmed
             .parse::<u32>()
-            .map_err(|_| "Rate-limit skip delay must be a valid number".to_string())
+            .map_err(|_| "rate-limit skip delay must be a number".to_string())
     }
 
     fn trimmed_logging_dir(&self) -> Option<String> {

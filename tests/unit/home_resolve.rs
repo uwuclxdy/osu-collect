@@ -178,9 +178,12 @@ fn resolve_single_map_uses_singular() {
     let Some((_, ref text)) = home.collection_resolve else {
         panic!("collection_resolve should be set");
     };
-    assert!(text.contains("1 map"), "expected '1 map', got: {text}");
     assert!(
-        !text.contains("1 maps"),
-        "should not contain '1 maps': {text}"
+        text.contains("1 mapset"),
+        "expected '1 mapset', got: {text}"
+    );
+    assert!(
+        !text.contains("1 mapsets"),
+        "should not contain '1 mapsets': {text}"
     );
 }

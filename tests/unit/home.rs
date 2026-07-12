@@ -138,7 +138,7 @@ fn build_request_rejects_thread_count_above_100() {
     let err = home
         .build_request(ArchiveValidation::Magic, true, 60)
         .expect_err("101 threads must be rejected");
-    assert_eq!(err, "Thread count must be between 1 and 100");
+    assert_eq!(err, "thread count must be between 1 and 100");
 }
 
 #[test]

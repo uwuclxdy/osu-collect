@@ -8,9 +8,9 @@ use ratatui::{
 };
 
 use super::theme::blend;
-use super::{bg, danger, format_free_space, text_dim, warning};
+use super::{accent, bg, danger, format_free_space, text_dim, warning, widgets};
 
-const ACTION_DISK: &str = "d change output dir";
+const ACTION_DISK: &str = "[d] change output dir";
 const TOO_SMALL_LABEL: &str = "terminal too small · enlarge for full layout";
 
 /// Render a single banner row into `area`.
@@ -37,7 +37,11 @@ pub fn render_banner(frame: &mut Frame, area: Rect, banner: &Banner) {
     // Disk banners carry an action hint; the size banner has none.
     if banner_has_action(banner) {
         spans.push(Span::styled(" · ", msg_style));
-        spans.push(Span::styled(ACTION_DISK, msg_style));
+        spans.extend(widgets::keyed_spans(
+            ACTION_DISK,
+            Style::default().fg(accent()).bold().bg(wash),
+            msg_style,
+        ));
     }
     frame.render_widget(
         Paragraph::new(Line::from(spans)).style(Style::default().bg(wash)),

@@ -11,7 +11,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-use super::{accent, bg_raised, spinner_str, text_dim, text_faint, warning};
+use super::{accent, bg_raised, spinner_str, text_dim, text_faint, warning, widgets};
 
 const HINT_SEPARATOR: &str = "  ·  ";
 /// Rendered gap between hint groups: 3 spaces, no glyph.
@@ -23,8 +23,8 @@ const ALERT_WARN: &str = " ! ";
 /// Right-edge indicator shown whenever the vim keymap is enabled.
 const VIM_CHIP: &str = " vim ";
 
-const QUIT_PROMPT_TEXT: &str = "press q again to quit";
-const QUIT_PROMPT_TEXT_DOWNLOADS: &str = "press q again to quit · active downloads will stop";
+const QUIT_PROMPT_TEXT: &str = "press [q] again to quit";
+const QUIT_PROMPT_TEXT_DOWNLOADS: &str = "press [q] again to quit · active downloads will stop";
 
 /// Downloads preview, run still in flight: `q` cancels it (esc/← only ascend).
 /// Must stay advertised — `q` is destructive here.
@@ -409,10 +409,13 @@ fn quit_prompt_paragraph(has_downloads: bool) -> Paragraph<'static> {
     } else {
         QUIT_PROMPT_TEXT
     };
-    Paragraph::new(Line::from(vec![
-        Span::styled(ALERT_WARN, Style::default().fg(warning())),
-        Span::styled(text, Style::default().fg(text_dim())),
-    ]))
+    let mut spans = vec![Span::styled(ALERT_WARN, Style::default().fg(warning()))];
+    spans.extend(widgets::keyed_spans(
+        text,
+        Style::default().fg(accent()).bold(),
+        Style::default().fg(text_dim()),
+    ));
+    Paragraph::new(Line::from(spans))
 }
 
 /// Footer loading line: a spinner + the in-progress status in `TEXT_DIM`.

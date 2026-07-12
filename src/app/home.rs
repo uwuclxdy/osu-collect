@@ -536,7 +536,7 @@ impl HomeTab {
             collection: InputField::new(
                 "Collection URL or ID",
                 last_collection,
-                "https://osucollector.com/collections/...",
+                "https://osucollector.com/collections/…",
             ),
             directory: InputField::new("Download directory", last_directory, placeholder_directory),
             custom_mirrors: CustomMirrorList::from_templates(&custom_templates),
@@ -1011,7 +1011,7 @@ impl HomeTab {
     ) -> Result<DownloadRequest, String> {
         let collection_input = self.collection.value.trim();
         if collection_input.is_empty() {
-            return Err("Collection ID or URL is required".to_string());
+            return Err("enter a collection url or id".to_string());
         }
 
         // Expand `~` at submit time so the filesystem layer receives an absolute
@@ -1025,12 +1025,12 @@ impl HomeTab {
         };
 
         if threads_value == 0 || threads_value > 100 {
-            return Err("Thread count must be between 1 and 100".to_string());
+            return Err("thread count must be between 1 and 100".to_string());
         }
 
         let mirrors = self.build_mirror_list();
         if mirrors.is_empty() {
-            return Err("Select at least one mirror".to_string());
+            return Err("select at least one mirror".to_string());
         }
 
         let config = DownloadConfig {
@@ -1068,7 +1068,7 @@ impl HomeTab {
 }
 
 fn parse_thread_count(value: &str) -> Result<u8, String> {
-    u8::from_str(value.trim()).map_err(|_| "Thread count must be between 1 and 100".to_string())
+    u8::from_str(value.trim()).map_err(|_| "thread count must be between 1 and 100".to_string())
 }
 
 #[cfg(test)]

@@ -135,7 +135,7 @@ pub fn handle_home_filter_event(event: HomeFilterEvent, app: &mut App) -> Option
 /// dependency.
 fn map_filter_error(err: &Error) -> String {
     match err {
-        Error::RateLimited { .. } => "rate limited by nzbasic (429), try again later".to_string(),
+        Error::RateLimited { .. } => "rate-limited by nzbasic (429), try again later".to_string(),
         Error::HttpStatus(status) => format!("nzbasic filter failed: HTTP {status}"),
         Error::Timeout => "nzbasic request timed out".to_string(),
         Error::Network(msg) => format!("nzbasic unreachable: {msg}"),

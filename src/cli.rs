@@ -258,7 +258,7 @@ pub async fn run_update_collections(
 
     let total_ms = t_total.elapsed().as_millis();
     println!(
-        "update-collections complete: {} missing beatmapsets",
+        "update-collections complete: {} missing mapsets",
         missing.len()
     );
     println!("  phase db-read:       {db_ms}ms");
@@ -267,20 +267,20 @@ pub async fn run_update_collections(
 
     if previously_deleted_count > 0 {
         eprintln!(
-            "info: {previously_deleted_count} maps skipped (previously deleted — select them to re-include)"
+            "info: {previously_deleted_count} mapsets skipped (previously deleted, select them to re-include)"
         );
     }
     if added_count > 0 {
-        eprintln!("info: {added_count} maps added manually since last scan; they will remain");
+        eprintln!("info: {added_count} mapsets added manually since last scan; they will remain");
     }
     if hidden_failed_count > 0 {
         eprintln!(
-            "info: {hidden_failed_count} failed maps hidden; recheck from the TUI to include them"
+            "info: {hidden_failed_count} failed mapsets hidden; recheck from the TUI to include them"
         );
     }
 
     if !missing.is_empty() {
-        println!("missing beatmapsets:");
+        println!("missing mapsets:");
         for m in &missing {
             let tag = if m.previously_deleted {
                 " [skipped]"
@@ -288,7 +288,7 @@ pub async fn run_update_collections(
                 ""
             };
             println!(
-                "  beatmapset {} in collection {} ({}){tag}",
+                "  mapset {} in collection {} ({}){tag}",
                 m.id, m.collection_id, m.collection_name
             );
         }

@@ -480,7 +480,7 @@ pub fn password_input_item(
     ListItem::new(Line::from(spans))
 }
 
-/// A stepper row showing a numeric value with an optional "recommended: N" chip.
+/// A stepper row showing a numeric value with an optional "recommended N" chip.
 ///
 /// `recommended` is shown as a dim chip when the current value differs; omitted
 /// when `value == recommended` (the field is already at the suggested setting).
@@ -503,7 +503,7 @@ pub fn stepper_item(
 
     if value != recommended {
         let mut chip = String::with_capacity(16);
-        chip.push_str("  recommended: ");
+        chip.push_str("  recommended ");
         chip.push_str(&recommended.to_string());
         spans.push(Span::styled(chip, Style::default().fg(text_faint())));
     }
@@ -568,6 +568,43 @@ pub fn help_item(text: impl Into<String>) -> ListItem<'static> {
         Span::styled("  └ ", Style::default().fg(line())),
         Span::styled(text.into(), Style::default().fg(text_faint())),
     ]))
+}
+
+/// Splits copy carrying `[key]` markers into styled spans: each bracketed
+/// token renders in `key_style` (brackets stripped), everything else in
+/// `rest_style`. An unclosed `[` falls through as literal text.
+pub fn keyed_spans(text: &str, key_style: Style, rest_style: Style) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        let Some(close) = rest[open..].find(']') else {
+            break;
+        };
+        if open > 0 {
+            spans.push(Span::styled(rest[..open].to_string(), rest_style));
+        }
+        spans.push(Span::styled(
+            rest[open + 1..open + close].to_string(),
+            key_style,
+        ));
+        rest = &rest[open + close + 1..];
+    }
+    if !rest.is_empty() {
+        spans.push(Span::styled(rest.to_string(), rest_style));
+    }
+    spans
+}
+
+/// [`help_item`] for copy that names keys: `[key]` tokens render in the
+/// footer-hint key style (`ACCENT + bold`) inside the faint tooltip text.
+pub fn help_item_keyed(text: &str) -> ListItem<'static> {
+    let mut spans = vec![Span::styled("  └ ", Style::default().fg(line()))];
+    spans.extend(keyed_spans(
+        text,
+        Style::default().fg(accent()).bold(),
+        Style::default().fg(text_faint()),
+    ));
+    ListItem::new(Line::from(spans))
 }
 
 /// Builds a `[focus_span] [icon] [ label] [  detail] [suffix]` row.
@@ -786,11 +823,11 @@ pub fn download_button_label_with_size(selected: usize, known_bytes: u64) -> (St
     }
 }
 
-/// Label for a source's "open the results browse" button: `view N map(s)`. The
-/// count is what the browse will show, so each source passes its own
+/// Label for a source's "open the results browse" button: `view N mapset(s)`.
+/// The count is what the browse will show, so each source passes its own
 /// (loaded rows / new count / resolved set count). Singular at 1.
 pub fn view_maps_label(n: usize) -> String {
-    format!("view {n} {}", if n == 1 { "map" } else { "maps" })
+    format!("view {n} {}", if n == 1 { "mapset" } else { "mapsets" })
 }
 
 /// A `label value` metric line separated by [`SEPARATOR`].
@@ -929,7 +966,7 @@ pub fn active_download_item_msg(
         }
         None if matches!(dl.stage, crate::download::BeatmapStage::Downloading) => {
             spans.extend(indeterminate_bar_spans(BAR_WIDTH, bar_color));
-            spans.push(Span::styled("  ...", Style::default().fg(text_faint())));
+            spans.push(Span::styled("  …", Style::default().fg(text_faint())));
         }
         None => {
             spans.push(Span::styled(

@@ -349,7 +349,7 @@ fn emit_status_messages_match_format_output() {
         else {
             panic!("expected BeatmapStatus");
         };
-        assert_eq!(message, "rate limited on all mirrors, waiting");
+        assert_eq!(message, "rate-limited on all mirrors, waiting");
         assert!(rate_limited);
         assert!(
             cooldown_until.is_some(),

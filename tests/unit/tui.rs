@@ -174,7 +174,7 @@ fn config_render_shows_auto_defer_label() {
     let output = render_app(&app, 80, 20);
 
     assert!(
-        output.contains("auto-defer rate limited"),
+        output.contains("auto-defer rate-limited"),
         "auto-defer toggle label must render: {output}"
     );
     assert!(
@@ -215,8 +215,8 @@ fn config_render_shows_auth_chip() {
     let output = render_app(&app, 80, 24);
 
     assert!(
-        output.contains("signed out")
-            || output.contains("signed in")
+        output.contains("logged out")
+            || output.contains("logged in")
             || output.contains("login unavailable"),
         "auth chip must render auth state: {output}"
     );
@@ -535,8 +535,8 @@ fn auth_chip_renders_when_focused() {
 
     let output = render_app(&app, 120, 30);
     assert!(
-        output.contains("signed out")
-            || output.contains("signed in")
+        output.contains("logged out")
+            || output.contains("logged in")
             || output.contains("logging in")
             || output.contains("login unavailable"),
         "AuthChip must render a visible auth state label"
@@ -624,7 +624,7 @@ fn active_view_renders_bouncing_bar_when_total_is_unknown() {
     let output = render_app(&app, 100, 24);
 
     assert!(output.contains("████"), "bouncing segment must render");
-    assert!(output.contains("..."), "unknown progress label must render");
+    assert!(output.contains("…"), "unknown progress label must render");
     assert!(
         !output.contains("  --"),
         "unknown progress must not render --"
@@ -1688,8 +1688,8 @@ fn compact_config_renders_without_panic() {
     );
     // auth chip still visible
     assert!(
-        output.contains("signed out")
-            || output.contains("signed in")
+        output.contains("logged out")
+            || output.contains("logged in")
             || output.contains("login unavailable"),
         "auth chip must still appear in compact config: {output}"
     );

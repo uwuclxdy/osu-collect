@@ -110,20 +110,21 @@ const VIM: &[HelpRow] = &[
     HelpRow::new("h l", "prev / next tab"),
     HelpRow::new("j k", "move / scroll"),
     HelpRow::new("g g / G", "top / bottom"),
-    HelpRow::new("ctrl+d / u", "page down / up"),
+    HelpRow::new("⌃d / ⌃u", "page down / up"),
     HelpRow::new("i / a", "edit focused field"),
 ];
 
 const HOME_TAB: &[HelpRow] = &[
     HelpRow::new("↵", "edit field / activate row"),
-    HelpRow::new("← →", "switch source / browse panes"),
+    HelpRow::new("← →", "focus browse panes"),
+    HelpRow::new("1-3", "jump source"),
     HelpRow::new("s", "jump to download / cycle sort"),
     HelpRow::new("a / A", "select all / none (update)"),
     HelpRow::new("i / I", "mark installed (update preview)"),
     HelpRow::new("r", "recheck failed (update)"),
 ];
 
-const CONFIG_TAB: &[HelpRow] = &[HelpRow::new("↵ (auth chip)", "open login")];
+const CONFIG_TAB: &[HelpRow] = &[HelpRow::new("↵ (account row)", "open login")];
 
 const LOGIN_TAB: &[HelpRow] = &[
     HelpRow::new("↵", "edit field / submit"),
@@ -134,7 +135,7 @@ const DOWNLOADS_TAB: &[HelpRow] = &[
     HelpRow::new("↵", "open run / expand failed"),
     HelpRow::new("↑ ↓", "select run / scroll"),
     HelpRow::new("←", "back to the run list"),
-    HelpRow::new("r", "retry failed maps (preview)"),
+    HelpRow::new("r", "retry failed mapsets (preview)"),
     HelpRow::new("s / S", "defer / drop rate-limited"),
     HelpRow::new("q", "cancel run (preview)"),
     HelpRow::new("esc", "back to the run list"),
@@ -207,24 +208,26 @@ pub(crate) fn render_retry_on_start_modal(
     count: usize,
     focus: usize,
 ) {
+    let rest = if count == 1 {
+        " failed mapset from a previous run. Retry it?"
+    } else {
+        " failed mapsets from a previous run. Retry them?"
+    };
     let body = vec![Line::from(vec![
         Span::styled(count.to_string(), Style::default().fg(accent()).bold()),
-        Span::styled(
-            " failed maps from a previous run. retry them?",
-            Style::default().fg(text_dim()),
-        ),
+        Span::styled(rest, Style::default().fg(text_dim())),
     ])];
     render_button_modal(
         frame,
         area,
-        " RETRY FAILED? ",
+        " CONFIRM ",
         body,
         &RETRY_ON_START_BUTTONS,
         focus,
     );
 }
 
-/// Renders the "retry N failed maps?" confirmation modal.
+/// Renders the "Retry N failed mapsets?" confirmation modal.
 ///
 /// Buttons (`cancel`, `retry`); `enter` activates the focused one, `esc`/`q`
 /// cancel. The modal intercepts all other keys while open.
@@ -234,15 +237,20 @@ pub(crate) fn render_confirm_retry_modal(
     count: usize,
     focus: usize,
 ) {
+    let noun = if count == 1 {
+        " failed mapset?"
+    } else {
+        " failed mapsets?"
+    };
     let body = vec![Line::from(vec![
-        Span::styled("retry ", Style::default().fg(text_dim())),
+        Span::styled("Retry ", Style::default().fg(text_dim())),
         Span::styled(count.to_string(), Style::default().fg(accent()).bold()),
-        Span::styled(" failed maps?", Style::default().fg(text_dim())),
+        Span::styled(noun, Style::default().fg(text_dim())),
     ])];
     render_button_modal(
         frame,
         area,
-        " CONFIRM RETRY ",
+        " CONFIRM ",
         body,
         &CONFIRM_RETRY_BUTTONS,
         focus,

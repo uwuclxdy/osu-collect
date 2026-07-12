@@ -107,7 +107,7 @@ fn preview_rows(row: &BrowseRow) -> Vec<ListItem<'static>> {
                 Style::default().fg(text()),
             ))),
             ListItem::new(Line::from(Span::styled(
-                "no preview · osu!collector exposes no per-set metadata",
+                "no preview · osu!collector exposes no per-mapset metadata",
                 Style::default().fg(text_faint()),
             ))),
         ],

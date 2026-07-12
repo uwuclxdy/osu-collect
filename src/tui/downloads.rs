@@ -279,7 +279,8 @@ fn render_record_preview(frame: &mut Frame, area: Rect, record: &HistoryRecord) 
 }
 
 /// Coarse relative age for a unix-seconds timestamp: `just now`, `5m ago`,
-/// `3h ago`, `2d ago`.
+/// `3h ago`, `2d ago`, `3w ago`; an absolute ISO date (`2026-04-12`) past
+/// 30 days.
 fn age_label(finished_at: u64) -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -292,8 +293,22 @@ fn age_label(finished_at: u64) -> String {
         format!("{}m ago", ago / 60)
     } else if ago < 86_400 {
         format!("{}h ago", ago / 3600)
-    } else {
+    } else if ago < 7 * 86_400 {
         format!("{}d ago", ago / 86_400)
+    } else if ago < 30 * 86_400 {
+        format!("{}w ago", ago / (7 * 86_400))
+    } else {
+        time::OffsetDateTime::from_unix_timestamp(finished_at as i64).map_or_else(
+            |_| format!("{}w ago", ago / (7 * 86_400)),
+            |dt| {
+                format!(
+                    "{:04}-{:02}-{:02}",
+                    dt.year(),
+                    u8::from(dt.month()),
+                    dt.day()
+                )
+            },
+        )
     }
 }
 

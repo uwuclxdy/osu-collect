@@ -16,7 +16,10 @@ const SECTION_CREDENTIALS: &str = "credentials";
 const SECTION_VERIFICATION: &str = "verification";
 const SECTION_ACCOUNT: &str = "account";
 
-const NOTE_PASSWORD: &str = "logs in to osu.ppy.sh over https, access token is stored locally";
+const NOTE_PASSWORD: &[&str] = &[
+    "logs in to osu.ppy.sh over https",
+    "access token is stored locally",
+];
 const NOTE_VERIFICATION: &str = "osu! emailed a code to verify this device.";
 
 const CAUTION: &[&str] = &[
@@ -102,7 +105,9 @@ fn build_login_items(
                 ),
             );
             items.push(widgets::spacer());
-            push_wrapped(&mut items, NOTE_PASSWORD, text_dim(), text_width);
+            for line in NOTE_PASSWORD {
+                push_wrapped(&mut items, line, text_dim(), text_width);
+            }
         }
         LoginPhase::NeedsVerification => {
             items.push(widgets::section_header(
@@ -139,12 +144,13 @@ fn build_login_items(
             // Only after a fresh sign-in this session — not when the panel was
             // opened already-logged-in via the config "manage" chip.
             if login.just_logged_in {
-                push_wrapped(
-                    &mut items,
-                    "press esc or q to close login.",
-                    text_dim(),
-                    text_width,
-                );
+                let mut spans = vec![Span::raw("  ")];
+                spans.extend(widgets::keyed_spans(
+                    "[esc] or [q] to close",
+                    Style::default().fg(super::accent()).bold(),
+                    Style::default().fg(text_dim()),
+                ));
+                items.push(ListItem::new(Line::from(spans)));
             }
             items.push(widgets::spacer());
             items.push(widgets::section_header(SECTION_ACCOUNT, false));

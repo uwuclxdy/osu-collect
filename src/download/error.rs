@@ -5,22 +5,22 @@ use crate::utils::AppError;
 
 #[derive(Error, Debug)]
 pub enum DownloadError {
-    #[error("IO error: {0}")]
+    #[error("io error: {0}")]
     Io(#[from] io::Error),
 
-    #[error("No mirrors available")]
+    #[error("no mirrors available")]
     NoMirrors,
 
-    #[error("No beatmapsets selected")]
+    #[error("no mapsets selected")]
     NoBeatmapsets,
 
-    #[error("Collection is empty")]
+    #[error("collection is empty")]
     EmptyCollection,
 
-    #[error("Concurrent download in progress for: {0}")]
+    #[error("concurrent download in progress for: {0}")]
     ConcurrentDownload(String),
 
-    #[error("Internal error: {0}")]
+    #[error("internal error: {0}")]
     Internal(Box<str>),
 }
 

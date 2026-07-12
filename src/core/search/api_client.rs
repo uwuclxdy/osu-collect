@@ -132,9 +132,7 @@ fn unix_now() -> u64 {
 
 fn map_search_error(err: Error) -> AppError {
     match err {
-        Error::RateLimited { .. } => {
-            AppError::api("rate limited by osu! (429). please try again later.")
-        }
+        Error::RateLimited { .. } => AppError::api("rate-limited by osu! (429), try again later"),
         Error::HttpStatus(401) => AppError::api("search requires login (401)"),
         Error::HttpStatus(status) => {
             AppError::api_dynamic(format!("search failed: HTTP {status}").into_boxed_str())

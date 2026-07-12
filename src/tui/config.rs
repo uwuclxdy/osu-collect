@@ -32,15 +32,14 @@ const SECTION_UPDATE: &str = "updates";
 
 const LABEL_THEME: &str = "theme";
 const LABEL_VIM_KEYS: &str = "vim keys";
-const LABEL_JUMP_TO_DOWNLOADS: &str = "jump to downloads on launch";
-const HELP_VIM_KEYS: &str = "hjkl move · gg/G top/bottom · ctrl+d/u page · i/a edit";
-const HELP_JUMP_TO_DOWNLOADS: &str =
-    "on download launch switch to the downloads tab · off: stay put";
+const LABEL_JUMP_TO_DOWNLOADS: &str = "jump to downloads on start";
+const HELP_VIM_KEYS: &str = "[hjkl] move · [gg]/[G] top/bottom · [⌃d]/[⌃u] page · [i]/[a] edit";
+const HELP_JUMP_TO_DOWNLOADS: &str = "auto switch focus to the new download";
 
 const LABEL_VIDEO: &str = "video";
 const LABEL_VERIFY_INTEGRITY: &str = "verify .osz integrity";
-const LABEL_RETRY_FAILED: &str = "retry failed on download";
-const LABEL_AUTO_DEFER_RATE_LIMITED: &str = "auto-defer rate limited";
+const LABEL_RETRY_FAILED: &str = "retry failed mapsets";
+const LABEL_AUTO_DEFER_RATE_LIMITED: &str = "auto-defer rate-limited";
 const LABEL_SKIP_IMPORTED: &str = "skip already imported";
 const LABEL_LOGGING_ENABLED: &str = "enable logging";
 const LABEL_LOGGING_LEVEL: &str = "log level";
@@ -48,8 +47,8 @@ const LABEL_LOGGING_FORMAT: &str = "log format";
 const LABEL_AUTO_UPDATE: &str = "auto-update";
 const LABEL_PRERELEASES: &str = "prerelease channel";
 
-const CHIP_LOGGED_OUT: &str = " signed out";
-const CHIP_LOGGED_IN: &str = " signed in";
+const CHIP_LOGGED_OUT: &str = " logged out";
+const CHIP_LOGGED_IN: &str = " logged in";
 const CHIP_ACTION_LOGIN: &str = "log in";
 const CHIP_ACTION_MANAGE: &str = "manage";
 const CHIP_ACTION_VIEW: &str = "view";
@@ -67,10 +66,10 @@ const RETRY_FAILED_LABELS: &[&str] = &["ask", "yes", "no"];
 /// what the currently selected mode does.
 fn archive_validation_help(mode: ArchiveValidation) -> &'static str {
     match mode {
-        ArchiveValidation::Off => "checks only the file is not empty",
+        ArchiveValidation::Off => "only checks the file is not empty",
         ArchiveValidation::Magic => "verifies archive headers",
         ArchiveValidation::Eocd => {
-            "also verifies eocd footer; turn off if many maps fail validation"
+            "also verifies eocd footer; turn off if many mapsets fail validation"
         }
     }
 }
@@ -81,7 +80,7 @@ fn auto_update_help(auto: bool) -> &'static str {
     if auto {
         "download & install update on launch"
     } else {
-        "notify only; press u for changelog & update"
+        "notify only; press [u] for changelog & update"
     }
 }
 
@@ -100,8 +99,8 @@ fn prereleases_help(on: bool) -> &'static str {
 fn retry_failed_help(mode: RetryFailedOnDownload) -> &'static str {
     match mode {
         RetryFailedOnDownload::Ask => "prompts before each download",
-        RetryFailedOnDownload::Yes => "always retries failed maps",
-        RetryFailedOnDownload::No => "never retries failed maps",
+        RetryFailedOnDownload::Yes => "always retries failed mapsets",
+        RetryFailedOnDownload::No => "never retries failed mapsets",
     }
 }
 
@@ -155,7 +154,7 @@ fn latency_span(latency: Option<Option<ProbeResult>>) -> Option<Span<'static>> {
         Some(ProbeResult::Timeout) => {
             Some(Span::styled("  timeout", Style::default().fg(danger())))
         }
-        Some(ProbeResult::Error) => Some(Span::styled("  N/A", Style::default().fg(danger()))),
+        Some(ProbeResult::Error) => Some(Span::styled("  —", Style::default().fg(danger()))),
     }
 }
 
@@ -209,7 +208,7 @@ fn build_config_items(
         ),
     );
     if show_chrome && focus == ConfigField::VimKeys {
-        items.push(widgets::help_item(HELP_VIM_KEYS));
+        items.push(widgets::help_item_keyed(HELP_VIM_KEYS));
     }
     items.push_focusable(
         ConfigField::JumpToDownloads,
@@ -427,7 +426,7 @@ fn build_config_items(
         ),
     );
     if show_chrome && focus == ConfigField::AutoUpdate {
-        items.push(widgets::help_item(auto_update_help(form.auto_update)));
+        items.push(widgets::help_item_keyed(auto_update_help(form.auto_update)));
     }
     items.push_focusable(
         ConfigField::Prereleases,
@@ -472,8 +471,8 @@ fn focus_section(field: ConfigField) -> Option<&'static str> {
 /// tab. The action segment opens the login split (which owns the actual
 /// login / verify / logout flow); the state segment mirrors `login_state`.
 ///
-/// - Signed in:   ` signed in   manage`
-/// - Signed out:  ` signed out   log in`
+/// - Logged in:   ` logged in   manage`
+/// - Logged out:  ` logged out   log in`
 /// - In progress: ` logging in…   view`
 fn auth_chip_item(form: &ConfigTab) -> ListItem<'static> {
     let focused = form.focus == ConfigField::AuthChip;

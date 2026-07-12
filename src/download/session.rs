@@ -298,7 +298,7 @@ impl DownloadSession {
         if report.aborted {
             emit(DownloadEvent::Failed {
                 id,
-                message: "Download aborted by user".into(),
+                message: "download aborted by user".into(),
             });
             return Ok(None);
         }

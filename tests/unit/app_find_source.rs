@@ -390,7 +390,7 @@ fn conflicting_forcers_error_naming_both_fields() {
     set_special(&mut source, "farm");
     source.query.set_value("tekno");
     let err = source.build_plan(None).expect_err("conflict");
-    assert_eq!(err, "farm needs nzbasic, free text needs osu! api");
+    assert_eq!(err, "farm needs nzbasic · free text needs osu! api");
 
     // nzbasic-only sort + osu-only keys criterion.
     let mut source = FindSource::new();

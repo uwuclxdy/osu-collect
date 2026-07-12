@@ -127,7 +127,7 @@ pub fn translate_event(id: DownloadId, event: LibEvent, tally: &mut Tally, emit:
                     id,
                     beatmapset_id,
                     BeatmapStage::Skipped,
-                    "skipped: rate limited".to_string(),
+                    "skipped: rate-limited".to_string(),
                     emit,
                 );
                 emit_overall_progress(id, tally, emit);
@@ -177,7 +177,7 @@ fn classify_error(error: &LibError) -> (String, FailureReason) {
     match error {
         LibError::NotFound => ("not found".to_string(), FailureReason::NotFound),
         LibError::RateLimited { .. } => (
-            "rate limited, all mirrors exhausted".to_string(),
+            "rate-limited, all mirrors exhausted".to_string(),
             FailureReason::RateLimited,
         ),
         LibError::Network(msg) => (format!("network error: {msg}"), FailureReason::NetworkError),
@@ -194,7 +194,7 @@ fn classify_error(error: &LibError) -> (String, FailureReason) {
         // codes so the UI still picks the right category.
         LibError::HttpStatus(404) => ("not found".to_string(), FailureReason::NotFound),
         LibError::HttpStatus(429) => (
-            "rate limited (HTTP 429)".to_string(),
+            "rate-limited (HTTP 429)".to_string(),
             FailureReason::RateLimited,
         ),
         LibError::HttpStatus(code) if (500..600).contains(code) => {

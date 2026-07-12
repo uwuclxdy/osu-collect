@@ -89,7 +89,7 @@ pub(super) fn handle_updates_event(
             set_loading_message(
                 &mut app.home.update.message,
                 format!(
-                    "read {local_set_count} local sets from {scan_path} · fetching collections..."
+                    "read {local_set_count} local mapsets from {scan_path} · fetching collections…"
                 ),
             );
 
@@ -192,7 +192,7 @@ pub(super) fn handle_updates_event(
             if generation == app.home.update.scan.scan_generation {
                 set_loading_message(
                     &mut app.home.update.message,
-                    format!("rechecking known bad maps {checked}/{total}..."),
+                    format!("rechecking known bad mapsets {checked}/{total}…"),
                 );
             }
         }
@@ -206,9 +206,13 @@ pub(super) fn handle_updates_event(
             }
             clear_app_message(&mut app.home.update.message);
             let mut toast = if available.is_empty() {
-                Toast::info("no bad maps recovered")
+                Toast::info("no bad mapsets recovered")
             } else {
-                Toast::success(format!("{} maps now downloadable", available.len()))
+                Toast::success(format!(
+                    "{} mapset{} now downloadable",
+                    available.len(),
+                    if available.len() == 1 { "" } else { "s" }
+                ))
             };
             if !unavailable.is_empty() {
                 toast = toast.with_detail(format!("{} still unavailable", unavailable.len()));
@@ -235,9 +239,12 @@ fn build_scan_summary(
     hidden_failed: usize,
 ) -> (String, Option<String>) {
     let title = if count == 0 {
-        "no missing beatmapsets".to_string()
+        "no missing mapsets".to_string()
     } else {
-        format!("{count} missing beatmapsets")
+        format!(
+            "{count} missing mapset{}",
+            if count == 1 { "" } else { "s" }
+        )
     };
 
     let mut parts = Vec::new();
@@ -265,13 +272,13 @@ pub(super) fn spawn_scan_task(app: &mut App, tx: mpsc::UnboundedSender<UpdatesEv
 
     app.home.update.scan.scan_status = ScanStatus::ReadingDatabase;
     clear_app_message(&mut app.home.update.message);
-    set_loading_message(&mut app.home.update.message, "Reading database...");
+    set_loading_message(&mut app.home.update.message, "reading database…");
 
     let handle = tokio::spawn(async move {
         let result =
             tokio::task::spawn_blocking(move || read_local_database(client_type, osu_path))
                 .await
-                .map_err(|e| format!("Task panicked: {e}"))
+                .map_err(|e| format!("scan task panicked: {e}"))
                 .and_then(|r| r);
 
         match result {
@@ -360,19 +367,19 @@ pub(super) fn spawn_failed_map_recheck_task(
 
     let generation = app.home.update.scan.scan_generation;
     let Some(path) = failed_maps::failed_maps_path() else {
-        app.toast_info("no known bad maps to recheck");
+        app.toast_info("no known bad mapsets to recheck");
         return;
     };
     let ids: Vec<u32> = failed_maps::load(&path).beatmapset_ids;
     if ids.is_empty() {
-        app.toast_info("no known bad maps to recheck");
+        app.toast_info("no known bad mapsets to recheck");
         return;
     }
 
     app.home.update.scan.scan_status = ScanStatus::CheckingFailedMaps;
     set_loading_message(
         &mut app.home.update.message,
-        format!("rechecking known bad maps 0/{}...", ids.len()),
+        format!("rechecking known bad mapsets 0/{}…", ids.len()),
     );
 
     let handle = tokio::spawn(async move {

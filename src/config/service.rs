@@ -22,7 +22,7 @@ pub fn config_path() -> Option<PathBuf> {
 
 pub fn load_config() -> Result<Config> {
     let path =
-        config_path().ok_or_else(|| AppError::config("Unable to determine config directory"))?;
+        config_path().ok_or_else(|| AppError::config("unable to determine config directory"))?;
     load_config_from(&path)
 }
 
@@ -45,7 +45,7 @@ pub fn load_config_from(path: impl AsRef<Path>) -> Result<Config> {
     migrator::migrate_in_place(path);
     let contents = std::fs::read_to_string(path)?;
     let config = toml::from_str::<Config>(&contents)
-        .map_err(|err| AppError::config_dynamic(format!("Invalid config file: {}", err)))?;
+        .map_err(|err| AppError::config_dynamic(format!("invalid config file: {}", err)))?;
 
     // Strip any unknown/garbage keys: serde ignores them on read, so persist a
     // clean round-trip back to disk. Only write when the serialization differs
@@ -61,7 +61,7 @@ pub fn load_config_from(path: impl AsRef<Path>) -> Result<Config> {
 }
 
 pub fn save_config(config: &Config) -> Result<PathBuf> {
-    let path = config_path().ok_or_else(|| AppError::config("Unable to find config directory"))?;
+    let path = config_path().ok_or_else(|| AppError::config("unable to find config directory"))?;
 
     let contents = toml::to_string_pretty(config)
         .map_err(|err| AppError::config_dynamic(format!("failed to serialize config: {}", err)))?;

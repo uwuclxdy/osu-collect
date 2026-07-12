@@ -105,7 +105,7 @@ pub struct App {
     /// consumed by the next key (a second `g` jumps to the top, anything else
     /// clears it). Only ever set while `config.vim_keys` is on.
     vim_pending_g: bool,
-    /// Pending confirmation for "retry N failed maps?" when count > 50.
+    /// Pending confirmation for "Retry N failed mapsets?" when count > 50.
     pub confirm_retry: Option<RetryAllConfirmModal>,
     /// Pre-download prompt: previously failed beatmapsets in
     /// `failed-beatmapsets.json` intersect with the collection the user just
@@ -245,7 +245,7 @@ pub enum AppCommand {
     Quit,
 }
 
-/// State for the "retry N failed maps?" confirm modal shown when `R` is pressed
+/// State for the "Retry N failed mapsets?" confirm modal shown when `R` is pressed
 /// with more than 50 retryable failures.
 ///
 /// Buttons (left→right): `cancel`, `retry`. `focus` is the index of the selected
@@ -357,7 +357,7 @@ impl App {
         if focused_osu_official && !self.osu_official_unlocked() {
             self.push_toast(
                 Toast::warning("log in to enable the osu! official mirror")
-                    .with_detail("open login from the config auth chip"),
+                    .with_detail("open login from the config tab"),
             );
             return true;
         }
@@ -914,7 +914,7 @@ impl App {
         let count = ids.len();
         self.home.update.hide_missing(&ids);
         self.toast_ok(format!(
-            "marked {count} beatmapset{} installed",
+            "marked {count} mapset{} installed",
             if count == 1 { "" } else { "s" }
         ));
     }
@@ -1099,7 +1099,7 @@ impl App {
 
         let mirrors = self.home.build_mirror_list();
         if mirrors.is_empty() {
-            self.toast_warn("no mirrors selected (configure in the home tab)");
+            self.toast_warn("no mirrors enabled (configure in the config tab)");
             return None;
         }
 
@@ -1122,9 +1122,9 @@ impl App {
         self.next_download_id += 1;
 
         let placeholder_title = if collection_ids.len() == 1 {
-            format!("Update #{}", collection_ids[0])
+            format!("update #{}", collection_ids[0])
         } else {
-            format!("Update ({} collections)", collection_ids.len())
+            format!("update ({} collections)", collection_ids.len())
         };
 
         let concurrent_usize = usize::from(concurrent.max(1));
@@ -1135,8 +1135,11 @@ impl App {
         self.focus_new_download_run();
 
         self.push_toast(
-            Toast::success(format!("queued update download #{id}"))
-                .with_detail(format!("{} beatmaps", beatmapset_ids.len())),
+            Toast::success(format!("queued update download #{id}")).with_detail(format!(
+                "{} mapset{}",
+                beatmapset_ids.len(),
+                if beatmapset_ids.len() == 1 { "" } else { "s" }
+            )),
         );
 
         let config = DownloadConfig {
@@ -1302,7 +1305,7 @@ impl App {
         self.home.find.login_nudged = true;
         self.push_toast(
             Toast::info("searching as guest")
-                .with_detail("log in from the config auth chip for more filters"),
+                .with_detail("log in from the config tab for more filters"),
         );
     }
 
@@ -1391,7 +1394,7 @@ impl App {
             return None;
         };
         if ids.is_empty() {
-            self.toast_warn("collection has no beatmaps");
+            self.toast_warn("collection has no mapsets");
             return None;
         }
         // Re-opening the same collection keeps the user's selection alive;
@@ -1430,7 +1433,7 @@ impl App {
     pub fn request_find_download(&mut self) -> Option<(DownloadId, IdsDownloadRequest)> {
         let beatmapset_ids = self.home.find.browse.selected_ids();
         if beatmapset_ids.is_empty() {
-            self.toast_warn("no beatmaps selected for download");
+            self.toast_warn("no mapsets selected for download");
             return None;
         }
         if self.home.mirror_count() == 0 {
@@ -1466,8 +1469,11 @@ impl App {
         self.focus_new_download_run();
 
         self.push_toast(
-            Toast::success(format!("queued {word} download #{id}"))
-                .with_detail(format!("{} beatmaps", beatmapset_ids.len())),
+            Toast::success(format!("queued {word} download #{id}")).with_detail(format!(
+                "{} mapset{}",
+                beatmapset_ids.len(),
+                if beatmapset_ids.len() == 1 { "" } else { "s" }
+            )),
         );
 
         let request = IdsDownloadRequest {
@@ -1492,7 +1498,7 @@ impl App {
     ) -> Option<(DownloadId, SelectiveDownloadRequest)> {
         let beatmapset_ids = self.home.collection_browse.selected_ids();
         if beatmapset_ids.is_empty() {
-            self.toast_warn("no beatmaps selected for download");
+            self.toast_warn("no mapsets selected for download");
             return None;
         }
         // Use the id snapshotted at browse-open, not the live `resolved_collection`
@@ -1526,8 +1532,11 @@ impl App {
         self.focus_new_download_run();
 
         self.push_toast(
-            Toast::success(format!("queued collection download #{id}"))
-                .with_detail(format!("{} beatmaps", beatmapset_ids.len())),
+            Toast::success(format!("queued collection download #{id}")).with_detail(format!(
+                "{} mapset{}",
+                beatmapset_ids.len(),
+                if beatmapset_ids.len() == 1 { "" } else { "s" }
+            )),
         );
 
         let collections = vec![SelectiveDownloadCollection {
@@ -2843,7 +2852,7 @@ impl App {
 
         let display = title.unwrap_or_else(|| format!("download #{download_id}"));
         if was_running {
-            self.push_toast(Toast::info("cancelled download").with_detail(display));
+            self.push_toast(Toast::info("download cancelled").with_detail(display));
         } else {
             self.push_toast(Toast::info("no active download to cancel").with_detail(display));
         }
@@ -2972,7 +2981,7 @@ impl App {
                     if has_failed {
                         self.push_toast(
                             Toast::info("nothing to retry")
-                                .with_detail("failed maps are 404 / not found"),
+                                .with_detail("failed mapsets were not found (404)"),
                         );
                     }
                     return None;

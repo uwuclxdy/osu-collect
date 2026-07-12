@@ -7,7 +7,7 @@ pub const MB: f64 = KB * 1024.0;
 pub const GB: f64 = MB * 1024.0;
 
 pub mod status {
-    pub const RATE_LIMITED: &str = "rate limited";
+    pub const RATE_LIMITED: &str = "rate-limited";
     pub const DOWNLOADING: &str = "downloading";
     pub const CHECKING_PREFIX: &str = "checking ";
     pub const FROM_SUFFIX: &str = " from ";

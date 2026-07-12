@@ -124,7 +124,7 @@ fn user_facing_error(err: &str) -> String {
     if err.contains("not found") || err.contains("404") {
         "collection not found".to_string()
     } else if err.contains("rate limited") || err.contains("429") {
-        "rate limited — try again later".to_string()
+        "rate-limited, try again later".to_string()
     } else if err.contains("timed out") || err.contains("timeout") {
         "network timeout".to_string()
     } else {
@@ -145,7 +145,7 @@ pub fn handle_home_resolve_event(event: HomeResolveEvent, home: &mut crate::app:
             enrich_ids,
             folder_name,
         } => {
-            let maps_word = if map_count == 1 { "map" } else { "maps" };
+            let maps_word = if map_count == 1 { "mapset" } else { "mapsets" };
             home.set_collection_resolve(
                 ResolveState::Success,
                 format!("\"{}\" · {} {}", name, map_count, maps_word),

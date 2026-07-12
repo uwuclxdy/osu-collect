@@ -30,7 +30,7 @@ use tracing::{Instrument, error, info, info_span, warn};
 static DOWNLOAD_REGISTRY: LazyLock<ActiveDownloadRegistry> =
     LazyLock::new(ActiveDownloadRegistry::new);
 
-const ABORTED_FAIL: &str = "Download aborted by user";
+const ABORTED_FAIL: &str = "download aborted by user";
 
 pub fn spawn_download(
     id: DownloadId,

@@ -63,8 +63,8 @@ const STATUS_DOWNLOADING: &str = "downloading";
 const STATUS_COMPLETED: &str = "completed";
 const STATUS_FAILED: &str = "failed";
 
-const ACTIVE_VERIFYING: &str = "verifying existing archives...";
-const ACTIVE_FETCHING: &str = "fetching collection metadata...";
+const ACTIVE_VERIFYING: &str = "verifying existing archives…";
+const ACTIVE_FETCHING: &str = "fetching collection metadata…";
 const ACTIVE_NONE: &str = "no active threads";
 const PLACEHOLDER_PREPARING: &str = "preparing";
 const PLACEHOLDER_RESOLVING: &str = "resolving collection";
@@ -75,7 +75,8 @@ const RESULTS_DOWNLOADED: &str = "downloaded";
 const RESULTS_SKIPPED: &str = "skipped";
 const RESULTS_FAILED: &str = "failed";
 const RESULTS_UNVERIFIED: &str = "unverified";
-const RESULTS_OUTRO_1: &str = "check https://github.com/uwuclxdy/osu-collect#importing-into-osu for how to import downloaded beatmaps into osu correctly";
+const RESULTS_OUTRO_1: &str =
+    "how to import into osu!: https://github.com/uwuclxdy/osu-collect#importing-into-osu";
 const RESULTS_OUTRO_2: &str = "and leave a star while you're at it :3";
 
 const COMPACT_ACTIVE: &str = "active: ";

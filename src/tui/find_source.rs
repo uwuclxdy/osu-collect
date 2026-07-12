@@ -213,7 +213,7 @@ fn field_hint(field: HomeField) -> Option<&'static str> {
         FindPreset => "resets the fields, then seeds a preset",
         FindSpecial => "farm / stream / ranked mapper · routes via nzbasic",
         FindStars | FindAr | FindCs | FindOd | FindHp | FindBpm | FindLength | FindKeys
-        | FindFavourites => "range: min-max · min- · -max · or exact",
+        | FindFavourites => "range: min-max · min- · -max · exact",
         FindRanked => "date range: 2020..2024 · 2020-06-01.. · ..2024",
         FindLimit => "nzbasic only · caps diff rows (default 500)",
         _ => return None,
@@ -249,14 +249,14 @@ fn via_trailing(backend: &str) -> Vec<Span<'static>> {
 }
 
 /// The inline outcome line beneath the buttons: the nzbasic pre-download size
-/// summary (`N sets · X GB` from the response's `SizeMap`), a warning for an
+/// summary (`N mapsets · X GB` from the response's `SizeMap`), a warning for an
 /// empty match, or the reason for a failure. The osu `Ready` case shows its
 /// count as a ratio in the RESULTS pane title instead, so it adds no row here.
 fn status_row(msg: &FindStatusMsg) -> Option<ListItem<'static>> {
     let (label, color) = match msg {
         FindStatusMsg::ReadyFilter { sets, total_bytes } => (
             format!(
-                "{sets} set{} · {}",
+                "{sets} mapset{} · {}",
                 if *sets == 1 { "" } else { "s" },
                 format_bytes(*total_bytes, "B")
             ),

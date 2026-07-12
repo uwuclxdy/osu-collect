@@ -38,7 +38,7 @@ pub async fn fetch_collection(client: &CollectionClient, collection_id: u32) -> 
 fn map_collection_error(err: Error) -> AppError {
     match err {
         Error::RateLimited { .. } => {
-            AppError::api("rate limited by osucollector.com (429). please try again later.")
+            AppError::api("rate-limited by osucollector.com (429), try again later")
         }
         Error::NotFound => AppError::api("collection not found (404)"),
         Error::HttpStatus(status) => AppError::api_dynamic(

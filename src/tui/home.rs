@@ -37,7 +37,7 @@ const COLLECTION_BROWSE_TITLE: &str = " COLLECTION ";
 
 /// Focus hint under the mirrors summary: it is read-only here, so `↵` hands
 /// off to the Config tab, which owns all mirror editing.
-const HELP_MIRRORS_SUMMARY: &str = "↵ to configure";
+const HELP_MIRRORS_SUMMARY: &str = "[↵] configure";
 
 /// Positions the terminal caret (via [`ratatui::Frame::set_cursor_position`])
 /// when a text field is focused in edit mode; otherwise leaves it hidden.
@@ -298,7 +298,7 @@ fn push_download_section(
         ),
     );
     if chrome && mirrors_focused {
-        items.push(widgets::help_item(HELP_MIRRORS_SUMMARY));
+        items.push(widgets::help_item_keyed(HELP_MIRRORS_SUMMARY));
     }
     items.push_focusable(
         HomeField::Directory,

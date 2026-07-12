@@ -781,7 +781,7 @@ impl FindSource {
         let nz_reason = self.nzbasic_forcer();
         let osu_reason = self.osu_forcer();
         match (nz_reason, osu_reason) {
-            (Some(nz), Some(osu)) => Err(format!("{nz} needs nzbasic, {osu} needs osu! api")),
+            (Some(nz), Some(osu)) => Err(format!("{nz} needs nzbasic · {osu} needs osu! api")),
             (Some(_), None) => Ok(FindPlan::Nzbasic(self.build_filter_query()?)),
             // osu-forcer only, or nothing → osu is the default route.
             (None, _) => Ok(FindPlan::Osu(self.build_search_query(cursor)?)),

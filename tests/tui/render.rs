@@ -1002,15 +1002,14 @@ fn config_tab_shows_mirrors_section_before_download() {
     assert!(content.contains("download") || content.contains("DOWNLOAD"));
     assert!(content.contains("mirrors") || content.contains("MIRRORS"));
     // mirrors render before download, matching the home tab's section flow.
-    // The header's `downloads` tab title sits in the first buffer row (120
-    // cells) and the display section's `jump to downloads on launch` row also
-    // matches the prefix, so only a bare `download` past the header counts as
-    // the section header.
-    let mir_pos = content.find("mirrors").or_else(|| content.find("MIRRORS"));
+    // Section headers render UPPERCASE; the lowercase `downloads` tab title
+    // and the display section's `jump to downloads on start` row never match
+    // the uppercase anchor, so only a bare `DOWNLOAD` counts as the header.
+    let mir_pos = content.find("MIRRORS");
     let dl_pos = content
-        .match_indices("download")
+        .match_indices("DOWNLOAD")
         .map(|(i, _)| i)
-        .find(|&i| i > 120 && !content[i..].starts_with("downloads"));
+        .find(|&i| !content[i..].starts_with("DOWNLOADS"));
     let m = mir_pos.expect("mirrors section header must render at 120x60");
     let d = dl_pos.expect("download section header must render at 120x60");
     assert!(m < d, "mirrors section should render before download");
