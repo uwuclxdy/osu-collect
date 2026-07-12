@@ -136,7 +136,8 @@ const DOWNLOADS_TAB: &[HelpRow] = &[
     HelpRow::new("←", "back to the run list"),
     HelpRow::new("r", "retry failed maps (preview)"),
     HelpRow::new("s / S", "defer / drop rate-limited"),
-    HelpRow::new("esc", "cancel run (preview) / back"),
+    HelpRow::new("q", "cancel run (preview)"),
+    HelpRow::new("esc", "back to the run list"),
 ];
 
 /// Renders a centred keybindings overlay.

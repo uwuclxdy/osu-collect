@@ -58,10 +58,10 @@ fn footer_hint_advertises_cancel_on_downloading_preview() {
     push_focused_page(&mut app, 1, DownloadStage::Downloading);
 
     let hint = hint_for(&app);
-    // esc is destructive on a running preview — it must be advertised.
+    // `q` is destructive on a running preview — it must be advertised.
     assert!(
-        hint.contains("esc cancel"),
-        "in-flight preview must advertise `esc cancel`, got: {hint}"
+        hint.contains("q cancel"),
+        "in-flight preview must advertise `q cancel`, got: {hint}"
     );
 }
 

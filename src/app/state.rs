@@ -482,7 +482,7 @@ impl App {
     }
 
     /// Whether the Downloads tab's preview pane holds focus — the descended
-    /// state where the download-control keys (esc cancel, `s`/`S`, `r`) live.
+    /// state where the download-control keys (`q` cancel, `s`/`S`, `r`) live.
     fn downloads_preview_focused(&self) -> bool {
         self.active_tab == Tab::Downloads && self.downloads_tab.preview_focused
     }
@@ -2005,8 +2005,8 @@ impl App {
                         browse.focus_list();
                     }
                 } else if self.downloads_preview_focused() {
-                    // Leave the run preview without cancelling (esc is the
-                    // control key there); the list keeps arrow-tab-switching.
+                    // ←/esc both leave the run preview without cancelling (`q` is
+                    // the cancel key); the list keeps arrow-tab-switching.
                     self.downloads_tab.preview_focused = false;
                 } else if let Some(cmd) = self.prev_tab() {
                     return Some(cmd);
@@ -2776,7 +2776,7 @@ impl App {
     /// reorders — a settle regroups the page section, a removal promotes a
     /// record — so the cursor can re-anchor to the same RUN, not the same
     /// position (a positional cursor would silently switch the preview to a
-    /// different run, and `esc` would cancel the wrong download).
+    /// different run, and `q` would cancel the wrong download).
     fn selected_row_key(&self) -> Option<SelectedRow> {
         let order = self.download_page_row_order();
         let selected = self.downloads_tab.selected;
@@ -3016,16 +3016,26 @@ impl App {
     }
 
     /// `esc` as a pure "back" key. Runs after the edit/modal/login/browse
-    /// cascade. Cancels an armed quit prompt; on the Downloads preview it is
-    /// the download-control key — a running run cancels, a settled run or
-    /// history record just ascends back to the list (leaving the preview
-    /// without cancelling is `←`). It never arms or confirms a quit — quitting
-    /// is `q`-only. The login split is closed earlier in the esc cascade.
+    /// cascade. Cancels an armed quit prompt; on the Downloads preview it only
+    /// ascends back to the list — it never cancels a run (cancellation is `q`).
+    /// It never arms or confirms a quit — quitting is `q`-only. The login split
+    /// is closed earlier in the esc cascade.
     fn handle_back_key(&mut self) -> Option<AppCommand> {
         if self.home.quit_prompt {
             self.home.quit_prompt = false;
             return None;
         }
+        if self.active_tab == Tab::Downloads && self.downloads_tab.preview_focused {
+            self.downloads_tab.preview_focused = false;
+        }
+        None
+    }
+
+    fn handle_quit_key(&mut self) -> Option<AppCommand> {
+        // On a descended Downloads preview, `q` is the run-control key: a running
+        // run cancels, a settled run ascends back to the list. esc/← only ascend
+        // (never cancel), so cancellation lives solely on `q`; the list level and
+        // every other tab keep `q` as the 2-step quit.
         if self.active_tab == Tab::Downloads && self.downloads_tab.preview_focused {
             if let Some(page) = self.selected_download_page()
                 && !page.is_settled()
@@ -3033,11 +3043,8 @@ impl App {
                 return Some(AppCommand::CancelDownload { id: page.id });
             }
             self.downloads_tab.preview_focused = false;
+            return None;
         }
-        None
-    }
-
-    fn handle_quit_key(&mut self) -> Option<AppCommand> {
         if self.home.quit_prompt {
             self.home.quit_prompt = false;
             return Some(AppCommand::Quit);

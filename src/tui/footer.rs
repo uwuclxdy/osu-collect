@@ -26,9 +26,9 @@ const VIM_CHIP: &str = " vim ";
 const QUIT_PROMPT_TEXT: &str = "press q again to quit";
 const QUIT_PROMPT_TEXT_DOWNLOADS: &str = "press q again to quit · active downloads will stop";
 
-/// Downloads preview, run still in flight: `esc` cancels it (leaving without
-/// cancelling is `←`). Must stay advertised — esc is destructive here.
-const HINT_CANCEL: &str = "esc cancel";
+/// Downloads preview, run still in flight: `q` cancels it (esc/← only ascend).
+/// Must stay advertised — `q` is destructive here.
+const HINT_CANCEL: &str = "q cancel";
 /// `esc`/`q` close key for the login split. `x` stays toast-only (a
 /// notification key, not a page action) so it isn't a back key.
 const HINT_CLOSE: &str = "esc/q close";
@@ -239,9 +239,9 @@ fn login_hints(app: &App) -> Vec<&'static str> {
 /// broader parked-or-deferred gate — matching `handle_download_tab_key` so
 /// neither hint advertises a dead key. `r retry failed` shows only when the
 /// page has a retryable failure (404s never are). While the previewed run is
-/// in flight the trailing key is `esc cancel` (destructive, must be
-/// advertised); a settled run / history record ascends on esc, unadvertised
-/// like every other browse.
+/// in flight the trailing key is `q cancel` (destructive, must be advertised);
+/// a settled run / history record ascends on esc, unadvertised like every other
+/// browse.
 fn downloads_hints(app: &App) -> (Vec<&'static str>, Option<&'static str>) {
     if !app.downloads_tab.preview_focused {
         let segments = if app.downloads_rows().is_empty() {

@@ -87,7 +87,7 @@ fn left_on_list_switches_tabs() {
 // ── esc: the download-control key, preview-scoped ────────────────────────────
 
 #[test]
-fn esc_on_running_preview_emits_cancel() {
+fn esc_on_running_preview_ascends_without_cancelling() {
     let mut app = make_app();
     push_page(&mut app, 4, DownloadStage::Downloading);
     app.downloads_tab.preview_focused = true;
@@ -95,10 +95,14 @@ fn esc_on_running_preview_emits_cancel() {
     let cmd = app.handle_key(press(KeyCode::Esc));
 
     assert!(
-        matches!(cmd, Some(AppCommand::CancelDownload { id: 4 })),
-        "esc on a running preview must request cancellation, got {cmd:?}"
+        cmd.is_none(),
+        "esc must never cancel — that's `q`, got {cmd:?}"
     );
-    assert_eq!(app.downloads.len(), 1, "page must stay until runtime acks");
+    assert!(
+        !app.downloads_tab.preview_focused,
+        "esc ascends to the list"
+    );
+    assert_eq!(app.downloads.len(), 1, "the run keeps running");
 }
 
 #[test]
@@ -126,19 +130,53 @@ fn esc_on_list_does_not_cancel() {
 }
 
 #[test]
-fn q_on_downloads_tab_arms_the_quit_prompt_instead_of_closing() {
+fn q_on_running_preview_cancels_the_run() {
+    let mut app = make_app();
+    push_page(&mut app, 4, DownloadStage::Downloading);
+    app.downloads_tab.preview_focused = true;
+
+    let cmd = app.handle_key(press(KeyCode::Char('q')));
+
+    assert!(
+        matches!(cmd, Some(AppCommand::CancelDownload { id: 4 })),
+        "q on a running preview requests cancellation, got {cmd:?}"
+    );
+    assert!(
+        !app.home.quit_prompt,
+        "q on a run cancels, it never arms quit"
+    );
+    assert_eq!(app.downloads.len(), 1, "page stays until the runtime acks");
+}
+
+#[test]
+fn q_on_settled_preview_ascends_without_arming_quit() {
     let mut app = make_app();
     push_page(&mut app, 1, DownloadStage::Completed);
     app.downloads_tab.preview_focused = true;
 
     let cmd = app.handle_key(press(KeyCode::Char('q')));
 
-    assert!(cmd.is_none());
+    assert!(cmd.is_none(), "nothing to cancel on a settled run");
     assert!(
-        app.home.quit_prompt,
-        "q arms the quit prompt everywhere now"
+        !app.downloads_tab.preview_focused,
+        "q ascends the settled preview"
     );
-    assert_eq!(app.downloads.len(), 1, "q never closes a run");
+    assert!(!app.home.quit_prompt, "ascending a preview never arms quit");
+    assert_eq!(app.downloads.len(), 1, "settled runs are retained");
+}
+
+#[test]
+fn q_on_downloads_list_arms_the_quit_prompt() {
+    let mut app = make_app();
+    push_page(&mut app, 1, DownloadStage::Downloading);
+    // At the list level (not descended) q is the top-level 2-step quit.
+    app.downloads_tab.preview_focused = false;
+
+    let cmd = app.handle_key(press(KeyCode::Char('q')));
+
+    assert!(cmd.is_none());
+    assert!(app.home.quit_prompt, "list-level q arms the quit prompt");
+    assert_eq!(app.downloads.len(), 1, "arming quit never closes a run");
 }
 
 // ── defer / skip stay preview-scoped ─────────────────────────────────────────
