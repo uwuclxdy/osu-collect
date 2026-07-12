@@ -27,6 +27,7 @@ osu!collect is a terminal app (TUI) that **downloads osu! beatmap collections fr
 ## Features
 
 - **Batch downloads** from any osu!collector collection. Paste a URL or ID, press enter.
+- **Find maps without a collection**: free-text search plus per-difficulty criteria (stars, AR, CS, OD, HP, BPM, length, keys, favourites, ranked date, farm/stream/ranked-mapper flags), auto-routed between the osu! api and nzbasic's community database.
 - **Mirrors with automatic failover**: osu!direct, Nerinyan, Sayobot, Nekoha, Beatconnect, osu!dl, catboy.best, the Hinamizawa cascade, the nzbasic CDN, your own custom mirrors, plus the official osu! servers once you log in.
 - **Rate-limit aware**: throttled mirrors sit out while the rest keep downloading, with per-map cooldown countdowns in the UI. Requests to each mirror are spaced out and slow down on their own when a mirror pushes back, so load spreads instead of hammering a single host. A map that hits a limit waits its turn and goes back in the queue rather than getting dropped.
 - **Collections updater**: Re-check a collection later and download only the maps that are missing or newly added.
@@ -123,6 +124,14 @@ Text fields support full caret editing: <kbd>home</kbd>, <kbd>end</kbd>, <kbd>de
 ### Downloads tab
 
 Every run lives on the downloads tab, active ones first, then past ones (including cancelled) that survive restarts. Open a run with <kbd>↵</kbd> for live per-map progress, speed and ETA, rate-limit countdowns, and a failure summary with reasons. Failed maps persist between runs. Retry them with <kbd>r</kbd>, or accept the prompt on your next download of that collection (configurable). Starting a download keeps you where you are by default; turn on `jump to downloads on launch` in config to land here instead.
+
+### Finding maps
+
+The get maps tab's `find` source is one form: type a query and/or set criteria, press `find`, pick results, download. Under the hood two backends serve it: the osu! api and nzbasic's batch-beatmap-downloader database. The form routes automatically by what you asked for: farm/stream/ranked-mapper flags and a couple of sort orders only exist on nzbasic, free text and a few other criteria only exist on osu!. A `via osu! api` / `via nzbasic` line above the button always shows where the run will go. An impossible combination errors, naming the two clashing fields instead of guessing.
+
+Artist, mapper and title match as **exact phrases** on the osu! api route. The nzbasic route matches substrings instead, so force it with a farm/stream/ranked-mapper flag (or the `bpm ↓` / `length ↑` sorts) if you want contains-matching. The default sort is **newest ranked first**; cycling to `relevance` switches the route to the osu! api.
+
+Ranked date takes a `2020..2024`-style range, also open-ended (`2020..` / `..2024`). Checked results show an approximate total size on the download button as sizes load. Press <kbd>m</kbd> to load more results on the osu! route. Results land in their own subfolder per search, so runs never collide.
 
 ### Updating collections
 
