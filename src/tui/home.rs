@@ -1,4 +1,4 @@
-use crate::app::{FindBackend, GetMapsSource, HomeField, HomeTab, LibraryState, ResolveState};
+use crate::app::{GetMapsSource, HomeField, HomeTab, LibraryState, ResolveState};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -9,8 +9,8 @@ use ratatui::{
 
 use super::widgets;
 use super::{
-    accent, danger, filter_source, focused_label, line, search_source, set_browse, success,
-    text_dim, text_faint, update_source, warning,
+    accent, danger, find_source, focused_label, line, set_browse, success, text_dim, text_faint,
+    update_source, warning,
 };
 use crate::utils::pretty_path;
 use std::path::Path;
@@ -25,7 +25,6 @@ const SECTION_DOWNLOAD: &str = "download";
 const SECTION_NONE: &str = "";
 
 const LABEL_SOURCE: &str = "source";
-const LABEL_BACKEND: &str = "backend";
 const LABEL_OVERWRITE: &str = "overwrite existing";
 const LABEL_VIDEO: &str = "video";
 
@@ -81,7 +80,7 @@ fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab) -> boo
                 frame,
                 area,
                 &form.find.browse,
-                search_source::BROWSE_LIST_TITLE,
+                find_source::BROWSE_LIST_TITLE,
                 status,
             );
             true
@@ -104,20 +103,13 @@ fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab) -> boo
     }
 }
 
-/// Caret column for the search query input, or `None` when it isn't the focused,
-/// editing row.
-fn search_cursor_col(form: &HomeTab, editing: bool) -> Option<u16> {
-    (editing && form.focus == HomeField::SearchQuery)
-        .then(|| widgets::input_cursor_col(&form.find.query, 0))
-}
-
-/// Caret column for whichever filter-source input is focused in edit mode; the
+/// Caret column for whichever find-source input is focused in edit mode; the
 /// offset matches the aligned label width its rows render with.
-fn filter_cursor_col(form: &HomeTab, editing: bool) -> Option<u16> {
-    (editing && form.focus.is_filter_input())
+fn find_cursor_col(form: &HomeTab, editing: bool) -> Option<u16> {
+    (editing && form.focus.is_find_input())
         .then(|| {
             form.focused_input()
-                .map(|input| widgets::input_cursor_col(input, filter_source::LABEL_WIDTH))
+                .map(|input| widgets::input_cursor_col(input, find_source::LABEL_WIDTH))
         })
         .flatten()
 }
@@ -174,22 +166,8 @@ fn render_compact(
             return;
         }
         GetMapsSource::Find => {
-            // The backend chip heads the find form; the rest of the rows come
-            // from the active backend's own form builder.
-            items.push_focusable(
-                HomeField::Backend,
-                backend_row_item(form.find_backend, focus == HomeField::Backend),
-            );
-            let cursor_col = match form.find_backend {
-                FindBackend::Osu => {
-                    search_source::push_form_rows(&mut items, &form.find, focus, editing, tick);
-                    search_cursor_col(form, editing)
-                }
-                FindBackend::Nzbasic => {
-                    filter_source::push_form_rows(&mut items, &form.find, focus, editing, tick);
-                    filter_cursor_col(form, editing)
-                }
-            };
+            find_source::push_form_rows(&mut items, &form.find, focus, editing, tick);
+            let cursor_col = find_cursor_col(form, editing);
             let (items, focused_index) = items.into_parts();
             widgets::render_scrollable_panel(
                 frame,
@@ -387,22 +365,8 @@ fn render_content(
             return;
         }
         GetMapsSource::Find => {
-            // The backend chip heads the find form; the rest of the rows come
-            // from the active backend's own form builder.
-            items.push_focusable(
-                HomeField::Backend,
-                backend_row_item(form.find_backend, focus == HomeField::Backend),
-            );
-            let cursor_col = match form.find_backend {
-                FindBackend::Osu => {
-                    search_source::push_form_rows(&mut items, &form.find, focus, editing, tick);
-                    search_cursor_col(form, editing)
-                }
-                FindBackend::Nzbasic => {
-                    filter_source::push_form_rows(&mut items, &form.find, focus, editing, tick);
-                    filter_cursor_col(form, editing)
-                }
-            };
+            find_source::push_form_rows(&mut items, &form.find, focus, editing, tick);
+            let cursor_col = find_cursor_col(form, editing);
             let (items, focused_index) = items.into_parts();
             widgets::render_scrollable_panel(
                 frame,
@@ -596,15 +560,10 @@ fn home_section(field: HomeField) -> &'static str {
         Threads | AutoOverwrite | Video | Directory => SECTION_DOWNLOAD,
         // The download buttons and the update / find source fields render in
         // their own bodies, not the collection sections, so they light no header.
-        Backend | Download | CollectionBrowse | UpdateOsuPath | UpdateScan | UpdateBrowse => {
-            SECTION_NONE
-        }
-        SearchQuery | SearchMode | SearchStatus | SearchSort | SearchRun | SearchBrowse => {
-            SECTION_NONE
-        }
-        FilterPreset | FilterSpecial | FilterMode | FilterStatus | FilterStars | FilterAr
-        | FilterCs | FilterOd | FilterHp | FilterBpm | FilterLength | FilterArtist
-        | FilterCreator | FilterTitle | FilterSort | FilterLimit | FilterRun | FilterBrowse => {
+        Download | CollectionBrowse | UpdateOsuPath | UpdateScan | UpdateBrowse => SECTION_NONE,
+        FindQuery | FindPreset | FindSpecial | FindMode | FindStatus | FindSort | FindStars
+        | FindAr | FindCs | FindOd | FindHp | FindBpm | FindLength | FindKeys | FindFavourites
+        | FindRanked | FindArtist | FindCreator | FindTitle | FindLimit | FindRun | FindBrowse => {
             SECTION_NONE
         }
     }
@@ -616,13 +575,6 @@ fn home_section(field: HomeField) -> &'static str {
 fn source_row_item(active: GetMapsSource, focused: bool) -> ListItem<'static> {
     let options: Vec<&str> = GetMapsSource::ALL.iter().map(|s| s.label()).collect();
     widgets::cycle_item(LABEL_SOURCE, &options, active.label(), focused, 0)
-}
-
-/// The find-source backend chip (`osu! api` / `nzbasic`), the active one
-/// bracketed. Cycled by `space`/`enter`, carrying the game-mode selection across.
-fn backend_row_item(active: FindBackend, focused: bool) -> ListItem<'static> {
-    let options: Vec<&str> = FindBackend::ALL.iter().map(|b| b.label()).collect();
-    widgets::cycle_item(LABEL_BACKEND, &options, active.label(), focused, 0)
 }
 
 const RESOLVE_PREFIX: &str = "  └ ";

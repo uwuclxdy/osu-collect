@@ -5,13 +5,11 @@
 //! backend, and a pair of conflicting forcers is a hard build error. The routing
 //! contract lives in `docs/plan/find-backend-merge.md`.
 //!
-//! Transitional: two rendered forms still exist behind the `Backend` chip
-//! (`src/tui/search_source.rs` / `src/tui/filter_source.rs`), each a SUBSET view
-//! of this one union state — the shared mode/status/sort chips edit the same
-//! value from either form. Phase 4 collapses them into a single form with a
-//! read-only resolved-backend indicator.
+//! One rendered form (`src/tui/find_source.rs`) edits this union state; a
+//! read-only indicator ([`FindSource::resolved_route`]) shows which backend the
+//! criteria resolve to before the CTA fires.
 //!
-//! Like the old pair, a fetch is CTA-triggered — nothing here fires on keystroke.
+//! A fetch is CTA-triggered — nothing here fires on keystroke.
 //! The osu `next_cursor` pager lives on this struct; id-only rows (nzbasic
 //! results) are backfilled by the shared osu-batch enrichment pager that every
 //! [`SetBrowse`] carries.
@@ -368,6 +366,22 @@ pub enum FindPlan {
     Nzbasic(FilterQuery),
 }
 
+/// Which backend the current criteria resolve to, for the form's read-only
+/// resolved-backend indicator ([`FindSource::resolved_route`]). Routing only —
+/// mirrors [`FindSource::build_plan`]'s decision but ignores parse errors, so a
+/// mid-edit bad range still shows the route it would take. A conflict carries
+/// both offending field names for the inline warning.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FindRoute {
+    /// osu! API v2 search — the default when nothing forces nzbasic.
+    Osu,
+    /// nzbasic BBD filter — an nzbasic-forcing criterion is set.
+    Nzbasic,
+    /// Conflicting forcers: `nzbasic` names the field forcing nzbasic, `osu` the
+    /// one forcing osu.
+    Conflict { nzbasic: String, osu: String },
+}
+
 /// A curated sort preset for the sort chip: a display label plus how it maps onto
 /// each backend. `osu: None` = nzbasic-only (forces nzbasic); `nzbasic: None` =
 /// osu-only (forces osu). Both `Some` = expressible either route (no forcer).
@@ -554,9 +568,9 @@ pub struct FindSource {
     /// nzbasic diff-row limit (default 500). nzbasic-route mechanic; ignored on
     /// the osu route (osu paging caps results instead), so it never conflicts.
     pub limit: InputField,
-    /// osu-only criteria with NO UI row yet (phase 4 adds them). Read by
-    /// [`build_plan`](Self::build_plan) for routing + `q` serialization, so not
-    /// dead code — they force osu when set and ride into the emitted query.
+    /// osu-only criteria (mania key count, favourite count, ranked date). Each
+    /// forces osu when set and rides into the emitted `q`; `ranked` takes a
+    /// `..`-separated date range (see [`osu_date_range`]).
     pub keys: InputField,
     pub favourites: InputField,
     pub ranked: InputField,
@@ -588,7 +602,7 @@ impl FindSource {
             mode_idx: 0,
             status_idx: STATUS_DEFAULT_IDX,
             sort_idx: 0,
-            query: InputField::new("search", "", "artist, title, mapper, tags…"),
+            query: InputField::new("query", "", "artist, title, mapper, tags…"),
             stars: InputField::new("stars", "", "min-max, e.g. 5.5-7"),
             ar: InputField::new("ar", "", "min-max"),
             cs: InputField::new("cs", "", "min-max"),
@@ -602,7 +616,7 @@ impl FindSource {
             limit: InputField::new("limit", "", "500"),
             keys: InputField::new("keys", "", "min-max"),
             favourites: InputField::new("favourites", "", "min-max"),
-            ranked: InputField::new("ranked", "", "yyyy or yyyy-mm-dd"),
+            ranked: InputField::new("ranked", "", "yyyy or 2020..2024"),
             status_msg: FindStatusMsg::Idle,
             next_cursor: None,
             login_nudged: false,
@@ -768,6 +782,18 @@ impl FindSource {
         }
     }
 
+    /// The resolved-backend indicator's view of the current criteria: the route
+    /// [`build_plan`](Self::build_plan) would take (osu / nzbasic), or the
+    /// conflict it would reject. Ignores parse errors — routing is decided by the
+    /// forcers alone — so the indicator stays live even mid-edit.
+    pub fn resolved_route(&self) -> FindRoute {
+        match (self.nzbasic_forcer(), self.osu_forcer()) {
+            (Some(nzbasic), Some(osu)) => FindRoute::Conflict { nzbasic, osu },
+            (Some(_), None) => FindRoute::Nzbasic,
+            (None, _) => FindRoute::Osu,
+        }
+    }
+
     /// The first criterion forcing the nzbasic route, or `None`. Priority:
     /// special → sort → status. The string is user-facing (conflict toast).
     fn nzbasic_forcer(&self) -> Option<String> {
@@ -819,7 +845,7 @@ impl FindSource {
             length: osu_int_range(&self.length)?,
             keys: osu_int_range(&self.keys)?,
             favourites: osu_int_range(&self.favourites)?,
-            ranked: osu_date_range(&self.ranked),
+            ranked: osu_date_range(&self.ranked)?,
             artist: text_opt(&self.artist),
             creator: text_opt(&self.creator),
             title: text_opt(&self.title),
@@ -1077,13 +1103,98 @@ fn osu_int_range(field: &InputField) -> Result<Option<QueryRange<u32>>, String> 
     }
 }
 
-/// Convert a date input into an osu `ranked` criterion. No UI row yet (phase 4),
-/// so this stays minimal: a non-empty value is an exact `ranked=<value>` term
-/// (the `-` in `yyyy-mm-dd` rules out reusing the numeric range separator —
-/// phase 4 wires the row and a proper date-range syntax).
-fn osu_date_range(field: &InputField) -> Option<QueryRange<String>> {
+/// Convert a date input into an osu `ranked` criterion. A single token is an
+/// exact `ranked=<token>`; a `..`-separated pair emits a `>=`/`<=` range
+/// (`a..b` / `a..` / `..b`). The range separator is `..`, not `-`, because a
+/// date token itself uses `-` (`yyyy-mm-dd`). Each token must be `yyyy`,
+/// `yyyy-mm`, or `yyyy-mm-dd`; the server does the real calendar validation. A
+/// pair is rejected when inverted at their *comparable* precision (year, then
+/// month, then day — only as deep as both tokens specify), matching the
+/// min>max guard every sibling range parser has; differing precision
+/// (`2020..2020-06`) has no comparable month, so it is never inverted.
+fn osu_date_range(field: &InputField) -> Result<Option<QueryRange<String>>, String> {
     let value = field.value.trim();
-    (!value.is_empty()).then(|| QueryRange::Exact(value.to_string()))
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let label = field.label;
+    let token = |part: &str| -> Result<String, String> {
+        let part = part.trim();
+        if is_date_token(part) {
+            Ok(part.to_string())
+        } else {
+            Err(format!(
+                "{label}: \"{part}\" is not a yyyy / yyyy-mm / yyyy-mm-dd date (range separator is `..`)"
+            ))
+        }
+    };
+    match value.split_once("..") {
+        Some((min_raw, max_raw)) => {
+            let min = (!min_raw.trim().is_empty())
+                .then(|| token(min_raw))
+                .transpose()?;
+            let max = (!max_raw.trim().is_empty())
+                .then(|| token(max_raw))
+                .transpose()?;
+            if let (Some(min_s), Some(max_s)) = (&min, &max) {
+                // Both tokens already passed `token`, so parsing here is infallible.
+                let min_tuple = parse_date_token(min_s).expect("token already validated");
+                let max_tuple = parse_date_token(max_s).expect("token already validated");
+                if date_token_inverted(min_tuple, max_tuple) {
+                    return Err(format!("{label}: min {min_s} is greater than max {max_s}"));
+                }
+            }
+            Ok(QueryRange::from_bounds(min, max))
+        }
+        None => Ok(Some(QueryRange::Exact(token(value)?))),
+    }
+}
+
+/// Parses a `yyyy` / `yyyy-mm` / `yyyy-mm-dd` date token into `(year, month,
+/// day)`, `month`/`day` present only at the token's own precision. `None` when
+/// `s` isn't 1–3 `-`-separated numeric segments of width 4/2/2 (loose — no
+/// calendar range check; the server rejects an impossible month/day).
+fn parse_date_token(s: &str) -> Option<(u32, Option<u32>, Option<u32>)> {
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.is_empty() || parts.len() > 3 {
+        return None;
+    }
+    let mut fields: [Option<u32>; 3] = [None; 3];
+    for ((part, width), field) in parts.iter().zip([4usize, 2, 2]).zip(fields.iter_mut()) {
+        if part.len() != width || !part.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        *field = part.parse::<u32>().ok();
+    }
+    Some((fields[0]?, fields[1], fields[2]))
+}
+
+fn is_date_token(s: &str) -> bool {
+    parse_date_token(s).is_some()
+}
+
+/// Whether `min`'s date tuple is strictly greater than `max`'s at their shared
+/// (comparable) precision: year first; month only when both sides carry one;
+/// day only when both carry one. A side missing a component makes that depth
+/// incomparable, so `2020` (year-only) vs `2020-06` reads as equal, not inverted.
+fn date_token_inverted(
+    min: (u32, Option<u32>, Option<u32>),
+    max: (u32, Option<u32>, Option<u32>),
+) -> bool {
+    if min.0 != max.0 {
+        return min.0 > max.0;
+    }
+    let (min_month, max_month) = match (min.1, max.1) {
+        (Some(a), Some(b)) => (a, b),
+        _ => return false,
+    };
+    if min_month != max_month {
+        return min_month > max_month;
+    }
+    match (min.2, max.2) {
+        (Some(a), Some(b)) => a > b,
+        _ => false,
+    }
 }
 
 /// Parse a min-max pair for the nzbasic route: empty = unconstrained, `a-b` =

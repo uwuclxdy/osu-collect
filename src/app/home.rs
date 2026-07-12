@@ -28,8 +28,8 @@ pub enum ResolveState {
 /// row; `space`/`enter` cycle it, digits jump to it. All three sources are wired.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GetMapsSource {
-    /// Discovery: an osu! api text search or an nzbasic attribute filter, picked
-    /// by the [`FindBackend`] chip ([`HomeTab.find_backend`](HomeTab::find_backend)).
+    /// Discovery: one union criteria form auto-routed to an osu! api text search
+    /// or an nzbasic attribute filter by [`FindSource::build_plan`](crate::app::FindSource::build_plan).
     Find,
     Collection,
     Update,
@@ -62,37 +62,17 @@ impl GetMapsSource {
     }
 }
 
-/// Which form subset the [`GetMapsSource::Find`] source shows. Both forms edit
-/// the SAME union criteria state ([`HomeTab.find`](HomeTab::find)); the chip is a
-/// view switcher, and the query it compiles to is routed per-criterion by
-/// [`FindSource::build_plan`](crate::app::FindSource::build_plan), so the shown
-/// subset need not match the backend a run actually hits.
+/// Which backend a [`GetMapsSource::Find`] run actually hit. Not a UI control —
+/// [`FindSource::build_plan`](crate::app::FindSource::build_plan) resolves the
+/// route per-criterion; this only tags the loaded results
+/// ([`FindSource::results_backend`](crate::app::FindSource::results_backend)) so
+/// `m` / the download route by the true fetch backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FindBackend {
     /// osu! api v2 text search.
     Osu,
     /// nzbasic BBD attribute filter.
     Nzbasic,
-}
-
-impl FindBackend {
-    /// Chip order; the cycle row shows both, the active one bracketed.
-    pub const ALL: [FindBackend; 2] = [FindBackend::Osu, FindBackend::Nzbasic];
-
-    /// Chip label.
-    pub fn label(self) -> &'static str {
-        match self {
-            FindBackend::Osu => "osu! api",
-            FindBackend::Nzbasic => "nzbasic",
-        }
-    }
-
-    fn toggled(self) -> Self {
-        match self {
-            FindBackend::Osu => FindBackend::Nzbasic,
-            FindBackend::Nzbasic => FindBackend::Osu,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -232,9 +212,6 @@ pub enum HomeField {
     /// The source strip (find / collection / update). First focusable row;
     /// `space`/`enter` cycle the active source (arrows switch tabs), digits jump.
     Source,
-    /// The find source's backend chip (osu! api / nzbasic); `space`/`enter` cycle
-    /// it, carrying the game-mode selection across.
-    Backend,
     Collection,
     /// Read-only count of enabled mirrors; `enter` jumps to the Config tab's
     /// mirrors section, which owns all mirror editing (toggle / custom / order).
@@ -260,50 +237,46 @@ pub enum HomeField {
     /// The update source's `view N maps` button — opens the two-pane browse over
     /// the scan's missing sets. Enabled once a scan finds updates.
     UpdateBrowse,
-    /// The search source's free-text query input.
-    SearchQuery,
-    /// The search source's game-mode filter chip (`space`/`enter` cycle it).
-    SearchMode,
-    /// The search source's rank-status filter chip.
-    SearchStatus,
-    /// The search source's sort chip (curated field+order presets).
-    SearchSort,
-    /// The search source's `search` CTA button.
-    SearchRun,
-    /// The search source's `view N maps` button — reopens the results browse
-    /// without re-running the query. Enabled once results are loaded.
-    SearchBrowse,
-    /// The filter source's preset seed-macro chip (`space`/`enter` cycle it;
-    /// each step resets + seeds the criteria fields).
-    FilterPreset,
-    /// The filter source's special-tag chip (farm / stream / ranked mapper —
-    /// nzbasic-only flags).
-    FilterSpecial,
-    /// The filter source's game-mode chip.
-    FilterMode,
-    /// The filter source's rank-status chip.
-    FilterStatus,
-    /// The filter source's min-max range inputs (per-diff attributes).
-    FilterStars,
-    FilterAr,
-    FilterCs,
-    FilterOd,
-    FilterHp,
-    FilterBpm,
-    FilterLength,
-    /// The filter source's substring text inputs.
-    FilterArtist,
-    FilterCreator,
-    FilterTitle,
-    /// The filter source's sort chip (curated column+direction presets).
-    FilterSort,
-    /// The filter source's diff-row limit input (default 500).
-    FilterLimit,
-    /// The filter source's `filter` CTA button.
-    FilterRun,
-    /// The filter source's `view N maps` button — reopens the results browse
+    /// The find source's free-text query input (osu-only — a non-empty value
+    /// forces the osu route).
+    FindQuery,
+    /// The find source's preset seed-macro chip (`space`/`enter` cycle it; each
+    /// step resets + seeds the criteria fields).
+    FindPreset,
+    /// The find source's special-tag chip (farm / stream / ranked mapper —
+    /// nzbasic-only flags; a non-`none` value forces nzbasic).
+    FindSpecial,
+    /// The find source's game-mode chip.
+    FindMode,
+    /// The find source's rank-status chip.
+    FindStatus,
+    /// The find source's sort chip (curated field+order presets).
+    FindSort,
+    /// The find source's min-max range inputs (per-diff attributes).
+    FindStars,
+    FindAr,
+    FindCs,
+    FindOd,
+    FindHp,
+    FindBpm,
+    FindLength,
+    /// The find source's mania key-count / favourite-count ranges and ranked
+    /// date range (osu-only — each forces the osu route when set).
+    FindKeys,
+    FindFavourites,
+    FindRanked,
+    /// The find source's substring text inputs.
+    FindArtist,
+    FindCreator,
+    FindTitle,
+    /// The find source's diff-row limit input (nzbasic-route-only; default 500).
+    FindLimit,
+    /// The find source's CTA button — dispatches the resolved plan (osu search
+    /// or nzbasic filter).
+    FindRun,
+    /// The find source's `view N maps` button — reopens the results browse
     /// without re-fetching. Enabled once fresh results are loaded.
-    FilterBrowse,
+    FindBrowse,
 }
 
 /// Focus order when the collection source is active: the source strip, then the
@@ -322,48 +295,38 @@ const COLLECTION_FIELDS: &[HomeField] = &[
     HomeField::Download,
 ];
 
-/// Find-source focus order, osu! backend: the strip, the backend chip, the query
-/// input, the three filter chips, the `search` CTA, the `view N maps` button,
-/// then the download button. Like the update source, the run settings (folder /
-/// mirrors / threads / overwrite) are borrowed silently from the collection
-/// source's shared `self.home.*` fields. Descending into the results browse
-/// suspends this nav (`SetBrowse::descend`); the download fires from `Download`.
-const FIND_OSU_FIELDS: &[HomeField] = &[
+/// Find-source focus order: the strip, the free-text query, the chips (preset →
+/// special → mode → status → sort), the range inputs, the text inputs, the
+/// limit, then the CTA / `view N maps` / download row. One union list — the
+/// resolved backend is an implementation detail, so there is no per-backend
+/// field split. Like the update source, the run settings (folder / mirrors /
+/// threads / overwrite) are borrowed silently from the collection source's
+/// shared `self.home.*` fields. Descending into the results browse suspends this
+/// nav (`SetBrowse::descend`); the download fires from `Download`.
+const FIND_FIELDS: &[HomeField] = &[
     HomeField::Source,
-    HomeField::Backend,
-    HomeField::SearchQuery,
-    HomeField::SearchMode,
-    HomeField::SearchStatus,
-    HomeField::SearchSort,
-    HomeField::SearchRun,
-    HomeField::SearchBrowse,
-    HomeField::Download,
-];
-
-/// Find-source focus order, nzbasic backend: the strip, the backend chip, the
-/// preset seed-macro, the criteria (chips → ranges → texts), the sort/limit
-/// knobs, then the CTA row. Run settings are borrowed like the osu! backend.
-const FIND_NZBASIC_FIELDS: &[HomeField] = &[
-    HomeField::Source,
-    HomeField::Backend,
-    HomeField::FilterPreset,
-    HomeField::FilterSpecial,
-    HomeField::FilterMode,
-    HomeField::FilterStatus,
-    HomeField::FilterStars,
-    HomeField::FilterAr,
-    HomeField::FilterCs,
-    HomeField::FilterOd,
-    HomeField::FilterHp,
-    HomeField::FilterBpm,
-    HomeField::FilterLength,
-    HomeField::FilterArtist,
-    HomeField::FilterCreator,
-    HomeField::FilterTitle,
-    HomeField::FilterSort,
-    HomeField::FilterLimit,
-    HomeField::FilterRun,
-    HomeField::FilterBrowse,
+    HomeField::FindQuery,
+    HomeField::FindPreset,
+    HomeField::FindSpecial,
+    HomeField::FindMode,
+    HomeField::FindStatus,
+    HomeField::FindSort,
+    HomeField::FindStars,
+    HomeField::FindAr,
+    HomeField::FindCs,
+    HomeField::FindOd,
+    HomeField::FindHp,
+    HomeField::FindBpm,
+    HomeField::FindLength,
+    HomeField::FindKeys,
+    HomeField::FindFavourites,
+    HomeField::FindRanked,
+    HomeField::FindArtist,
+    HomeField::FindCreator,
+    HomeField::FindTitle,
+    HomeField::FindLimit,
+    HomeField::FindRun,
+    HomeField::FindBrowse,
     HomeField::Download,
 ];
 
@@ -384,28 +347,30 @@ impl HomeField {
     pub fn is_text_input(self) -> bool {
         matches!(
             self,
-            HomeField::Collection
-                | HomeField::Directory
-                | HomeField::UpdateOsuPath
-                | HomeField::SearchQuery
-        ) || self.is_filter_input()
+            HomeField::Collection | HomeField::Directory | HomeField::UpdateOsuPath
+        ) || self.is_find_input()
     }
 
-    /// The filter source's text-editable fields (ranges, texts, limit).
-    pub fn is_filter_input(self) -> bool {
+    /// The find source's text-editable fields (free-text query, ranges, texts,
+    /// limit).
+    pub fn is_find_input(self) -> bool {
         matches!(
             self,
-            HomeField::FilterStars
-                | HomeField::FilterAr
-                | HomeField::FilterCs
-                | HomeField::FilterOd
-                | HomeField::FilterHp
-                | HomeField::FilterBpm
-                | HomeField::FilterLength
-                | HomeField::FilterArtist
-                | HomeField::FilterCreator
-                | HomeField::FilterTitle
-                | HomeField::FilterLimit
+            HomeField::FindQuery
+                | HomeField::FindStars
+                | HomeField::FindAr
+                | HomeField::FindCs
+                | HomeField::FindOd
+                | HomeField::FindHp
+                | HomeField::FindBpm
+                | HomeField::FindLength
+                | HomeField::FindKeys
+                | HomeField::FindFavourites
+                | HomeField::FindRanked
+                | HomeField::FindArtist
+                | HomeField::FindCreator
+                | HomeField::FindTitle
+                | HomeField::FindLimit
         )
     }
 
@@ -418,23 +383,15 @@ impl HomeField {
         matches!(self, HomeField::AutoOverwrite | HomeField::Video)
     }
 
-    /// Whether this is a search filter chip that `space`/`enter` cycle.
-    pub fn is_search_chip(self) -> bool {
+    /// Whether this is a find-source chip that `space`/`enter` cycle.
+    pub fn is_find_chip(self) -> bool {
         matches!(
             self,
-            HomeField::SearchMode | HomeField::SearchStatus | HomeField::SearchSort
-        )
-    }
-
-    /// Whether this is a filter-source chip that `space`/`enter` cycle.
-    pub fn is_filter_chip(self) -> bool {
-        matches!(
-            self,
-            HomeField::FilterPreset
-                | HomeField::FilterSpecial
-                | HomeField::FilterMode
-                | HomeField::FilterStatus
-                | HomeField::FilterSort
+            HomeField::FindPreset
+                | HomeField::FindSpecial
+                | HomeField::FindMode
+                | HomeField::FindStatus
+                | HomeField::FindSort
         )
     }
 
@@ -450,10 +407,8 @@ impl HomeField {
                 | HomeField::CollectionBrowse
                 | HomeField::UpdateScan
                 | HomeField::UpdateBrowse
-                | HomeField::SearchRun
-                | HomeField::SearchBrowse
-                | HomeField::FilterRun
-                | HomeField::FilterBrowse
+                | HomeField::FindRun
+                | HomeField::FindBrowse
         )
     }
 }
@@ -484,10 +439,6 @@ pub struct HomeTab {
     /// Active get-maps source. Per keep-both, switching never clears another
     /// source's state (all of it lives on this struct).
     pub source: GetMapsSource,
-    /// Active backend for the [`GetMapsSource::Find`] source (osu! api / nzbasic).
-    /// Cycled by the backend chip; the two backends keep separate state on
-    /// [`search`](Self::search) / [`filter`](Self::filter).
-    pub find_backend: FindBackend,
     pub focus: HomeField,
     pub message: Option<AppMessage>,
     /// Resolve status shown below the collection URL field.
@@ -518,8 +469,8 @@ pub struct HomeTab {
     /// State for the [`GetMapsSource::Update`] source (the former Updates tab).
     pub update: UpdateSource,
     /// The find source's union criteria form + results browse (both backends land
-    /// their results here). Kept on `HomeTab` so it survives source/backend
-    /// switches (keep-both).
+    /// their results here). Kept on `HomeTab` so it survives source switches
+    /// (keep-both).
     pub find: FindSource,
     /// Collection browse&pick browse state (the collection source's
     /// `view N maps` CTA). Fed from [`resolved_collection`](Self::resolved_collection);
@@ -592,7 +543,6 @@ impl HomeTab {
             mirror_order: config.mirror.ordered_builtins(),
             video: config.download.video,
             source: GetMapsSource::Collection,
-            find_backend: FindBackend::Osu,
             focus: HomeField::Collection,
             message: None,
             collection_resolve: None,
@@ -708,10 +658,7 @@ impl HomeTab {
         match self.source {
             GetMapsSource::Collection => COLLECTION_FIELDS,
             GetMapsSource::Update => UPDATE_FIELDS,
-            GetMapsSource::Find => match self.find_backend {
-                FindBackend::Osu => FIND_OSU_FIELDS,
-                FindBackend::Nzbasic => FIND_NZBASIC_FIELDS,
-            },
+            GetMapsSource::Find => FIND_FIELDS,
         }
     }
 
@@ -720,14 +667,6 @@ impl HomeTab {
     /// so no re-clamp is needed.
     pub fn cycle_source(&mut self, forward: bool) {
         self.source = self.source.cycled(forward);
-    }
-
-    /// Flip the find backend chip (osu! api ↔ nzbasic). It only swaps which form
-    /// subset renders — both edit the one union [`find`](Self::find) state, so the
-    /// game-mode selection (and every shared chip) carries across automatically,
-    /// no explicit copy needed.
-    pub fn cycle_find_backend(&mut self, _forward: bool) {
-        self.find_backend = self.find_backend.toggled();
     }
 
     pub fn next_field(&mut self) {
@@ -864,18 +803,21 @@ impl HomeTab {
         match self.focus {
             HomeField::Collection => Some(&self.collection),
             HomeField::Directory => Some(&self.directory),
-            HomeField::SearchQuery => Some(&self.find.query),
-            HomeField::FilterStars => Some(&self.find.stars),
-            HomeField::FilterAr => Some(&self.find.ar),
-            HomeField::FilterCs => Some(&self.find.cs),
-            HomeField::FilterOd => Some(&self.find.od),
-            HomeField::FilterHp => Some(&self.find.hp),
-            HomeField::FilterBpm => Some(&self.find.bpm),
-            HomeField::FilterLength => Some(&self.find.length),
-            HomeField::FilterArtist => Some(&self.find.artist),
-            HomeField::FilterCreator => Some(&self.find.creator),
-            HomeField::FilterTitle => Some(&self.find.title),
-            HomeField::FilterLimit => Some(&self.find.limit),
+            HomeField::FindQuery => Some(&self.find.query),
+            HomeField::FindStars => Some(&self.find.stars),
+            HomeField::FindAr => Some(&self.find.ar),
+            HomeField::FindCs => Some(&self.find.cs),
+            HomeField::FindOd => Some(&self.find.od),
+            HomeField::FindHp => Some(&self.find.hp),
+            HomeField::FindBpm => Some(&self.find.bpm),
+            HomeField::FindLength => Some(&self.find.length),
+            HomeField::FindKeys => Some(&self.find.keys),
+            HomeField::FindFavourites => Some(&self.find.favourites),
+            HomeField::FindRanked => Some(&self.find.ranked),
+            HomeField::FindArtist => Some(&self.find.artist),
+            HomeField::FindCreator => Some(&self.find.creator),
+            HomeField::FindTitle => Some(&self.find.title),
+            HomeField::FindLimit => Some(&self.find.limit),
             _ => None,
         }
     }
@@ -884,18 +826,21 @@ impl HomeTab {
         match self.focus {
             HomeField::Collection => Some(&mut self.collection),
             HomeField::Directory => Some(&mut self.directory),
-            HomeField::SearchQuery => Some(&mut self.find.query),
-            HomeField::FilterStars => Some(&mut self.find.stars),
-            HomeField::FilterAr => Some(&mut self.find.ar),
-            HomeField::FilterCs => Some(&mut self.find.cs),
-            HomeField::FilterOd => Some(&mut self.find.od),
-            HomeField::FilterHp => Some(&mut self.find.hp),
-            HomeField::FilterBpm => Some(&mut self.find.bpm),
-            HomeField::FilterLength => Some(&mut self.find.length),
-            HomeField::FilterArtist => Some(&mut self.find.artist),
-            HomeField::FilterCreator => Some(&mut self.find.creator),
-            HomeField::FilterTitle => Some(&mut self.find.title),
-            HomeField::FilterLimit => Some(&mut self.find.limit),
+            HomeField::FindQuery => Some(&mut self.find.query),
+            HomeField::FindStars => Some(&mut self.find.stars),
+            HomeField::FindAr => Some(&mut self.find.ar),
+            HomeField::FindCs => Some(&mut self.find.cs),
+            HomeField::FindOd => Some(&mut self.find.od),
+            HomeField::FindHp => Some(&mut self.find.hp),
+            HomeField::FindBpm => Some(&mut self.find.bpm),
+            HomeField::FindLength => Some(&mut self.find.length),
+            HomeField::FindKeys => Some(&mut self.find.keys),
+            HomeField::FindFavourites => Some(&mut self.find.favourites),
+            HomeField::FindRanked => Some(&mut self.find.ranked),
+            HomeField::FindArtist => Some(&mut self.find.artist),
+            HomeField::FindCreator => Some(&mut self.find.creator),
+            HomeField::FindTitle => Some(&mut self.find.title),
+            HomeField::FindLimit => Some(&mut self.find.limit),
             _ => None,
         }
     }

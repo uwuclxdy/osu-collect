@@ -1219,35 +1219,25 @@ impl App {
         self.active_tab() == Tab::Home && self.active_set_browse().is_some_and(|b| b.is_browsing())
     }
 
-    /// Cycle the focused search-form chip (`←`/`→` and `enter`). Shared with the
-    /// nzbasic chips: mode/status/sort edit the one union value.
-    fn cycle_search_chip(&mut self, forward: bool) {
+    /// Cycle the focused find-form chip (`space`/`enter`). One union form: preset
+    /// / special are nzbasic-flavored, mode / status / sort edit the shared value
+    /// that either resolved backend reads.
+    fn cycle_find_chip(&mut self, forward: bool) {
         match self.home.focus {
-            HomeField::SearchMode => self.home.find.cycle_mode(forward),
-            HomeField::SearchStatus => self.home.find.cycle_status(forward),
-            HomeField::SearchSort => self.home.find.cycle_sort(forward),
+            HomeField::FindPreset => self.home.find.cycle_preset(forward),
+            HomeField::FindSpecial => self.home.find.cycle_special(forward),
+            HomeField::FindMode => self.home.find.cycle_mode(forward),
+            HomeField::FindStatus => self.home.find.cycle_status(forward),
+            HomeField::FindSort => self.home.find.cycle_sort(forward),
             _ => {}
         }
     }
 
-    /// Cycle the focused nzbasic-form chip (`space`/`enter`). mode/status/sort
-    /// edit the same union value as the osu-form chips.
-    fn cycle_filter_chip(&mut self, forward: bool) {
-        match self.home.focus {
-            HomeField::FilterPreset => self.home.find.cycle_preset(forward),
-            HomeField::FilterSpecial => self.home.find.cycle_special(forward),
-            HomeField::FilterMode => self.home.find.cycle_mode(forward),
-            HomeField::FilterStatus => self.home.find.cycle_status(forward),
-            HomeField::FilterSort => self.home.find.cycle_sort(forward),
-            _ => {}
-        }
-    }
-
-    /// Build + dispatch a fresh find run from the form. Both CTAs (`search` /
-    /// `filter`) route here: the resolved plan runs the matching backend task; a
-    /// conflict or bad input surfaces as a toast and nothing dispatches. The
-    /// one-shot guest login nudge fires on a *successful* guest search (in
-    /// `handle_home_search_event`), not here, so a no-creds build never shows it.
+    /// Build + dispatch a fresh find run from the form. The single CTA routes
+    /// here: the resolved plan runs the matching backend task; a conflict or bad
+    /// input surfaces as a toast and nothing dispatches. The one-shot guest login
+    /// nudge fires on a *successful* guest search (in `handle_home_search_event`),
+    /// not here, so a no-creds build never shows it.
     fn dispatch_find_run(&mut self) -> Option<AppCommand> {
         match self.home.find.build_plan(None) {
             Ok(FindPlan::Osu(query)) => {
@@ -2164,9 +2154,6 @@ impl App {
                             // The source picker is a cycle row: `enter` steps it
                             // forward, matching the config cycle fields.
                             HomeField::Source => self.home.cycle_source(true),
-                            // The find backend chip cycles like the strip, carrying
-                            // the game-mode selection across the switch.
-                            HomeField::Backend => self.home.cycle_find_backend(true),
                             // Per-source download button; routed by active source.
                             HomeField::Download => return self.dispatch_form_download(),
                             // Open the resolved collection in the checkbox browse.
@@ -2193,25 +2180,22 @@ impl App {
                                     self.home.update.descend();
                                 }
                             }
-                            // Reopen the search results browse without re-running
-                            // the query. Inert until fresh results are loaded and
-                            // still match the current inputs — guard the descend so
-                            // an unloaded / stale view button never opens the browse.
-                            HomeField::SearchBrowse | HomeField::FilterBrowse => {
+                            // Reopen the find results browse without re-fetching.
+                            // Inert until fresh results are loaded and still match
+                            // the current inputs — guard the descend so an unloaded
+                            // / stale view button never opens the browse.
+                            HomeField::FindBrowse => {
                                 if !self.home.find.browse.rows.is_empty()
                                     && self.home.find.results_current()
                                 {
                                     self.home.find.browse.descend();
                                 }
                             }
-                            // Find chips step forward on enter (like the source
-                            // strip); both CTAs dispatch the resolved find plan.
-                            HomeField::SearchMode
-                            | HomeField::SearchStatus
-                            | HomeField::SearchSort => self.cycle_search_chip(true),
-                            HomeField::SearchRun => return self.dispatch_find_run(),
-                            field if field.is_filter_chip() => self.cycle_filter_chip(true),
-                            HomeField::FilterRun => return self.dispatch_find_run(),
+                            // The find CTA dispatches the resolved plan (osu search
+                            // or nzbasic filter).
+                            HomeField::FindRun => return self.dispatch_find_run(),
+                            // Find chips step forward on enter (like the source strip).
+                            field if field.is_find_chip() => self.cycle_find_chip(true),
                             field if field.is_toggle() => self.home.toggle_current(),
                             // Text inputs and the threads stepper have nothing to activate.
                             _ => {}
@@ -2283,12 +2267,8 @@ impl App {
                         }
                     } else if self.home.focus == HomeField::Source {
                         self.home.cycle_source(true);
-                    } else if self.home.focus == HomeField::Backend {
-                        self.home.cycle_find_backend(true);
-                    } else if self.home.focus.is_search_chip() {
-                        self.cycle_search_chip(true);
-                    } else if self.home.focus.is_filter_chip() {
-                        self.cycle_filter_chip(true);
+                    } else if self.home.focus.is_find_chip() {
+                        self.cycle_find_chip(true);
                     } else if self.home.focus.is_toggle() {
                         self.home.toggle_current();
                     }

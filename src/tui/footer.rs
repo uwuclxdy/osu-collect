@@ -45,13 +45,11 @@ const HINT_REORDER: &str = "⇧↑↓ reorder";
 const HINT_SOURCE: &str = "↵ switch source";
 /// Get Maps: jump straight to a source by its strip digit.
 const HINT_SOURCE_JUMP: &str = "1-3 source";
-/// Search filter chip (mode / status / sort): `←`/`→` cycle the value.
+/// Find form chip (preset / special / mode / status / sort): `space` cycles it.
 const HINT_CYCLE: &str = "space cycle";
-/// Search form's `search` CTA: run the query.
-const HINT_SEARCH: &str = "↵ search";
-
-const HINT_FILTER: &str = "↵ filter";
-/// Search browse (list pane): load the next page of results.
+/// Find form's CTA: run the resolved query (osu search or nzbasic filter).
+const HINT_FIND: &str = "↵ find";
+/// Find browse (list pane): load the next page of results.
 const HINT_MORE: &str = "m more";
 const HINT_ENTER_TOGGLE: &str = "↵ toggle";
 const HINT_ENTER_OPEN: &str = "↵ open";
@@ -338,14 +336,10 @@ fn home_form_hints(form: &HomeTab) -> Vec<&'static str> {
     match form.focus {
         HomeField::Source => segments.push(HINT_SOURCE),
         HomeField::Download => segments.push(HINT_ENTER_DOWNLOAD),
-        HomeField::CollectionBrowse | HomeField::SearchBrowse | HomeField::FilterBrowse => {
-            segments.push(HINT_ENTER_OPEN)
-        }
+        HomeField::CollectionBrowse | HomeField::FindBrowse => segments.push(HINT_ENTER_OPEN),
         HomeField::Mirrors => segments.push(HINT_ENTER_OPEN),
-        HomeField::SearchRun => segments.push(HINT_SEARCH),
-        HomeField::FilterRun => segments.push(HINT_FILTER),
-        HomeField::Backend => segments.push(HINT_CYCLE),
-        f if f.is_search_chip() || f.is_filter_chip() => segments.push(HINT_CYCLE),
+        HomeField::FindRun => segments.push(HINT_FIND),
+        f if f.is_find_chip() => segments.push(HINT_CYCLE),
         f if f.is_stepper() => segments.push(HINT_PLUS_MINUS),
         f if f.is_toggle() => segments.push(HINT_ENTER_TOGGLE),
         f if f.is_text_input() => segments.push(HINT_EDIT),

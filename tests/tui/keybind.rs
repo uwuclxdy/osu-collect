@@ -316,15 +316,15 @@ fn arrows_switch_tab_off_the_strip() {
 }
 
 #[test]
-fn find_source_down_focuses_backend_chip() {
+fn find_source_down_focuses_first_field() {
     use osu_collect::app::{GetMapsSource, HomeField};
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
     app.home.focus = HomeField::Source;
-    // The find form's first row under the strip is the backend chip; Down lands
-    // there before the backend-specific fields.
+    // One union form, no backend chip: the first row under the strip is the
+    // free-text query input; Down lands there.
     app.handle_key(press(KeyCode::Down));
-    assert_eq!(app.home.focus, HomeField::Backend);
+    assert_eq!(app.home.focus, HomeField::FindQuery);
     // (`s` jumps to the download button on every source — covered by
     // `s_jumps_to_download_button_on_every_source`. `d` stays collection-only.)
 }
@@ -383,29 +383,6 @@ fn source_strip_cycles_three_sources() {
         app.home.source, start,
         "three space presses wrap back to start"
     );
-}
-
-#[test]
-fn backend_chip_switches_view_and_shares_mode() {
-    use osu_collect::app::{FindBackend, GetMapsSource, HomeField};
-    let mut app = make_app();
-    app.home.source = GetMapsSource::Find;
-    app.home.focus = HomeField::Backend;
-    assert_eq!(app.home.find_backend, FindBackend::Osu);
-
-    // Both forms edit ONE union mode value, so there is no per-backend carry to
-    // copy: a mode picked stays put across a backend-chip cycle automatically.
-    app.home.find.set_mode_idx(2); // taiko
-
-    app.handle_key(press(KeyCode::Char(' ')));
-    assert_eq!(app.home.find_backend, FindBackend::Nzbasic);
-    assert_eq!(app.home.find.mode_idx(), 2, "mode is shared, not copied");
-
-    // enter cycles back; the same shared value is still there.
-    app.home.find.set_mode_idx(3); // catch
-    app.handle_key(press(KeyCode::Enter));
-    assert_eq!(app.home.find_backend, FindBackend::Osu);
-    assert_eq!(app.home.find.mode_idx(), 3, "mode is shared, not copied");
 }
 
 // ── character input ───────────────────────────────────────────────────────────
@@ -1230,7 +1207,7 @@ fn search_view_button_reopens_results_without_re_searching() {
     // On the form (not descended into the browse).
     assert!(!app.home.find.browse.is_browsing());
 
-    app.home.focus = HomeField::SearchBrowse;
+    app.home.focus = HomeField::FindBrowse;
     let cmd = app.handle_key(press(KeyCode::Enter));
 
     assert!(
@@ -1266,7 +1243,7 @@ fn search_view_button_is_inert_once_the_query_diverges() {
     // Edit the query after results loaded: the snapshot no longer matches, so the
     // view button must go inert (no opening the now-stale results).
     app.home.find.query.set_value("teknoz");
-    app.home.focus = HomeField::SearchBrowse;
+    app.home.focus = HomeField::FindBrowse;
     let cmd = app.handle_key(press(KeyCode::Enter));
     assert!(cmd.is_none(), "stale view button fires nothing");
     assert!(
@@ -1284,7 +1261,7 @@ fn search_view_button_is_inert_until_results_load() {
     // it — Enter must be a no-op, never opening an empty browse.
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
-    app.home.focus = HomeField::SearchBrowse;
+    app.home.focus = HomeField::FindBrowse;
     let cmd = app.handle_key(press(KeyCode::Enter));
     assert!(cmd.is_none(), "disabled view button fires nothing");
     assert!(
@@ -1369,13 +1346,12 @@ fn reopening_collection_browse_preserves_picks() {
 
 #[test]
 fn filter_cta_emits_run_filter_and_rejects_bad_ranges() {
-    use osu_collect::app::{FindBackend, GetMapsSource, HomeField};
+    use osu_collect::app::{GetMapsSource, HomeField};
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
-    app.home.find_backend = FindBackend::Nzbasic;
-    app.home.focus = HomeField::FilterRun;
+    app.home.focus = HomeField::FindRun;
     // A nzbasic-forcer (special) resolves the plan to the filter route, so the
-    // CTA dispatches a filter fetch rather than the default osu search.
+    // single CTA dispatches a filter fetch rather than the default osu search.
     app.home.find.cycle_special(true); // → farm
 
     let cmd = app.handle_key(press(KeyCode::Enter));
@@ -1392,18 +1368,17 @@ fn filter_cta_emits_run_filter_and_rejects_bad_ranges() {
 
 #[test]
 fn filter_chips_cycle_on_space_and_presets_seed_fields() {
-    use osu_collect::app::{FindBackend, GetMapsSource, HomeField};
+    use osu_collect::app::{GetMapsSource, HomeField};
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
-    app.home.find_backend = FindBackend::Nzbasic;
 
-    app.home.focus = HomeField::FilterSpecial;
+    app.home.focus = HomeField::FindSpecial;
     app.handle_key(press(KeyCode::Char(' ')));
     assert_eq!(app.home.find.special_label(), "farm");
 
     // Preset cycling seeds the editable fields (space steps none → all ranked
     // → loved → farm; the farm seed pins mode to osu and resets special).
-    app.home.focus = HomeField::FilterPreset;
+    app.home.focus = HomeField::FindPreset;
     for _ in 0..3 {
         app.handle_key(press(KeyCode::Char(' ')));
     }
@@ -1417,7 +1392,6 @@ fn m_in_filter_browse_loads_more_enrichment() {
     use osu_collect::app::{BrowseRow, EnrichTarget, FindBackend, GetMapsSource};
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
-    app.home.find_backend = FindBackend::Nzbasic;
     // `m` routes by the backend that produced the results, so mark it nzbasic.
     app.home.find.note_results_backend(FindBackend::Nzbasic);
     app.home
@@ -1448,13 +1422,13 @@ fn m_in_filter_browse_loads_more_enrichment() {
 
 #[test]
 fn request_find_download_nzbasic_route_uses_label_tag_and_ids() {
-    use osu_collect::app::{BrowseRow, FindBackend, GetMapsSource};
+    use osu_collect::app::{BrowseRow, GetMapsSource};
     use osu_collect::download::IdsRunSource;
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
-    app.home.find_backend = FindBackend::Nzbasic;
-    // Seed the farm preset so the label + folder tag read "farm".
-    app.home.focus = osu_collect::app::HomeField::FilterPreset;
+    // Seed the farm preset so the label + folder tag read "farm" — the preset is
+    // a nzbasic-forcer, so the download routes to the filter subdir prefix.
+    app.home.focus = osu_collect::app::HomeField::FindPreset;
     for _ in 0..3 {
         app.handle_key(press(KeyCode::Char(' ')));
     }

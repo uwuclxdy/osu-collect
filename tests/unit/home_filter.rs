@@ -90,16 +90,15 @@ fn failure_reports_the_reason_and_stales_results() {
     assert!(!app.home.find.results_current());
 }
 
-/// Cross-routed end-to-end (search-side mirror): the backend chip still shows
-/// the osu form, but a nzbasic-forcer routed the fetch — the handler records
-/// the nzbasic backend and the download follows it into `IdsRunSource::Filter`
-/// (the `filter-` subdir prefix), not the visible chip.
+/// Cross-routed end-to-end: a nzbasic-forcer routed the fetch — the handler
+/// records the nzbasic backend and the download follows it into
+/// `IdsRunSource::Filter` (the `filter-` subdir prefix), driven by the recorded
+/// results backend, not the form's default.
 #[test]
 fn results_record_nzbasic_backend_and_download_routes_filter() {
     use crate::app::FindBackend;
     use crate::download::IdsRunSource;
     let mut app = app();
-    assert_eq!(app.home.find_backend, FindBackend::Osu, "chip untouched");
     // A nzbasic-forcer, as the run that produced these results would have.
     app.home.find.cycle_special(true); // → farm
 

@@ -199,7 +199,7 @@ fn collection_form_cta_reads_download_all() {
 
 #[test]
 fn search_view_maps_button_shows_when_results_loaded() {
-    use osu_collect::app::{BrowseRow, GetMapsSource};
+    use osu_collect::app::{BrowseRow, GetMapsSource, HomeField};
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
     app.home.find.browse.set_rows(vec![
@@ -208,10 +208,12 @@ fn search_view_maps_button_shows_when_results_loaded() {
     ]);
     // Mirror the Ready handler, which snapshots the inputs the rows are for.
     app.home.find.mark_results_current();
+    // The merged find form is long; focus the button so it scrolls into view.
+    app.home.focus = HomeField::FindBrowse;
     let content = render_content(&app, 80, 26);
     assert!(
         content.contains("view 2 maps"),
-        "search renders a `view N maps` button once results are loaded: {content}"
+        "find renders a `view N maps` button once results are loaded: {content}"
     );
 }
 
@@ -274,17 +276,51 @@ fn collection_browse_shows_focus_caret_and_uppercase_title() {
 
 #[test]
 fn search_cta_shows_inline_spinner_while_loading() {
-    use osu_collect::app::{FindStatusMsg, GetMapsSource};
+    use osu_collect::app::{FindStatusMsg, GetMapsSource, HomeField};
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
     app.home.find.status_msg = FindStatusMsg::Loading;
+    // Focus the CTA so it scrolls into view in the long merged find form.
+    app.home.focus = HomeField::FindRun;
     let content = render_content(&app, 80, 24);
-    // The CTA mirrors the scan CTA: an inline braille spinner replaces `search`
+    // The CTA mirrors the scan CTA: an inline braille spinner replaces `find`
     // while a query is in flight (tick 0 → frame `⠋`), rather than a separate
     // status row below the button.
     assert!(
-        content.contains("⠋ searching"),
-        "search CTA shows an inline spinner while loading: {content}"
+        content.contains("⠋ finding"),
+        "find CTA shows an inline spinner while loading: {content}"
+    );
+}
+
+#[test]
+fn find_form_shows_resolved_backend_indicator() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    // Focus the CTA so the indicator (rendered directly above it) is in view.
+    app.home.focus = HomeField::FindRun;
+    let content = render_content(&app, 80, 24);
+    // An untouched form routes osu, so the read-only indicator reads `via osu! api`.
+    assert!(
+        content.contains("via osu! api"),
+        "the find form shows the resolved-backend indicator: {content}"
+    );
+}
+
+#[test]
+fn find_form_shows_conflict_in_indicator() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    app.home.focus = HomeField::FindRun;
+    // A nzbasic-forcer (farm) plus an osu-forcer (free text) = a routing conflict;
+    // the indicator names both offending fields instead of a route.
+    app.home.find.cycle_special(true); // → farm
+    app.home.find.query.set_value("tekno");
+    let content = render_content(&app, 80, 24);
+    assert!(
+        content.contains("needs nzbasic") && content.contains("needs osu! api"),
+        "a routing conflict renders inline in the indicator: {content}"
     );
 }
 

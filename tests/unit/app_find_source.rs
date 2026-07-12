@@ -272,6 +272,97 @@ fn osu_only_new_criteria_force_osu_and_serialize() {
 }
 
 #[test]
+fn ranked_date_range_uses_dotdot_separator() {
+    // A single token stays an exact term (server tolerance is n/a for dates).
+    let mut source = FindSource::new();
+    source.ranked.set_value("2020-06-01");
+    assert_eq!(
+        osu(&source).ranked,
+        Some(QueryRange::Exact("2020-06-01".to_string()))
+    );
+
+    // `a..b` / `a..` / `..b` emit the range — `..` is the separator because the
+    // date token itself uses `-` (`yyyy-mm-dd`).
+    let mut source = FindSource::new();
+    source.ranked.set_value("2020..2024");
+    assert_eq!(
+        osu(&source).ranked,
+        Some(QueryRange::Range {
+            min: Some("2020".to_string()),
+            max: Some("2024".to_string())
+        })
+    );
+
+    let mut source = FindSource::new();
+    source.ranked.set_value("2020-06-01..");
+    assert_eq!(
+        osu(&source).ranked,
+        Some(QueryRange::Range {
+            min: Some("2020-06-01".to_string()),
+            max: None
+        })
+    );
+
+    let mut source = FindSource::new();
+    source.ranked.set_value("..2024");
+    assert_eq!(
+        osu(&source).ranked,
+        Some(QueryRange::Range {
+            min: None,
+            max: Some("2024".to_string())
+        })
+    );
+}
+
+#[test]
+fn ranked_rejects_non_dates_and_dash_ranges() {
+    // A `-`-joined pair is NOT a range (that separator is `..`); `2020-2024` is a
+    // malformed token (`yyyy-mm` with a 4-digit month), so build_plan errors and
+    // names the field.
+    let mut source = FindSource::new();
+    source.ranked.set_value("2020-2024");
+    let err = source.build_plan(None).expect_err("malformed date");
+    assert!(err.contains("ranked"), "error names the field: {err}");
+
+    // Junk is rejected too.
+    let mut source = FindSource::new();
+    source.ranked.set_value("soon");
+    assert!(source.build_plan(None).is_err());
+}
+
+#[test]
+fn ranked_rejects_inverted_range_comparing_shared_precision() {
+    // Plain year inversion: rejected, naming the field.
+    let mut source = FindSource::new();
+    source.ranked.set_value("2024..2020");
+    let err = source.build_plan(None).expect_err("inverted year range");
+    assert!(err.contains("ranked"), "error names the field: {err}");
+
+    // Equal bounds are a valid (degenerate) range.
+    let mut source = FindSource::new();
+    source.ranked.set_value("2020..2020");
+    assert!(source.build_plan(None).is_ok());
+
+    // Differing precision: the month isn't comparable on both sides, so the
+    // shared (year-only) prefix reads as equal — not inverted.
+    let mut source = FindSource::new();
+    source.ranked.set_value("2020..2020-06");
+    assert_eq!(
+        osu(&source).ranked,
+        Some(QueryRange::Range {
+            min: Some("2020".to_string()),
+            max: Some("2020-06".to_string())
+        })
+    );
+
+    // Same year, comparable month: inverted, rejected.
+    let mut source = FindSource::new();
+    source.ranked.set_value("2020-06..2020-01");
+    let err = source.build_plan(None).expect_err("inverted month range");
+    assert!(err.contains("ranked"), "error names the field: {err}");
+}
+
+#[test]
 fn bare_float_value_emits_exact_on_osu() {
     // A bare value parses to equal bounds and must emit `key=value` (server
     // tolerance band), not a degenerate `>=`/`<=` pair — int-field parity.
@@ -312,6 +403,37 @@ fn conflicting_forcers_error_naming_both_fields() {
         err.contains("needs nzbasic") && err.contains("needs osu! api"),
         "{err}"
     );
+}
+
+#[test]
+fn resolved_route_mirrors_the_plan_for_the_indicator() {
+    use crate::app::FindRoute;
+    // Default (untouched) form → the osu route.
+    assert_eq!(FindSource::new().resolved_route(), FindRoute::Osu);
+
+    // A nzbasic-forcer → the nzbasic route.
+    let mut source = FindSource::new();
+    set_special(&mut source, "farm");
+    assert_eq!(source.resolved_route(), FindRoute::Nzbasic);
+
+    // Conflicting forcers → a conflict naming both offending fields (what the
+    // read-only indicator renders inline instead of a route).
+    let mut source = FindSource::new();
+    set_special(&mut source, "farm");
+    source.query.set_value("tekno");
+    assert_eq!(
+        source.resolved_route(),
+        FindRoute::Conflict {
+            nzbasic: "farm".to_string(),
+            osu: "free text".to_string(),
+        }
+    );
+
+    // Routing ignores parse errors — a mid-edit bad range still shows the route
+    // it would take (osu here, since keys forces osu).
+    let mut source = FindSource::new();
+    source.keys.set_value("not-a-number");
+    assert_eq!(source.resolved_route(), FindRoute::Osu);
 }
 
 #[test]
