@@ -31,7 +31,7 @@ const QUIT_PROMPT_TEXT_DOWNLOADS: &str = "press [q] again to quit · active down
 const HINT_CANCEL: &str = "q cancel";
 /// `esc`/`q` close key for the login split. `x` stays toast-only (a
 /// notification key, not a page action) so it isn't a back key.
-const HINT_CLOSE: &str = "esc/q close";
+const HINT_CLOSE: &str = "esc / q close";
 const HINT_RETRY: &str = "r retry failed";
 const HINT_DEFER_DROP: &str = "s defer · S drop";
 /// Drop-only variant: shown when maps are queue-deferred but none are parked
@@ -42,9 +42,11 @@ const HINT_MOVE: &str = "↑↓ move";
 const HINT_SCROLL: &str = "↑↓ scroll";
 /// ⇧↑↓ reorders the focused built-in mirror row in the Config try-order.
 const HINT_REORDER: &str = "⇧↑↓ reorder";
-const HINT_SOURCE: &str = "↵ switch source";
-/// Get Maps: jump straight to a source by its strip digit.
-const HINT_SOURCE_JUMP: &str = "1-3 source";
+/// Source strip focused: `↵` cycles and `1`-`3` jump, both switch source —
+/// merged so the word "source" isn't repeated down the bar.
+const HINT_SOURCE_SWITCH: &str = "↵ / 1-3 switch source";
+/// Any other row: the strip digits still switch source.
+const HINT_SOURCE_JUMP: &str = "1-3 switch source";
 /// Find form chip (preset / special / mode / status / sort): `space` cycles it.
 const HINT_CYCLE: &str = "space cycle";
 /// Find form's CTA: run the resolved query (osu search or nzbasic filter).
@@ -64,9 +66,11 @@ const HINT_FOCUS_LIST: &str = "← list";
 const HINT_EDIT: &str = "↵ edit";
 /// While editing a text field: esc (or enter) exits back to selected.
 const HINT_EDIT_DONE: &str = "esc done";
-const HINT_PLUS_MINUS: &str = "+/- adjust";
+const HINT_PLUS_MINUS: &str = "+ / - adjust";
 /// Update browse (list pane): select every collection / none.
 const HINT_SELECT_ALL_NONE: &str = "a all / A none";
+/// Update browse (either pane): `s` cycles the focused pane's sort.
+const HINT_SORT: &str = "s sort";
 const HINT_RECHECK: &str = "r recheck";
 const HINT_MARK_INSTALLED: &str = "i installed / I all";
 const HINT_QUIT: &str = "q quit";
@@ -77,14 +81,14 @@ const HINT_SWITCH_CLIENT: &str = "c switch client";
 /// `x` dismisses the top toast; advertised only while one is visible.
 const HINT_DISMISS: &str = "x dismiss";
 
-/// Footer hint shown while a modal is open — discoverability lives in the
-/// context-aware footer hint bar, not a per-modal hint row.
-const HINT_MODAL_CLOSE: &str = "esc close";
+// Modal discoverability lives in the context-aware footer hint bar, not a
+// per-modal hint row.
 /// Footer hint for button-carrying confirm modals — the buttons show the
 /// choices, so only the universal cancel key is surfaced.
 const HINT_MODAL_CANCEL: &str = "esc cancel";
-/// Footer hint for the scrollable update-changelog modal: its body scrolls and
-/// `esc` closes (the [later]/[update] buttons carry the choices).
+/// Footer hint for a scrollable modal — both the help overlay and the update
+/// changelog scroll the body and close on `esc` (the changelog's
+/// [later]/[update] buttons carry its choices).
 const HINT_MODAL_SCROLL_CLOSE: &str = "↑↓ scroll  ·  esc close";
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
@@ -118,7 +122,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    frame.render_widget(Paragraph::new(hint_line(&hint_for(app))), area);
+    let mut segments = hint_segments(app);
+    trim_to_fit(&mut segments, area.width as usize);
+    frame.render_widget(Paragraph::new(hint_line(&join_segments(&segments))), area);
 }
 
 /// Context-aware footer keys for whichever modal is open, or `None` when no
@@ -155,7 +161,7 @@ fn render_vim_chip(frame: &mut Frame, area: Rect) -> Rect {
 
 fn modal_hint(app: &App) -> Option<String> {
     if app.help_open {
-        Some(HINT_MODAL_CLOSE.to_string())
+        Some(HINT_MODAL_SCROLL_CLOSE.to_string())
     } else if app.confirm_retry_on_start.is_some() || app.confirm_retry.is_some() {
         Some(HINT_MODAL_CANCEL.to_string())
     } else if app.update_modal.is_some() {
@@ -178,29 +184,129 @@ fn current_message(app: &App) -> Option<&AppMessage> {
     }
 }
 
-fn hint_for(app: &App) -> String {
+/// The full, width-agnostic hint string for `app` — every key the current
+/// state advertises, in display order. [`render`] narrows this to the terminal
+/// width via [`hint_segments`] + [`trim_to_fit`]; this builder is the superset
+/// the unit tests assert against.
+#[cfg(test)]
+pub(crate) fn hint_for(app: &App) -> String {
+    join_segments(&hint_segments(app))
+}
+
+/// Every advertised hint for `app`, tagged with the [`HintSegment::drop_rank`]
+/// that decides which hints vanish first when the bar would overflow. Rank 0
+/// (context actions, the edit-affordance) is never dropped; the back/quit key
+/// ([`RANK_BACK`]) outlasts the app-globals so the way out is the last hint
+/// trimmed.
+fn hint_segments(app: &App) -> Vec<HintSegment> {
     // Editing collapses the bar to the single exit affordance — no globals,
     // no universal help/back tail (the field owns every other key).
     if app.editing {
-        return HINT_EDIT_DONE.to_string();
+        return vec![HintSegment::context(HINT_EDIT_DONE)];
     }
-    let (mut segments, back) = tab_hints(app);
+    let (context, back) = tab_hints(app);
+    let mut segments: Vec<HintSegment> = context.into_iter().map(HintSegment::context).collect();
     // App-global hints sit in the middle, ahead of the universal tail: `c`
-    // (any tab), `u` (an update is pending), `x` (a toast is visible).
-    segments.push(HINT_SWITCH_CLIENT);
+    // (any tab), `u` (an update is pending), `x` (a toast is visible). `c` is
+    // suppressed while the login split traps focus — it is gated
+    // `login.is_none()` there, so advertising it would promise a dead key.
+    if !app.login_open() {
+        segments.push(HintSegment::global(HINT_SWITCH_CLIENT, RANK_SWITCH_CLIENT));
+    }
     if app.available_update.is_some() {
-        segments.push(HINT_UPDATE);
+        segments.push(HintSegment::global(HINT_UPDATE, RANK_UPDATE));
     }
     if !app.toasts.is_empty() {
-        segments.push(HINT_DISMISS);
+        segments.push(HintSegment::global(HINT_DISMISS, RANK_DISMISS));
     }
     // Universal trailing pair (cloudy-tui hint-bar order): `? help`, then the
     // context-aware back/quit key last.
-    segments.push(HINT_HELP);
+    segments.push(HintSegment::global(HINT_HELP, RANK_HELP));
     if let Some(back) = back {
-        segments.push(back);
+        segments.push(HintSegment::global(back, RANK_BACK));
     }
-    join(&segments)
+    segments
+}
+
+/// Drop priorities for the app-global hints when the bar must shrink. Higher
+/// ranks vanish first; the back/quit key outlasts every global so the exit is
+/// the last thing trimmed. Context actions are rank 0 and never drop.
+const RANK_BACK: u8 = 1;
+const RANK_HELP: u8 = 2;
+const RANK_SWITCH_CLIENT: u8 = 3;
+const RANK_DISMISS: u8 = 4;
+const RANK_UPDATE: u8 = 5;
+
+/// One footer hint plus the rank that orders it for width-trimming.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct HintSegment {
+    text: &'static str,
+    drop_rank: u8,
+}
+
+impl HintSegment {
+    /// A context action tied to the focused surface — kept until the bar can
+    /// no longer fit even after every global and the back key are gone.
+    const fn context(text: &'static str) -> Self {
+        Self { text, drop_rank: 0 }
+    }
+
+    /// A global/universal hint, droppable at `rank`.
+    const fn global(text: &'static str, rank: u8) -> Self {
+        Self {
+            text,
+            drop_rank: rank,
+        }
+    }
+}
+
+fn join_segments(segments: &[HintSegment]) -> String {
+    segments
+        .iter()
+        .map(|s| s.text)
+        .collect::<Vec<_>>()
+        .join(HINT_SEPARATOR)
+}
+
+/// Columns the rendered hint line would occupy for `segments`, mirroring
+/// [`hint_line`]'s layout: a leading space, then `·`-split groups joined by
+/// [`HINT_GROUP_GAP`] (3 cols). Group width is `chars().count()` — the hint
+/// glyph set (arrows, `·`, ASCII) is all single-column, so this tracks display
+/// columns without a unicode-width dependency.
+fn rendered_width(segments: &[HintSegment]) -> usize {
+    let groups: Vec<&str> = segments
+        .iter()
+        .flat_map(|s| s.text.split('·'))
+        .map(str::trim)
+        .filter(|g| !g.is_empty())
+        .collect();
+    if groups.is_empty() {
+        return 0;
+    }
+    let body: usize = groups.iter().map(|g| g.chars().count()).sum();
+    let gaps = (groups.len() - 1) * HINT_GROUP_GAP.chars().count();
+    1 + body + gaps
+}
+
+/// Drop the lowest-priority hints until the line fits `budget` columns. Only
+/// rank > 0 (global/back) hints are eligible; once only context actions remain
+/// the bar is left to truncate at the terminal edge rather than hide the keys
+/// that matter for the focused surface.
+fn trim_to_fit(segments: &mut Vec<HintSegment>, budget: usize) {
+    while rendered_width(segments) > budget {
+        // `max_by_key` resolves rank ties to the last occurrence, but every
+        // global/back rank is unique, so this is the single highest-rank hint.
+        let drop = segments
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.drop_rank > 0)
+            .max_by_key(|(_, s)| s.drop_rank)
+            .map(|(i, _)| i);
+        match drop {
+            Some(i) => segments.remove(i),
+            None => break,
+        };
+    }
 }
 
 /// Per-tab middle hints plus the context-aware trailing back/quit key. `? help`
@@ -270,10 +376,6 @@ fn downloads_hints(app: &App) -> (Vec<&'static str>, Option<&'static str>) {
     (segments, back)
 }
 
-fn join(segments: &[&str]) -> String {
-    segments.join(HINT_SEPARATOR)
-}
-
 /// Home-tab middle hints + trailing back key. The update source has its own
 /// form / browse hint sets; the other sources use the standard form hints and
 /// trail `q quit`.
@@ -333,8 +435,14 @@ fn set_browse_hints(
 
 fn home_form_hints(form: &HomeTab) -> Vec<&'static str> {
     let mut segments = vec![HINT_MOVE];
+    if form.focus == HomeField::Source {
+        // Source-row focus merges the cycle key and the strip-digit jump into
+        // one hint — both switch source, so advertising them apart repeats the
+        // word "source" down the bar.
+        segments.push(HINT_SOURCE_SWITCH);
+        return segments;
+    }
     match form.focus {
-        HomeField::Source => segments.push(HINT_SOURCE),
         HomeField::Download => segments.push(HINT_ENTER_DOWNLOAD),
         HomeField::CollectionBrowse | HomeField::FindBrowse => segments.push(HINT_ENTER_OPEN),
         HomeField::Mirrors => segments.push(HINT_ENTER_OPEN),
@@ -355,13 +463,16 @@ fn update_source_hints(form: &HomeTab) -> (Vec<&'static str>, Option<&'static st
     let can_recheck = update.can_recheck_failed_maps();
 
     if update.is_browsing() {
+        // `s` cycles the focused pane's sort (collection list / missing-set
+        // preview) — the only way to find it otherwise is reading the source.
         let mut segments = if update.preview_focused() {
-            vec![HINT_SCROLL, HINT_MARK_INSTALLED, HINT_FOCUS_LIST]
+            vec![HINT_SCROLL, HINT_MARK_INSTALLED, HINT_SORT, HINT_FOCUS_LIST]
         } else {
             vec![
                 HINT_SCROLL,
                 HINT_ENTER_TOGGLE,
                 HINT_SELECT_ALL_NONE,
+                HINT_SORT,
                 HINT_FOCUS_PREVIEW,
             ]
         };
@@ -374,13 +485,20 @@ fn update_source_hints(form: &HomeTab) -> (Vec<&'static str>, Option<&'static st
     }
 
     let mut segments = vec![HINT_MOVE];
-    match form.focus {
-        HomeField::Source => segments.push(HINT_SOURCE),
-        HomeField::UpdateScan => segments.push(HINT_SCAN),
-        HomeField::UpdateBrowse => segments.push(HINT_ENTER_OPEN),
-        HomeField::UpdateOsuPath => segments.push(HINT_EDIT),
-        HomeField::Download => segments.push(HINT_ENTER_DOWNLOAD),
-        _ => {}
+    if form.focus == HomeField::Source {
+        // Same merged cycle+jump hint as the other two source forms.
+        segments.push(HINT_SOURCE_SWITCH);
+    } else {
+        match form.focus {
+            HomeField::UpdateScan => segments.push(HINT_SCAN),
+            HomeField::UpdateBrowse => segments.push(HINT_ENTER_OPEN),
+            HomeField::UpdateOsuPath => segments.push(HINT_EDIT),
+            HomeField::Download => segments.push(HINT_ENTER_DOWNLOAD),
+            _ => {}
+        }
+        // The strip digits switch source from the update form too — omitted
+        // before, which read as if they only worked on the other two forms.
+        segments.push(HINT_SOURCE_JUMP);
     }
     if can_recheck {
         segments.push(HINT_RECHECK);
@@ -446,12 +564,27 @@ fn hint_line(hint: &str) -> Line<'static> {
         } else {
             spans.push(Span::raw(" "));
         }
-        let mut parts = trimmed.splitn(2, ' ');
-        let key = parts.next().unwrap_or("");
-        let label = parts.next().unwrap_or("");
-        spans.push(Span::styled(key.to_string(), key_style));
-        if !label.is_empty() {
-            spans.push(Span::styled(format!(" {label}"), label_style));
+        if let Some((left, right)) = trimmed.split_once(" / ") {
+            let push_key_label = |s: &str, spans: &mut Vec<Span<'static>>| {
+                let mut sp = s.splitn(2, ' ');
+                let k = sp.next().unwrap_or("");
+                let l = sp.next().unwrap_or("");
+                spans.push(Span::styled(k.to_string(), key_style));
+                if !l.is_empty() {
+                    spans.push(Span::styled(format!(" {l}"), label_style));
+                }
+            };
+            push_key_label(left, &mut spans);
+            spans.push(Span::styled(" / ", label_style));
+            push_key_label(right, &mut spans);
+        } else {
+            let mut simple = trimmed.splitn(2, ' ');
+            let key = simple.next().unwrap_or("");
+            let label = simple.next().unwrap_or("");
+            spans.push(Span::styled(key.to_string(), key_style));
+            if !label.is_empty() {
+                spans.push(Span::styled(format!(" {label}"), label_style));
+            }
         }
     }
 

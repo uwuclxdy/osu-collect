@@ -1,7 +1,8 @@
 use super::super::{SPINNER_FRAMES_PADDED, spinner_str};
 use super::{hint_for, hint_line};
 use crate::app::{
-    App, ConfigField, HomeField, Tab, collection::CollectionPage, collection::FailureReason,
+    App, ConfigField, HomeField, LoginTab, Tab, collection::CollectionPage,
+    collection::FailureReason,
 };
 use crate::config::Config;
 use crate::download::{DownloadId, DownloadStage, FailedMap};
@@ -250,5 +251,120 @@ fn config_footer_advertises_reorder_only_on_a_builtin_mirror_row() {
         !hint_for(&app).contains("reorder"),
         "a non-mirror row must not advertise reorder, got: {}",
         hint_for(&app)
+    );
+}
+
+#[test]
+fn footer_hint_drops_switch_client_while_login_split_is_open() {
+    let mut app = App::new(Config::default());
+    app.active_tab = Tab::Config;
+    app.login = Some(LoginTab::new(false));
+
+    let hint = hint_for(&app);
+    // `c` is gated `login.is_none()` while the login split traps focus, so the
+    // bar must not promise it. The close and help affordances still apply.
+    assert!(
+        !hint.contains("switch client"),
+        "login split must not advertise `c switch client`, got: {hint}"
+    );
+    assert!(hint.contains("close"), "login must advertise close: {hint}");
+    assert!(
+        hint.contains("? help"),
+        "login must still advertise help: {hint}"
+    );
+}
+
+#[test]
+fn trim_to_fit_drops_globals_in_rank_order_before_context() {
+    use super::{HintSegment, join_segments, rendered_width, trim_to_fit};
+    use std::collections::HashSet;
+    // rank: update(5) > dismiss(4) > switch-client(3) > help(2) > back(1) > context(0)
+    let segs = vec![
+        HintSegment::context("↑↓ scroll"),
+        HintSegment::context("r retry failed"),
+        HintSegment::global("c switch client", 3),
+        HintSegment::global("u update", 5),
+        HintSegment::global("x dismiss", 4),
+        HintSegment::global("? help", 2),
+        HintSegment::global("q cancel", 1),
+    ];
+    let wide = rendered_width(&segs);
+
+    // A budget that holds everything trims nothing.
+    let mut full = segs.clone();
+    trim_to_fit(&mut full, wide);
+    assert!(
+        join_segments(&full).contains("switch client"),
+        "wide budget must keep every hint"
+    );
+
+    // Sweep every narrower budget: a hint may vanish only after every
+    // higher-rank hint has already gone, and context (rank 0) never drops
+    // while any global/back hint remains.
+    let rank_of = |t: &str| segs.iter().find(|s| s.text == t).unwrap().drop_rank;
+    for budget in 1..=wide {
+        let mut s = segs.clone();
+        trim_to_fit(&mut s, budget);
+        let present: HashSet<&str> = s.iter().map(|s| s.text).collect();
+        if present.iter().any(|t| rank_of(t) > 0) {
+            for context in ["↑↓ scroll", "r retry failed"] {
+                assert!(
+                    present.contains(context),
+                    "budget {budget}: context hint dropped before a global"
+                );
+            }
+        }
+        for a in segs.iter().filter(|s| s.drop_rank > 0) {
+            if present.contains(a.text) {
+                for b in segs
+                    .iter()
+                    .filter(|s| s.drop_rank > 0 && s.drop_rank < a.drop_rank)
+                {
+                    assert!(
+                        present.contains(b.text),
+                        "budget {budget}: `{}` (rank {}) kept while `{}` (rank {}) was dropped",
+                        a.text,
+                        a.drop_rank,
+                        b.text,
+                        b.drop_rank
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn source_strip_hint_merges_when_focused_standalone_otherwise() {
+    let mut app = App::new(Config::default());
+
+    // Unfocused: the strip-digit jump stands alone as `1-3 switch source`.
+    app.home.focus = HomeField::Download;
+    let unfocused = hint_for(&app);
+    assert!(
+        unfocused.contains("1-3 switch source"),
+        "unfocused rows advertise the jump, got: {unfocused}"
+    );
+    assert!(
+        !unfocused.contains("↵ / 1-3"),
+        "unfocused rows must not show the focused merge, got: {unfocused}"
+    );
+
+    // Focused: cycle (`↵`) + jump (`1`-`3`) collapse into one hint so the word
+    // "source" isn't repeated down the bar.
+    app.home.focus = HomeField::Source;
+    let focused = hint_for(&app);
+    assert!(
+        focused.contains("↵ / 1-3 switch source"),
+        "source focus merges cycle+jump, got: {focused}"
+    );
+    assert!(
+        !focused.contains("↵ switch source"),
+        "old standalone `↵ switch source` must be gone, got: {focused}"
+    );
+    assert_eq!(
+        focused.matches("switch source").count(),
+        1,
+        "exactly one switch-source hint, got: {focused}"
     );
 }

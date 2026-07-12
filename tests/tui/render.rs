@@ -734,7 +734,7 @@ fn home_footer_text_input_focus_has_four_hints_with_edit_and_quit() {
 }
 
 #[test]
-fn update_source_form_footer_has_at_most_five_hints() {
+fn update_source_form_footer_lists_source_jump() {
     use osu_collect::app::{GetMapsSource, HomeField};
     let mut app = make_app();
     app.home.source = GetMapsSource::Update;
@@ -742,16 +742,20 @@ fn update_source_form_footer_has_at_most_five_hints() {
     let footer = render_footer_row(&app, 200, 24);
     assert!(footer.contains("↑↓"), "must show move hint");
     assert!(footer.contains("↵ scan"), "scan CTA focus shows ↵ scan");
+    assert!(
+        footer.contains("1-3 switch source"),
+        "update form must advertise the strip-digit jump like the other sources: {footer}"
+    );
     assert!(footer.contains('?'), "must show ? help");
     assert!(
         footer.contains("switch client"),
         "must show c switch client"
     );
-    // move, scan, switch-client, help, quit
-    assert!(
-        hint_count(&footer) <= 5,
-        "update form footer must show at most 5 hints, got {}",
-        hint_count(&footer)
+    // move, scan, source-jump, switch-client, help, quit
+    assert_eq!(
+        hint_count(&footer),
+        6,
+        "update form footer must show move, scan, source-jump, switch-client, help, quit: {footer}"
     );
 }
 
@@ -772,11 +776,15 @@ fn update_browse_footer_lists_the_browse_keys() {
         footer.contains("switch client"),
         "must show c switch client"
     );
-    // scroll, toggle, all/none, preview, switch-client, help
+    assert!(
+        footer.contains("s sort"),
+        "browse footer must advertise the `s sort` cycle: {footer}"
+    );
+    // scroll, toggle, all/none, sort, preview, switch-client, help
     assert_eq!(
         hint_count(&footer),
-        6,
-        "browse footer must show scroll, toggle, all/none, preview, switch-client, help"
+        7,
+        "browse footer must show scroll, toggle, all/none, sort, preview, switch-client, help"
     );
 }
 
