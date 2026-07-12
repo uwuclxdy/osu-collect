@@ -18,7 +18,9 @@ use std::path::Path;
 const PANEL_TITLE: &str = " HOME ";
 
 const SECTION_COLLECTION: &str = "collection";
-const SECTION_MIRRORS: &str = "mirrors";
+/// The shared run-settings section: mirrors summary + directory / threads /
+/// overwrite / video. Rendered on every source (find / collection / update) —
+/// the values live on `HomeTab`, so switching source never changes them.
 const SECTION_DOWNLOAD: &str = "download";
 /// Sentinel for a field that belongs to no section (the download button);
 /// never equals a rendered header label, so no title lights up.
@@ -35,7 +37,7 @@ const COLLECTION_BROWSE_TITLE: &str = " COLLECTION ";
 
 /// Focus hint under the mirrors summary: it is read-only here, so `↵` hands
 /// off to the Config tab, which owns all mirror editing.
-const HELP_MIRRORS_SUMMARY: &str = "↵ to edit mirrors in the config tab";
+const HELP_MIRRORS_SUMMARY: &str = "↵ to configure";
 
 /// Positions the terminal caret (via [`ratatui::Frame::set_cursor_position`])
 /// when a text field is focused in edit mode; otherwise leaves it hidden.
@@ -50,18 +52,38 @@ pub fn render(
     editing: bool,
     tick: u64,
 ) {
-    if area.height < super::COMPACT_HEIGHT {
-        render_compact(frame, area, form, library, editing, tick);
+    // A browse claims the whole body regardless of density.
+    if form.source == GetMapsSource::Update && form.update.is_browsing() {
+        update_source::render_browse(frame, area, &form.update);
         return;
     }
-    render_content(frame, area, form, library, editing, tick);
+    if maybe_render_set_browse(frame, area, form) {
+        return;
+    }
+    // Compact (< COMPACT_HEIGHT) drops the section headers, spacers, and per-row
+    // help tooltips to reclaim vertical space; navigation is identical.
+    let chrome = area.height >= super::COMPACT_HEIGHT;
+    render_form(frame, area, form, library, editing, tick, chrome);
 }
 
-/// Caret column for the update source's osu! path input (its value lives on
-/// `library`), or `None` when it isn't the focused, editing row.
-fn update_cursor_col(form: &HomeTab, library: &LibraryState, editing: bool) -> Option<u16> {
-    (editing && form.focus == HomeField::UpdateOsuPath)
-        .then(|| widgets::input_cursor_col(&library.osu_path, 0))
+/// Caret column for whichever text input is focused in edit mode: the update
+/// source's osu! path lives on `library` (width 0); find-source inputs align to
+/// [`find_source::LABEL_WIDTH`]; every other input (collection, directory) is
+/// its own width. `None` when the focused row isn't an editing text field.
+fn home_cursor_col(form: &HomeTab, library: &LibraryState, editing: bool) -> Option<u16> {
+    if !editing {
+        return None;
+    }
+    if form.focus == HomeField::UpdateOsuPath {
+        return Some(widgets::input_cursor_col(&library.osu_path, 0));
+    }
+    let label_width = if form.focus.is_find_input() {
+        find_source::LABEL_WIDTH
+    } else {
+        0
+    };
+    form.focused_input()
+        .map(|input| widgets::input_cursor_col(input, label_width))
 }
 
 /// If the active source is in a flat set browse (search results / collection
@@ -101,164 +123,6 @@ fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab) -> boo
         }
         _ => false,
     }
-}
-
-/// Caret column for whichever find-source input is focused in edit mode; the
-/// offset matches the aligned label width its rows render with.
-fn find_cursor_col(form: &HomeTab, editing: bool) -> Option<u16> {
-    (editing && form.focus.is_find_input())
-        .then(|| {
-            form.focused_input()
-                .map(|input| widgets::input_cursor_col(input, find_source::LABEL_WIDTH))
-        })
-        .flatten()
-}
-
-/// Compact render: all focusable fields without section headers, spacers, or help lines.
-///
-/// Navigation is identical to normal mode — the full `HOME_FIELDS` cycle still applies.
-/// Only decorative chrome is stripped to reclaim vertical space.
-fn render_compact(
-    frame: &mut Frame,
-    area: Rect,
-    form: &HomeTab,
-    library: &LibraryState,
-    editing: bool,
-    tick: u64,
-) {
-    let focus = form.focus;
-
-    // A browse claims the whole body regardless of density.
-    if form.source == GetMapsSource::Update && form.update.is_browsing() {
-        update_source::render_browse(frame, area, &form.update);
-        return;
-    }
-    if maybe_render_set_browse(frame, area, form) {
-        return;
-    }
-
-    let mut items = widgets::FormItems::new(focus);
-
-    items.push_focusable(
-        HomeField::Source,
-        source_row_item(form.source, focus == HomeField::Source),
-    );
-
-    match form.source {
-        GetMapsSource::Collection => {}
-        GetMapsSource::Update => {
-            update_source::push_form_rows(&mut items, &form.update, library, focus, editing, tick);
-            let cursor_col = update_cursor_col(form, library, editing);
-            let (items, focused_index) = items.into_parts();
-            widgets::render_scrollable_panel(
-                frame,
-                area,
-                PANEL_TITLE,
-                None,
-                items,
-                focused_index,
-                !focus.is_button(),
-                cursor_col,
-                true,
-                true,
-                &form.list_offset,
-            );
-            return;
-        }
-        GetMapsSource::Find => {
-            find_source::push_form_rows(&mut items, &form.find, focus, editing, tick);
-            let cursor_col = find_cursor_col(form, editing);
-            let (items, focused_index) = items.into_parts();
-            widgets::render_scrollable_panel(
-                frame,
-                area,
-                PANEL_TITLE,
-                None,
-                items,
-                focused_index,
-                !focus.is_button(),
-                cursor_col,
-                true,
-                true,
-                &form.list_offset,
-            );
-            return;
-        }
-    }
-
-    items.push_focusable(
-        HomeField::Collection,
-        widgets::input_item(&form.collection, focus == HomeField::Collection, editing, 0),
-    );
-    if let Some((state, text)) = &form.collection_resolve {
-        items.push(resolve_row(*state, text));
-    }
-
-    items.push_focusable(
-        HomeField::Mirrors,
-        mirror_summary_item(
-            form.mirror_count(),
-            form.mirror_latency_range(),
-            focus == HomeField::Mirrors,
-        ),
-    );
-
-    items.push_focusable(
-        HomeField::Directory,
-        widgets::input_item(&form.directory, focus == HomeField::Directory, editing, 0),
-    );
-    items.push_focusable(
-        HomeField::Threads,
-        widgets::stepper_item(
-            form.threads.label,
-            form.resolved_threads(),
-            form.default_threads,
-            focus == HomeField::Threads,
-            0,
-        ),
-    );
-    push_toggle_rows(&mut items, form, focus);
-
-    // `view N maps` opens the resolved collection in the checkbox browse.
-    let (browse_label, browse_enabled) = collection_browse_button(form);
-    items.push_focusable(
-        HomeField::CollectionBrowse,
-        widgets::button_item(
-            &browse_label,
-            focus == HomeField::CollectionBrowse,
-            browse_enabled,
-        ),
-    );
-    let (download_label, download_enabled) = collection_download_button(form);
-    items.push_focusable(
-        HomeField::Download,
-        widgets::button_item(
-            &download_label,
-            focus == HomeField::Download,
-            download_enabled,
-        ),
-    );
-
-    let cursor_col = editing
-        .then(|| {
-            form.focused_input()
-                .map(|f| widgets::input_cursor_col(f, 0))
-        })
-        .flatten();
-    let (items, focused_index) = items.into_parts();
-    widgets::render_scrollable_panel(
-        frame,
-        area,
-        PANEL_TITLE,
-        None,
-        items,
-        focused_index,
-        !focus.is_button(),
-        cursor_col,
-        true,
-        true,
-        &form.list_offset,
-    )
 }
 
 /// Whether the form has the minimum inputs a download needs: a collection
@@ -315,25 +179,22 @@ fn directory_hint(form: &HomeTab) -> String {
     )
 }
 
-fn render_content(
+/// Renders the Get Maps form: the source strip, the active source's own rows,
+/// then the shared download section + the source's download button. `chrome`
+/// (off below `COMPACT_HEIGHT`) drops the section headers, spacers, and per-row
+/// help tooltips; navigation is identical either way. The browse-claims-body and
+/// density checks are handled by [`render`] before this is called.
+fn render_form(
     frame: &mut Frame,
     area: Rect,
     form: &HomeTab,
     library: &LibraryState,
     editing: bool,
     tick: u64,
+    chrome: bool,
 ) {
     let focus = form.focus;
-
-    // A browse claims the whole body.
-    if form.source == GetMapsSource::Update && form.update.is_browsing() {
-        update_source::render_browse(frame, area, &form.update);
-        return;
-    }
-    if maybe_render_set_browse(frame, area, form) {
-        return;
-    }
-
+    let active_section = home_section(focus);
     let mut items = widgets::FormItems::new(focus);
 
     // Source strip is the first focusable row on every source.
@@ -341,134 +202,46 @@ fn render_content(
         HomeField::Source,
         source_row_item(form.source, focus == HomeField::Source),
     );
-    items.push(widgets::spacer());
+    if chrome {
+        items.push(widgets::spacer());
+    }
 
+    // Source-specific rows (find/update carry their own CTAs; collection is just
+    // the URL field). The find/update rows already include their `view` buttons.
     match form.source {
-        GetMapsSource::Collection => {}
-        GetMapsSource::Update => {
-            update_source::push_form_rows(&mut items, &form.update, library, focus, editing, tick);
-            let cursor_col = update_cursor_col(form, library, editing);
-            let (items, focused_index) = items.into_parts();
-            widgets::render_scrollable_panel(
-                frame,
-                area,
-                PANEL_TITLE,
-                None,
-                items,
-                focused_index,
-                !focus.is_button(),
-                cursor_col,
-                true,
-                true,
-                &form.list_offset,
+        GetMapsSource::Collection => {
+            if chrome {
+                items.push(widgets::section_header(
+                    SECTION_COLLECTION,
+                    active_section == SECTION_COLLECTION,
+                ));
+            }
+            items.push_focusable(
+                HomeField::Collection,
+                widgets::input_item(&form.collection, focus == HomeField::Collection, editing, 0),
             );
-            return;
+            if let Some((state, text)) = &form.collection_resolve {
+                items.push(resolve_row(*state, text));
+            }
+        }
+        GetMapsSource::Update => {
+            update_source::push_form_rows(&mut items, &form.update, library, focus, editing, tick)
         }
         GetMapsSource::Find => {
-            find_source::push_form_rows(&mut items, &form.find, focus, editing, tick);
-            let cursor_col = find_cursor_col(form, editing);
-            let (items, focused_index) = items.into_parts();
-            widgets::render_scrollable_panel(
-                frame,
-                area,
-                PANEL_TITLE,
-                None,
-                items,
-                focused_index,
-                !focus.is_button(),
-                cursor_col,
-                true,
-                true,
-                &form.list_offset,
-            );
-            return;
+            find_source::push_form_rows(&mut items, &form.find, focus, editing, tick)
         }
     }
 
-    let active_section = home_section(focus);
-    items.push(widgets::section_header(
-        SECTION_COLLECTION,
-        active_section == SECTION_COLLECTION,
-    ));
-    items.push_focusable(
-        HomeField::Collection,
-        widgets::input_item(&form.collection, focus == HomeField::Collection, editing, 0),
-    );
-    if let Some((state, text)) = &form.collection_resolve {
-        items.push(resolve_row(*state, text));
+    if chrome {
+        items.push(widgets::spacer());
     }
-    items.push(widgets::spacer());
-
-    items.push(widgets::section_header(
-        SECTION_MIRRORS,
-        active_section == SECTION_MIRRORS,
-    ));
-    let mirrors_focused = focus == HomeField::Mirrors;
-    items.push_focusable(
-        HomeField::Mirrors,
-        mirror_summary_item(
-            form.mirror_count(),
-            form.mirror_latency_range(),
-            mirrors_focused,
-        ),
-    );
-    if mirrors_focused {
-        items.push(widgets::help_item(HELP_MIRRORS_SUMMARY));
+    push_download_section(&mut items, form, focus, editing, chrome, active_section);
+    if chrome {
+        items.push(widgets::spacer());
     }
-    items.push(widgets::spacer());
+    push_action_buttons(&mut items, form, focus);
 
-    items.push(widgets::section_header(
-        SECTION_DOWNLOAD,
-        active_section == SECTION_DOWNLOAD,
-    ));
-    items.push_focusable(
-        HomeField::Directory,
-        widgets::input_item(&form.directory, focus == HomeField::Directory, editing, 0),
-    );
-    // Tooltip: the resolved path maps will be downloaded to (default dir when the
-    // field is blank), so the user sees the target before starting.
-    if focus == HomeField::Directory {
-        items.push(widgets::help_item(directory_hint(form)));
-    }
-    items.push_focusable(
-        HomeField::Threads,
-        widgets::stepper_item(
-            form.threads.label,
-            form.resolved_threads(),
-            form.default_threads,
-            focus == HomeField::Threads,
-            0,
-        ),
-    );
-    push_toggle_rows(&mut items, form, focus);
-    items.push(widgets::spacer());
-
-    // `view N maps` opens the resolved collection in the checkbox browse.
-    let (browse_label, browse_enabled) = collection_browse_button(form);
-    items.push_focusable(
-        HomeField::CollectionBrowse,
-        widgets::button_item(
-            &browse_label,
-            focus == HomeField::CollectionBrowse,
-            browse_enabled,
-        ),
-    );
-    let (download_label, download_enabled) = collection_download_button(form);
-    items.push_focusable(
-        HomeField::Download,
-        widgets::button_item(
-            &download_label,
-            focus == HomeField::Download,
-            download_enabled,
-        ),
-    );
-
-    let cursor_col = editing
-        .then(|| {
-            form.focused_input()
-                .map(|f| widgets::input_cursor_col(f, 0))
-        })
-        .flatten();
+    let cursor_col = home_cursor_col(form, library, editing);
     let (items, focused_index) = items.into_parts();
     widgets::render_scrollable_panel(
         frame,
@@ -485,8 +258,102 @@ fn render_content(
     )
 }
 
-/// Pushes the two boolean override toggles (`overwrite existing`, `video`),
-/// shared by `render_compact` and `render_content`.
+/// The shared `download` run-settings section (mirrors summary + directory /
+/// threads / overwrite / video), rendered on every source. The values live on
+/// `HomeTab`, so switching source keeps them; `chrome` gates the header + help
+/// tooltips.
+fn push_download_section(
+    items: &mut widgets::FormItems<HomeField>,
+    form: &HomeTab,
+    focus: HomeField,
+    editing: bool,
+    chrome: bool,
+    active_section: &str,
+) {
+    if chrome {
+        items.push(widgets::section_header(
+            SECTION_DOWNLOAD,
+            active_section == SECTION_DOWNLOAD,
+        ));
+    }
+    let mirrors_focused = focus == HomeField::Mirrors;
+    items.push_focusable(
+        HomeField::Mirrors,
+        mirror_summary_item(
+            form.mirror_count(),
+            form.mirror_latency_range(),
+            mirrors_focused,
+        ),
+    );
+    if chrome && mirrors_focused {
+        items.push(widgets::help_item(HELP_MIRRORS_SUMMARY));
+    }
+    items.push_focusable(
+        HomeField::Directory,
+        widgets::input_item(&form.directory, focus == HomeField::Directory, editing, 0),
+    );
+    // Tooltip: the resolved path maps will be downloaded to (default dir when the
+    // field is blank), so the user sees the target before starting.
+    if chrome && focus == HomeField::Directory {
+        items.push(widgets::help_item(directory_hint(form)));
+    }
+    items.push_focusable(
+        HomeField::Threads,
+        widgets::stepper_item(
+            form.threads.label,
+            form.resolved_threads(),
+            form.default_threads,
+            focus == HomeField::Threads,
+            0,
+        ),
+    );
+    push_toggle_rows(items, form, focus);
+}
+
+/// The source-specific tail buttons after the shared download section. The
+/// collection source's `view N maps` sits here (its own CTAs weren't pushed with
+/// the form rows); every source ends on the shared [`HomeField::Download`]
+/// button, labelled per source.
+fn push_action_buttons(
+    items: &mut widgets::FormItems<HomeField>,
+    form: &HomeTab,
+    focus: HomeField,
+) {
+    if form.source == GetMapsSource::Collection {
+        let (browse_label, browse_enabled) = collection_browse_button(form);
+        items.push_focusable(
+            HomeField::CollectionBrowse,
+            widgets::button_item(
+                &browse_label,
+                focus == HomeField::CollectionBrowse,
+                browse_enabled,
+            ),
+        );
+    }
+
+    let (download_label, download_enabled) = match form.source {
+        GetMapsSource::Collection => collection_download_button(form),
+        GetMapsSource::Update => widgets::download_button_label(form.update.selected_new_count()),
+        // osu-routed results carry a nekoha size backfill, so the button reads
+        // `download (N) · ~X`; the nzbasic route (and un-probed sets) sums to 0,
+        // which drops the suffix and leaves the plain `download (N)`.
+        GetMapsSource::Find => widgets::download_button_label_with_size(
+            form.find.browse.selected_count(),
+            form.find.checked_known_bytes(),
+        ),
+    };
+    items.push_focusable(
+        HomeField::Download,
+        widgets::button_item(
+            &download_label,
+            focus == HomeField::Download,
+            download_enabled,
+        ),
+    );
+}
+
+/// Pushes the two boolean override toggles (`overwrite existing`, `video`) that
+/// tail the shared download section.
 ///
 /// The slide-toggle glyph already encodes each row's state, so neither row
 /// repeats it as text and neither carries a default hint.
@@ -548,7 +415,9 @@ fn mirror_summary_item(
 /// The section a focused field belongs to, driving the active-section header cue.
 ///
 /// The download button sits below all sections, so it maps to no header
-/// (`SECTION_NONE`): focusing it leaves every section title un-underlined.
+/// (`SECTION_NONE`): focusing it leaves every section title un-underlined. The
+/// mirrors summary now lives inside the shared `download` section, so it lights
+/// that header (not a standalone `mirrors` one).
 fn home_section(field: HomeField) -> &'static str {
     use HomeField::*;
     match field {
@@ -556,10 +425,9 @@ fn home_section(field: HomeField) -> &'static str {
         // lights none of them.
         Source => SECTION_NONE,
         Collection => SECTION_COLLECTION,
-        Mirrors => SECTION_MIRRORS,
-        Threads | AutoOverwrite | Video | Directory => SECTION_DOWNLOAD,
-        // The download buttons and the update / find source fields render in
-        // their own bodies, not the collection sections, so they light no header.
+        Mirrors | Threads | AutoOverwrite | Video | Directory => SECTION_DOWNLOAD,
+        // The download buttons and the source-specific CTA rows render outside
+        // the collection/download sections, so they light no header.
         Download | CollectionBrowse | UpdateOsuPath | UpdateScan | UpdateBrowse => SECTION_NONE,
         FindQuery | FindPreset | FindSpecial | FindMode | FindStatus | FindSort | FindStars
         | FindAr | FindCs | FindOd | FindHp | FindBpm | FindLength | FindKeys | FindFavourites

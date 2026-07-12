@@ -66,8 +66,17 @@ fn home_render_shows_sections_and_footer() {
         "active tab must not use brackets"
     );
     assert!(output.contains("COLLECTION"));
-    assert!(output.contains("MIRRORS"));
     assert!(output.contains("DOWNLOAD"));
+    // The mirrors summary is now a row inside the merged DOWNLOAD section, not a
+    // standalone MIRRORS header.
+    assert!(
+        output.contains("mirrors"),
+        "mirrors summary row renders under DOWNLOAD: {output}"
+    );
+    assert!(
+        !output.contains("MIRRORS"),
+        "no standalone MIRRORS header on the home tab: {output}"
+    );
     // footer renders `enter` as the glyph `↵`, never the word
     assert!(output.contains("↵ toggle"));
     assert!(!output.contains("enter toggle"), "enter must render as ↵");

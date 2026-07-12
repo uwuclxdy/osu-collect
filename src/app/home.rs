@@ -297,12 +297,13 @@ const COLLECTION_FIELDS: &[HomeField] = &[
 
 /// Find-source focus order: the strip, the free-text query, the chips (preset →
 /// special → mode → status → sort), the range inputs, the text inputs, the
-/// limit, then the CTA / `view N maps` / download row. One union list — the
-/// resolved backend is an implementation detail, so there is no per-backend
-/// field split. Like the update source, the run settings (folder / mirrors /
-/// threads / overwrite) are borrowed silently from the collection source's
-/// shared `self.home.*` fields. Descending into the results browse suspends this
-/// nav (`SetBrowse::descend`); the download fires from `Download`.
+/// limit, the `find` / `view N maps` CTAs, then the shared download section
+/// (mirrors / directory / threads / overwrite / video) and its `Download`
+/// button. One union list — the resolved backend is an implementation detail, so
+/// there is no per-backend field split. The download section is the same run
+/// settings every source shares (`self.home.*`), rendered inline on all three.
+/// Descending into the results browse suspends this nav (`SetBrowse::descend`);
+/// the download fires from `Download`.
 const FIND_FIELDS: &[HomeField] = &[
     HomeField::Source,
     HomeField::FindQuery,
@@ -327,19 +328,29 @@ const FIND_FIELDS: &[HomeField] = &[
     HomeField::FindLimit,
     HomeField::FindRun,
     HomeField::FindBrowse,
+    HomeField::Mirrors,
+    HomeField::Directory,
+    HomeField::Threads,
+    HomeField::AutoOverwrite,
+    HomeField::Video,
     HomeField::Download,
 ];
 
 /// Focus order for the update source form: the strip, the osu! path input, the
-/// scan CTA, the `view N maps` button, then the `download N selected` button.
-/// Descending into the browse suspends this nav (the app gates it on
-/// `HomeTab.update.is_browsing()`); the download fires from `Download` on the
-/// form.
+/// scan CTA, the `view N maps` button, then the shared download section
+/// (mirrors / directory / threads / overwrite / video) and its `Download`
+/// button. Descending into the browse suspends this nav (the app gates it on
+/// `HomeTab.update.is_browsing()`); the download fires from `Download`.
 const UPDATE_FIELDS: &[HomeField] = &[
     HomeField::Source,
     HomeField::UpdateOsuPath,
     HomeField::UpdateScan,
     HomeField::UpdateBrowse,
+    HomeField::Mirrors,
+    HomeField::Directory,
+    HomeField::Threads,
+    HomeField::AutoOverwrite,
+    HomeField::Video,
     HomeField::Download,
 ];
 

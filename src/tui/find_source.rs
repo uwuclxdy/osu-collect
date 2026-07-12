@@ -36,7 +36,7 @@ pub const BROWSE_LIST_TITLE: &str = " RESULTS ";
 /// Credit + risk line for the nzbasic route: the backing database is a
 /// community-hosted free instance, so the copy names the source and warns it can
 /// be unavailable. Only shown when the criteria resolve to nzbasic.
-const CREDIT: &str = "data by nzbasic (batch beatmap downloader) · community-hosted";
+const CREDIT: &str = "data by nzbasic (batch beatmap downloader)";
 
 /// Push the find-source FORM rows into the Home panel.
 pub fn push_form_rows(
@@ -61,6 +61,7 @@ pub fn push_form_rows(
             LABEL_WIDTH,
         ),
     );
+    push_hint(items, HomeField::FindPreset, focus);
     items.push_focusable(
         HomeField::FindSpecial,
         widgets::cycle_item(
@@ -71,6 +72,7 @@ pub fn push_form_rows(
             LABEL_WIDTH,
         ),
     );
+    push_hint(items, HomeField::FindSpecial, focus);
     items.push_focusable(
         HomeField::FindMode,
         widgets::cycle_item(
@@ -126,13 +128,12 @@ pub fn push_form_rows(
     push_input(items, HomeField::FindLimit, &find.limit, focus, editing);
     items.push(widgets::spacer());
 
-    // Read-only resolved-backend indicator, directly above the CTA so the route
-    // (or a routing conflict) is visible the moment the user reaches the button
-    // — the mitigation for a sort preset silently switching backends.
-    items.push(route_indicator(&route));
-
     // A run in flight mirrors the scan CTA: the static `find` label swaps for an
-    // inline braille spinner and the button is inert until results land.
+    // inline braille spinner and the button is inert until results land. The
+    // resolved-backend indicator trails the CTA on the SAME row (`→ via osu! api`
+    // / `via nzbasic`, or a conflict), so the route is visible the moment the
+    // user reaches the button — the mitigation for a sort preset silently
+    // switching backends.
     let loading = matches!(find.status_msg, FindStatusMsg::Loading);
     let cta_label = if loading {
         format!("{} finding", spinner_str(tick).trim())
@@ -141,7 +142,12 @@ pub fn push_form_rows(
     };
     items.push_focusable(
         HomeField::FindRun,
-        widgets::button_item(&cta_label, focus == HomeField::FindRun, !loading),
+        widgets::button_item_with_trailing(
+            &cta_label,
+            focus == HomeField::FindRun,
+            !loading,
+            route_trailing_spans(&route),
+        ),
     );
 
     // `view N maps` reopens the results browse without re-fetching; inert until
@@ -161,23 +167,10 @@ pub fn push_form_rows(
         items.push(row);
     }
 
-    // osu-routed results carry a nekoha size backfill, so the button reads
-    // `download (N) · ~X`; the nzbasic route (and un-probed sets) sums to 0, which
-    // drops the suffix and leaves the plain `download (N)`.
-    let (download_label, download_enabled) = widgets::download_button_label_with_size(
-        find.browse.selected_count(),
-        find.checked_known_bytes(),
-    );
-    items.push_focusable(
-        HomeField::Download,
-        widgets::button_item(
-            &download_label,
-            focus == HomeField::Download,
-            download_enabled,
-        ),
-    );
-
-    // The nzbasic credit/risk line only when the criteria actually resolve there.
+    // The shared download button + run settings (mirrors / directory / threads /
+    // overwrite / video) render AFTER this, in the Home view's download section —
+    // one section borrowed across all three sources. The nzbasic credit/risk line
+    // shows only when the criteria actually resolve there.
     if matches!(route, FindRoute::Nzbasic) {
         items.push(widgets::spacer());
         items.push(ListItem::new(Line::from(Span::styled(
@@ -198,16 +191,44 @@ fn push_input(
         field,
         widgets::input_item(input, focus == field, editing, LABEL_WIDTH),
     );
+    push_hint(items, field, focus);
 }
 
-/// The read-only resolved-backend indicator row: `→ via osu! api` / `→ via
-/// nzbasic` for a clean route, or `! <field> needs nzbasic · <field> needs osu!
-/// api` in a warning tint for a conflict. Never focusable — a live view of
-/// [`FindSource::resolved_route`].
-fn route_indicator(route: &FindRoute) -> ListItem<'static> {
-    let spans = match route {
-        FindRoute::Osu => via_spans("osu! api"),
-        FindRoute::Nzbasic => via_spans("nzbasic"),
+/// A `└ <hint>` tooltip below the row when it holds focus and carries a hint.
+/// Covers only the fields whose syntax/route isn't obvious from the label —
+/// range grammar, the ranked date range, the free-text/special routing, and the
+/// nzbasic-only limit. Obvious rows (mode/status/sort/artist/title) get none.
+fn push_hint(items: &mut widgets::FormItems<HomeField>, field: HomeField, focus: HomeField) {
+    if focus == field
+        && let Some(hint) = field_hint(field)
+    {
+        items.push(widgets::help_item(hint));
+    }
+}
+
+fn field_hint(field: HomeField) -> Option<&'static str> {
+    use HomeField::*;
+    Some(match field {
+        FindQuery => "free text · routes via osu! api",
+        FindPreset => "resets the fields, then seeds a preset",
+        FindSpecial => "farm / stream / ranked mapper · routes via nzbasic",
+        FindStars | FindAr | FindCs | FindOd | FindHp | FindBpm | FindLength | FindKeys
+        | FindFavourites => "range: min-max · min- · -max · or exact",
+        FindRanked => "date range: 2020..2024 · 2020-06-01.. · ..2024",
+        FindLimit => "nzbasic only · caps diff rows (default 500)",
+        _ => return None,
+    })
+}
+
+/// The resolved-backend indicator spans, trailing the find CTA on its row:
+/// `→ via osu! api` / `→ via nzbasic` for a clean route, or `! <field> needs
+/// nzbasic · <field> needs osu! api` in a warning tint for a conflict. A live
+/// view of [`FindSource::resolved_route`]; the leading gap separates it from the
+/// button pill.
+fn route_trailing_spans(route: &FindRoute) -> Vec<Span<'static>> {
+    match route {
+        FindRoute::Osu => via_trailing("osu! api"),
+        FindRoute::Nzbasic => via_trailing("nzbasic"),
         FindRoute::Conflict { nzbasic, osu } => vec![
             Span::styled("  ! ", Style::default().fg(warning())),
             Span::styled(
@@ -215,13 +236,12 @@ fn route_indicator(route: &FindRoute) -> ListItem<'static> {
                 Style::default().fg(warning()),
             ),
         ],
-    };
-    ListItem::new(Line::from(spans))
+    }
 }
 
 /// `→ via <backend>`: the arrow in `LINE`, the copy in `TEXT_DIM` (a recessive
 /// read-only cue, never a chip).
-fn via_spans(backend: &str) -> Vec<Span<'static>> {
+fn via_trailing(backend: &str) -> Vec<Span<'static>> {
     vec![
         Span::styled(" → ", Style::default().fg(line())),
         Span::styled(format!("via {backend}"), Style::default().fg(text_dim())),

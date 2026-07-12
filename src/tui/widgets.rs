@@ -724,6 +724,24 @@ pub fn disabled_toggle_row(
 /// `TEXT_FAINT`, focusable-but-inert (the caret still lands so the row reads as
 /// selected); the caller skips activation and surfaces a reason.
 pub fn button_item(label: &str, focused: bool, enabled: bool) -> ListItem<'static> {
+    ListItem::new(Line::from(button_spans(label, focused, enabled)))
+}
+
+/// [`button_item`] with extra pre-styled spans appended after the pill on the
+/// SAME row (the find CTA carries its resolved-backend indicator this way). The
+/// caller owns the trailing spans' leading gap.
+pub fn button_item_with_trailing(
+    label: &str,
+    focused: bool,
+    enabled: bool,
+    trailing: Vec<Span<'static>>,
+) -> ListItem<'static> {
+    let mut spans = button_spans(label, focused, enabled);
+    spans.extend(trailing);
+    ListItem::new(Line::from(spans))
+}
+
+fn button_spans(label: &str, focused: bool, enabled: bool) -> Vec<Span<'static>> {
     let pill = format!(" {label} ");
 
     let pill_style = if !enabled {
@@ -734,8 +752,7 @@ pub fn button_item(label: &str, focused: bool, enabled: bool) -> ListItem<'stati
         Style::default().fg(accent()).bold().bg(bg_raised())
     };
 
-    let spans = vec![focus_span(focused), Span::styled(pill, pill_style)];
-    ListItem::new(Line::from(spans))
+    vec![focus_span(focused), Span::styled(pill, pill_style)]
 }
 
 /// Label + enabled state for a "download the checked sets" button (the search and

@@ -104,19 +104,8 @@ pub fn push_form_rows(
         HomeField::UpdateBrowse,
         widgets::button_item(&view_label, focus == HomeField::UpdateBrowse, new_count > 0),
     );
-
-    // The download button dispatches every missing set of the checked
-    // collections; disabled until a scan selects at least one.
-    let selected = form.selected_new_count();
-    let (download_label, download_enabled) = widgets::download_button_label(selected);
-    items.push_focusable(
-        HomeField::Download,
-        widgets::button_item(
-            &download_label,
-            focus == HomeField::Download,
-            download_enabled,
-        ),
-    );
+    // The shared download button + run settings render AFTER this, in the Home
+    // view's download section (one section borrowed across all three sources).
 }
 
 /// Render the two-pane browse over the whole body area.
