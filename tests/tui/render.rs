@@ -245,6 +245,26 @@ fn collection_view_maps_button_shows_when_resolved() {
 }
 
 #[test]
+fn collection_view_maps_button_renders_above_download_section() {
+    use osu_collect::app::GetMapsSource;
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Collection;
+    app.home.set_resolved_collection(7, vec![10, 20, 30]);
+    // `render_content` is row-major, so an earlier byte index == a higher row.
+    // `view N maps` now groups with the collection field, above the shared
+    // download section (`overwrite existing` lives at that section's tail).
+    let content = render_content(&app, 80, 30);
+    let view = content.find("view 3 maps").expect("view button present");
+    let overwrite = content
+        .find("overwrite existing")
+        .expect("download section present");
+    assert!(
+        view < overwrite,
+        "the collection `view N maps` button sits above the download section: {content}"
+    );
+}
+
+#[test]
 fn collection_browse_shows_focus_caret_and_uppercase_title() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use osu_collect::app::{GetMapsSource, HomeField};

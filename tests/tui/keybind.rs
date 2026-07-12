@@ -129,33 +129,39 @@ fn tab_completes_directory_while_editing_it() {
 }
 
 #[test]
-fn s_jumps_to_download_button_on_home() {
+fn s_falls_back_to_download_button_when_no_button_is_enabled() {
     use osu_collect::app::HomeField;
     let mut app = make_app();
-    // Default focus is the collection text field, selected-not-editing.
+    // Default focus is the collection text field, selected-not-editing. A fresh
+    // collection form has no resolved collection and no picked subset, so `view N
+    // maps` and `download` are both disabled — `s` falls back to the download
+    // button.
     assert_eq!(app.home.focus, HomeField::Collection);
     app.handle_key(press(KeyCode::Char('s')));
     assert_eq!(
         app.home.focus,
         HomeField::Download,
-        "s jumps focus to the download button"
+        "s falls back to the download button when nothing is clickable"
     );
 }
 
 #[test]
-fn s_jumps_to_download_button_on_every_source() {
+fn s_jumps_to_last_enabled_button_per_source() {
     use osu_collect::app::{GetMapsSource, HomeField};
-    // Every source's form carries a download button now, so `s` reaches it on
-    // all three — not just the collection source.
-    for source in [GetMapsSource::Find, GetMapsSource::Update] {
+    // `s` lands on the furthest-along *enabled* button. On a fresh form that is
+    // the primary CTA: find lands on `find`, update on `scan` (both enabled while
+    // idle); their `view N maps` and `download` buttons are still disabled.
+    for (source, expected) in [
+        (GetMapsSource::Find, HomeField::FindRun),
+        (GetMapsSource::Update, HomeField::UpdateScan),
+    ] {
         let mut app = make_app();
         app.home.source = source;
         app.home.focus = HomeField::Source;
         app.handle_key(press(KeyCode::Char('s')));
         assert_eq!(
-            app.home.focus,
-            HomeField::Download,
-            "s jumps to the download button on the {source:?} source"
+            app.home.focus, expected,
+            "s jumps to the last enabled button on the {source:?} source"
         );
     }
 }
@@ -259,7 +265,7 @@ fn up_from_first_field_wraps_to_last() {
     use osu_collect::app::HomeField;
     let mut app = make_app();
     // The source strip is the first focusable row; Up from it wraps to the last
-    // collection field (the download button, after `view N maps`).
+    // collection field (the download button, tail of the shared download section).
     app.home.focus = HomeField::Source;
     app.handle_key(press(KeyCode::Up));
     assert_eq!(app.home.focus, HomeField::Download);
@@ -325,8 +331,8 @@ fn find_source_down_focuses_first_field() {
     // free-text query input; Down lands there.
     app.handle_key(press(KeyCode::Down));
     assert_eq!(app.home.focus, HomeField::FindQuery);
-    // (`s` jumps to the download button on every source — covered by
-    // `s_jumps_to_download_button_on_every_source`. `d` stays collection-only.)
+    // (`s` jumps to the last enabled button per source — covered by
+    // `s_jumps_to_last_enabled_button_per_source`. `d` stays collection-only.)
 }
 
 #[test]

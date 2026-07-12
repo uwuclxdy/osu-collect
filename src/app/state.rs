@@ -2384,11 +2384,13 @@ impl App {
                     } else if ch == 'd' && self.home.source == GetMapsSource::Collection {
                         return Some(AppCommand::FocusOutputDir);
                     } else if ch == 's' {
-                        // Jump straight to the download button — every source's
-                        // form has one now, so no arrowing down through the
-                        // fields. (`d` for the output-dir field stays
-                        // Collection-only: search/update borrow it silently.)
-                        self.home.focus = HomeField::Download;
+                        // Jump to the last enabled ("clickable") button in the
+                        // active source's form — the furthest-along CTA
+                        // (find/scan → view maps → download), falling back to the
+                        // download button when none are enabled. (`d` for the
+                        // output-dir field stays Collection-only: search/update
+                        // borrow it silently.)
+                        self.home.focus = self.home.last_enabled_button();
                         self.editing = false;
                     } else if let Some(source) = ch
                         .to_digit(10)

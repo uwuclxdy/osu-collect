@@ -1,10 +1,10 @@
 use super::{
     custom_mirrors::CustomMirrorList,
-    find_source::{FindSource, SetBrowse},
+    find_source::{FindSource, FindStatusMsg, SetBrowse},
     first_field, last_field,
     messages::AppMessage,
     next_field, prev_field,
-    update_source::UpdateSource,
+    update_source::{ScanCta, UpdateSource},
 };
 use crate::{
     app::runtime::ProbeResult,
@@ -279,19 +279,20 @@ pub enum HomeField {
     FindBrowse,
 }
 
-/// Focus order when the collection source is active: the source strip, then the
-/// collection form. The mirrors summary sits between the collection field and
-/// the download section; mirror editing itself lives on the Config tab, so no
-/// per-mirror rows appear here.
+/// Focus order when the collection source is active: the source strip, the
+/// collection URL field, then its `view N maps` browse button — grouped with the
+/// collection like find/update group their browse button with the run/scan CTA —
+/// then the shared download section and the `Download` button. Mirror editing
+/// lives on the Config tab, so no per-mirror rows appear here.
 const COLLECTION_FIELDS: &[HomeField] = &[
     HomeField::Source,
     HomeField::Collection,
+    HomeField::CollectionBrowse,
     HomeField::Mirrors,
     HomeField::Directory,
     HomeField::Threads,
     HomeField::AutoOverwrite,
     HomeField::Video,
-    HomeField::CollectionBrowse,
     HomeField::Download,
 ];
 
@@ -694,6 +695,53 @@ impl HomeTab {
 
     pub fn last_field(&mut self) {
         self.focus = last_field(self.active_fields(), self.focus);
+    }
+
+    /// Whether the form has the minimum inputs a collection download needs: a
+    /// collection reference and at least one enabled mirror. Gates the collection
+    /// `Download` button; final validation still happens in
+    /// [`build_request`](Self::build_request) on activation.
+    pub fn can_download(&self) -> bool {
+        !self.collection.value.trim().is_empty() && self.mirror_count() > 0
+    }
+
+    /// Whether `field` is a form button that is currently "clickable" (enabled).
+    /// Single source of truth for the button enabled-state, read by the `s`
+    /// last-enabled-button jump ([`last_enabled_button`](Self::last_enabled_button))
+    /// and the collection view's button helpers; the find/update views compute the
+    /// same predicate from the same accessors. Non-button fields return `false`.
+    pub fn button_enabled(&self, field: HomeField) -> bool {
+        match field {
+            HomeField::Download => match self.source {
+                GetMapsSource::Collection => self.collection_subset_picked() || self.can_download(),
+                GetMapsSource::Find => self.find.browse.selected_count() > 0,
+                GetMapsSource::Update => self.update.selected_new_count() > 0,
+            },
+            HomeField::CollectionBrowse => self
+                .resolved_collection
+                .as_ref()
+                .is_some_and(|(_, ids)| !ids.is_empty()),
+            HomeField::FindRun => !matches!(self.find.status_msg, FindStatusMsg::Loading),
+            HomeField::FindBrowse => {
+                !self.find.browse.rows.is_empty() && self.find.results_current()
+            }
+            HomeField::UpdateScan => self.update.scan_cta() != ScanCta::Busy,
+            HomeField::UpdateBrowse => self.update.total_new_count() > 0,
+            _ => false,
+        }
+    }
+
+    /// The last enabled ("clickable") button in the active source's field list —
+    /// the furthest-along CTA (`find`/`scan` → `view N maps` → `download`), which
+    /// `s` jumps to. Falls back to the always-present `Download` button when no
+    /// button is enabled, so the jump always lands somewhere predictable.
+    pub fn last_enabled_button(&self) -> HomeField {
+        self.active_fields()
+            .iter()
+            .rev()
+            .copied()
+            .find(|&field| field.is_button() && self.button_enabled(field))
+            .unwrap_or(HomeField::Download)
     }
 
     /// Run tab-completion on the directory input field.

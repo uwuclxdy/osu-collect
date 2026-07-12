@@ -125,38 +125,35 @@ fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab) -> boo
     }
 }
 
-/// Whether the form has the minimum inputs a download needs: a collection
-/// reference and at least one enabled mirror. Drives the button's enabled state;
-/// final validation still happens in `HomeTab::build_request` on activation.
-fn can_download(form: &HomeTab) -> bool {
-    !form.collection.value.trim().is_empty() && form.mirror_count() > 0
-}
-
 /// The collection source's download-button label + enabled state. Reads
 /// `download all` (the whole resolved collection) until a proper nonempty subset
 /// is checked in browse&pick, then flips to `download (N)` (dispatched via
-/// the selective path in `dispatch_form_download`).
+/// the selective path in `dispatch_form_download`). Enabled state comes from
+/// [`HomeTab::button_enabled`] so it can't drift from the `s`-jump target.
 fn collection_download_button(form: &HomeTab) -> (String, bool) {
+    let enabled = form.button_enabled(HomeField::Download);
     if form.collection_subset_picked() {
         (
             format!("download ({})", form.collection_browse.selected_count()),
-            true,
+            enabled,
         )
     } else {
         // `download all` (vs a source's bare `download`) names that this
         // dispatches the whole resolved collection, not a picked subset.
-        (LABEL_DOWNLOAD_ALL.to_string(), can_download(form))
+        (LABEL_DOWNLOAD_ALL.to_string(), enabled)
     }
 }
 
 /// The collection source's `view N maps` button — opens the resolved collection
 /// in the checkbox browse. Labelled with the set count once resolved (and
-/// non-empty); disabled otherwise.
+/// non-empty); disabled otherwise via [`HomeTab::button_enabled`].
 fn collection_browse_button(form: &HomeTab) -> (String, bool) {
-    match form.resolved_collection.as_ref() {
-        Some((_, ids)) if !ids.is_empty() => (widgets::view_maps_label(ids.len()), true),
-        _ => ("view maps".to_string(), false),
-    }
+    let enabled = form.button_enabled(HomeField::CollectionBrowse);
+    let label = match form.resolved_collection.as_ref() {
+        Some((_, ids)) if !ids.is_empty() => widgets::view_maps_label(ids.len()),
+        _ => "view maps".to_string(),
+    };
+    (label, enabled)
 }
 
 /// Tooltip text for the focused download-directory field: the per-collection
@@ -223,6 +220,18 @@ fn render_form(
             if let Some((state, text)) = &form.collection_resolve {
                 items.push(resolve_row(*state, text));
             }
+            // `view N maps` sits with the collection field (mirroring find/update,
+            // where the browse button follows their run/scan CTA), above the shared
+            // download section.
+            let (browse_label, browse_enabled) = collection_browse_button(form);
+            items.push_focusable(
+                HomeField::CollectionBrowse,
+                widgets::button_item(
+                    &browse_label,
+                    focus == HomeField::CollectionBrowse,
+                    browse_enabled,
+                ),
+            );
         }
         GetMapsSource::Update => {
             update_source::push_form_rows(&mut items, &form.update, library, focus, editing, tick)
@@ -310,27 +319,14 @@ fn push_download_section(
     push_toggle_rows(items, form, focus);
 }
 
-/// The source-specific tail buttons after the shared download section. The
-/// collection source's `view N maps` sits here (its own CTAs weren't pushed with
-/// the form rows); every source ends on the shared [`HomeField::Download`]
-/// button, labelled per source.
+/// The shared download button that tails every source's form. The collection
+/// source's `view N maps` renders earlier, grouped with its URL field. Every
+/// source ends on the shared [`HomeField::Download`] button, labelled per source.
 fn push_action_buttons(
     items: &mut widgets::FormItems<HomeField>,
     form: &HomeTab,
     focus: HomeField,
 ) {
-    if form.source == GetMapsSource::Collection {
-        let (browse_label, browse_enabled) = collection_browse_button(form);
-        items.push_focusable(
-            HomeField::CollectionBrowse,
-            widgets::button_item(
-                &browse_label,
-                focus == HomeField::CollectionBrowse,
-                browse_enabled,
-            ),
-        );
-    }
-
     let (download_label, download_enabled) = match form.source {
         GetMapsSource::Collection => collection_download_button(form),
         GetMapsSource::Update => widgets::download_button_label(form.update.selected_new_count()),
