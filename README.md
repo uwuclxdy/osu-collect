@@ -26,7 +26,7 @@ osu!collect is a terminal app (TUI) that **downloads osu! beatmap collections fr
 
 ## Features
 
-- **Batch downloads** from any osu!collector collection. Paste a URL or ID, press enter.
+- **Batch downloads** from any osu!collector collection. Paste a URL or ID, press <kbd>↵</kbd>.
 - **Find maps without a collection**: free-text search plus per-difficulty criteria (stars, AR, CS, OD, HP, BPM, length, keys, favourites, ranked date, farm/stream/ranked-mapper flags), auto-routed between the osu! api and nzbasic's community database.
 - **Mirrors with automatic failover**: osu!direct, Nerinyan, Sayobot, Nekoha, Beatconnect, osu!dl, catboy.best, the Hinamizawa cascade, the nzbasic CDN, your own custom mirrors, plus the official osu! servers once you log in.
 - **Rate-limit aware**: throttled mirrors sit out while the rest keep downloading, with per-map cooldown countdowns in the UI. Requests to each mirror are spaced out and slow down on their own when a mirror pushes back, so load spreads instead of hammering a single host. A map that hits a limit waits its turn and goes back in the queue rather than getting dropped.
@@ -54,12 +54,12 @@ curl -fsSL https://raw.githubusercontent.com/uwuclxdy/osu-collect/main/install.s
 iwr https://raw.githubusercontent.com/uwuclxdy/osu-collect/main/install.bat -OutFile "$env:TEMP\osu-install.bat"; & "$env:TEMP\osu-install.bat"
 ```
 
-This installs to `%LOCALAPPDATA%\Programs\osu-collect`, adds it to your `PATH`, creates shortcut 
-on desktop and registers itself in **Settings → Apps → Installed apps**. No admin needed.
+This installs to `%LOCALAPPDATA%\Programs\osu-collect`, adds it to your `PATH`, creates a desktop
+shortcut and registers itself in **Settings → Apps → Installed apps**. No admin needed.
 
 ### Prebuilt binary
 
-Download from [Releases](https://github.com/uwuclxdy/osu-collect/releases/latest) and run it in terminal.
+Download from [Releases](https://github.com/uwuclxdy/osu-collect/releases/latest) and run it in a terminal.
 
 > [!NOTE]
 > osu!collect runs in a terminal. Windows users should be able to open it with a double click as well,
@@ -91,9 +91,8 @@ Paste a collection link, pick a directory, press <kbd>↵</kbd>.
 | **Collection URL or ID** | Accepts `https://osucollector.com/collections/{id}` or a bare ID. Resolves as you type and remembers recent collections. *Required.* |
 | **Download directory** | Defaults to the last used folder. <kbd>tab</kbd> completes filesystem paths. |
 | **Threads** | Parallel downloads. Defaults to your CPU core count; 20 or fewer avoids rate limiting. |
-| **Custom mirror URLs** | Add as many as you want — each must include the `{id}` placeholder. A new empty row appears as you type; clearing a row removes it. Tried after the built-in mirror toggles. |
-| **Skip existing** | Verifies and skips maps already on disk. |
-| **Overwrite existing** | Skips the on-disk recheck and redownloads every map fresh. |
+| **Custom mirror URLs** *(config tab)* | Add as many as you want — each must include the `{id}` placeholder. A new empty row appears as you type; clearing a row removes it. Tried after the built-in mirror toggles. |
+| **Overwrite existing** | Off (default) verifies and skips maps already on disk; on skips the recheck and redownloads every map fresh. |
 | **Video** | Includes beatmap videos (on by default); off downloads video-free where the mirror supports it. |
 
 ### Controls
@@ -104,20 +103,19 @@ Paste a collection link, pick a directory, press <kbd>↵</kbd>.
 | <kbd>←</kbd> <kbd>→</kbd> <kbd>tab</kbd> <kbd>shift</kbd>+<kbd>tab</kbd> | Switch tabs (<kbd>tab</kbd> path-completes the directory while editing it) |
 | <kbd>↵</kbd> | Activate, toggle, start a download, or edit a field; on the downloads tab, open the highlighted run |
 | <kbd>space</kbd> | Toggle the focused checkbox or switch |
-| <kbd>s</kbd> | Jump to the download button; in an open run, defer maps stuck on a rate-limit cooldown so they retry later |
+| <kbd>s</kbd> | Jump to / cycle the form's buttons; in an open run, defer maps stuck on a rate-limit cooldown so they retry later |
 | <kbd>S</kbd> | In an open run, drop maps stuck on a rate-limit cooldown for the rest of the run |
 | <kbd>+</kbd> <kbd>-</kbd> | Adjust thread count |
 | <kbd>r</kbd> | Retry all failed maps in an open run |
-| <kbd>x</kbd> | Dismiss an error message |
 | <kbd>?</kbd> | Help overlay listing every key |
 | <kbd>u</kbd> | Open the changelog + update prompt when a newer release is available (shows only when auto-update is off) |
 | <kbd>esc</kbd> | Back; steps out of an open run without cancelling it (cancel is <kbd>q</kbd>) |
-| <kbd>q</kbd> | In an open running run, cancel it; otherwise quit (press twice to confirm; running downloads stop) |
+| <kbd>q</kbd> | In an open run that's still downloading, cancel it; otherwise quit (press twice to confirm; running downloads stop) |
 | <kbd>ctrl</kbd>+<kbd>c</kbd> | Quit immediately from anywhere |
 | <kbd>home</kbd> <kbd>end</kbd> | Jump to the first / last row of a list or form |
 | <kbd>pgup</kbd> <kbd>pgdn</kbd> | Page a list up / down |
 
-Text fields support full caret editing: <kbd>home</kbd>, <kbd>end</kbd>, <kbd>delete</kbd>, and <kbd>ctrl</kbd>+<kbd>w</kbd> to delete the previous word.
+Text fields support full caret editing: <kbd>home</kbd>, <kbd>end</kbd>, <kbd>delete</kbd>, <kbd>ctrl</kbd>+<kbd>w</kbd> deletes the previous word.
 
 **Vim keys** (off by default, toggle on the config tab): <kbd>h</kbd> <kbd>j</kbd> <kbd>k</kbd> <kbd>l</kbd> move, <kbd>g</kbd><kbd>g</kbd> / <kbd>G</kbd> jump to top / bottom, <kbd>ctrl</kbd>+<kbd>u</kbd> / <kbd>ctrl</kbd>+<kbd>d</kbd> page, and <kbd>i</kbd> / <kbd>a</kbd> start editing the focused field. A field in edit mode types literally; <kbd>esc</kbd> leaves it. When enabled, a <kbd>vim</kbd> marker shows in the footer.
 
@@ -139,7 +137,7 @@ The get maps tab's `update` source re-checks every collection you've downloaded 
 
 ### Logging in with your osu! account (optional)
 
-The config tab's login chip opens a **login panel** that docks on the right side of the config tab, where you enter your osu! username and password (masked). It closes when you press <kbd>esc</kbd> or switch tabs. Signing in goes through osu!lazer's first-party client, the only way to enable the **osu! official** download mirror. If osu! needs to verify a new device, the panel prompts for the emailed code. Your password is sent only to `osu.ppy.sh` and never stored — only the resulting token lives in `auth.json` (local).
+The config tab's login chip opens a **login panel** that docks on the right side of the config tab, where you enter your osu! username and password (masked). It closes when you press <kbd>esc</kbd> or switch tabs. Logging in goes through osu!lazer's first-party client, the only way to enable the **osu! official** download mirror. If osu! needs to verify a new device, the panel prompts for the emailed code. Your password is sent only to `osu.ppy.sh` and never stored — only the resulting token lives in `auth.json` (local).
 
 > Heads up: this uses osu!lazer's first-party login, an unofficial grey area. The official mirror is rate-limited (~10–20 downloads/hour) and stays **off by default** — keep it as a last-resort source and use it sparingly. Requests to osu! are throttled automatically (about one per second, shared across all download threads) to stay within its general API rate; the hourly download cap still applies and shows up as a temporary rate-limit when reached.
 
@@ -209,7 +207,7 @@ No. Logging in is optional and only adds the official osu! servers as an extra s
 **Can it update a collection I downloaded earlier?**
 Yes. The update source on the get maps tab diffs your downloaded collections against osu!collector and fetches only what's missing.
 
-**A download failed or got rate limited. What now?**
+**A download failed or got rate-limited. What now?**
 Failures save per collection. Open the run on the downloads tab and press <kbd>r</kbd> to retry them all, or accept the retry prompt next time you download that collection. Rate-limited mirrors cool down on their own while the others keep going. A map that stays throttled past the auto-defer delay (60s by default, configurable) goes back in the queue on its own and retries later, so the run never stalls; press <kbd>s</kbd> to defer the currently-stuck maps yourself, or <kbd>S</kbd> to drop them for the rest of the run.
 
 ## Building from source
