@@ -5,7 +5,7 @@ use super::{
 use crate::app::EnrichSink;
 use crate::osu_db::LocalCollection;
 use osu_downloader::search::BeatmapSetMeta;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 fn local_col(name: &str, count: usize) -> LocalCollection {
     LocalCollection {
@@ -568,6 +568,213 @@ fn mark_installed_ids_read_the_preview() {
     let mut all = tab.highlighted_collection_missing_ids();
     all.sort_unstable();
     assert_eq!(all, vec![1, 2]);
+}
+
+#[test]
+fn mark_installed_moves_row_into_marked_group() {
+    let mut tab = seeded();
+    tab.descend();
+    tab.selection.collections_cursor = Some(0); // Alpha (100)
+    tab.selection.preview_cursor = Some(1); // id 2
+
+    tab.mark_installed_sets(&HashSet::from([2]));
+
+    assert!(
+        tab.selection.marked_installed.iter().any(|s| s.id == 2),
+        "marked set moves into the marked group"
+    );
+    assert!(
+        !tab.selection.cached_missing_sets.iter().any(|s| s.id == 2),
+        "marked set leaves the missing list"
+    );
+    // The combined preview still shows the row, now as a marked entry.
+    let marked_shown = tab
+        .preview_entries()
+        .iter()
+        .any(|e| matches!(e, crate::app::update_source::PreviewEntry::Marked(i) if tab.selection.marked_installed[*i].id == 2));
+    assert!(marked_shown, "marked row stays visible in the preview");
+    assert_eq!(
+        tab.preview_focused_id(),
+        vec![2],
+        "cursor still addresses the moved row"
+    );
+}
+
+#[test]
+fn unmark_installed_restores_row_into_missing() {
+    let mut tab = seeded();
+    tab.descend();
+    tab.selection.collections_cursor = Some(0);
+
+    tab.mark_installed_sets(&HashSet::from([1, 2]));
+    assert_eq!(tab.selection.marked_installed.len(), 2);
+    assert!(
+        !tab.selection
+            .cached_missing_sets
+            .iter()
+            .any(|s| s.id == 1 || s.id == 2),
+        "collection 100's missing sets are all marked (set 3 of collection 200 stays)"
+    );
+
+    tab.unmark_installed_sets(&HashSet::from([2]));
+
+    assert!(
+        !tab.selection.marked_installed.iter().any(|s| s.id == 2),
+        "unmarked set leaves the marked group"
+    );
+    assert!(
+        tab.selection.cached_missing_sets.iter().any(|s| s.id == 2),
+        "unmarked set reappears in the missing list at once"
+    );
+    assert_eq!(tab.selection.marked_installed.len(), 1);
+}
+
+#[test]
+fn sync_marked_installed_keeps_file_rows_and_drops_removed() {
+    let mut tab = seeded();
+    tab.descend();
+    tab.selection.collections_cursor = Some(0);
+    tab.mark_installed_sets(&HashSet::from([1, 2]));
+
+    // A scan reconciles the file down to just {2}: the in-memory {1} row drops,
+    // {2} is retained with its full data.
+    tab.sync_marked_installed(&HashSet::from([2]));
+    let ids: Vec<u32> = tab
+        .selection
+        .marked_installed
+        .iter()
+        .map(|s| s.id)
+        .collect();
+    assert_eq!(ids, vec![2]);
+
+    // A scan with no file rows clears the marked group entirely.
+    tab.sync_marked_installed(&HashSet::new());
+    assert!(tab.selection.marked_installed.is_empty());
+
+    // A prior-session file row (id-only, no in-memory data) returns as a
+    // reachable placeholder so it stays reversible.
+    tab.sync_marked_installed(&HashSet::from([99]));
+    assert!(
+        tab.selection
+            .marked_installed
+            .iter()
+            .any(|s| s.id == 99 && s.collection_id == 0),
+        "file-only row becomes an orphan placeholder"
+    );
+}
+
+#[test]
+fn unmark_installed_skips_orphan_placeholder() {
+    let mut tab = seeded();
+    tab.descend();
+    tab.selection.collections_cursor = Some(0);
+
+    // Mark a real set, plus inject an orphan placeholder (collection_id 0) like
+    // a prior session's file row would surface after a scan.
+    tab.mark_installed_sets(&HashSet::from([1]));
+    tab.sync_marked_installed(&HashSet::from([1, 99]));
+    assert_eq!(tab.selection.marked_installed.len(), 2);
+    assert_eq!(
+        tab.total_new_count(),
+        2,
+        "marked rows aren't counted as new"
+    );
+
+    // `U` (unmark whole collection's marked) hits the orphan too. The orphan
+    // must drop from view WITHOUT re-entering the missing list, so the grand
+    // "N new" badge and `view N mapsets` enablement stay correct.
+    let before_unmark = tab.total_new_count();
+    let ids = tab.highlighted_collection_marked_ids();
+    tab.unmark_installed_sets(&ids.into_iter().collect());
+
+    assert!(
+        !tab.selection.marked_installed.iter().any(|s| s.id == 99),
+        "orphan placeholder is dropped"
+    );
+    assert!(
+        !tab.selection.cached_missing_sets.iter().any(|s| s.id == 99),
+        "orphan is NOT re-added to the missing list"
+    );
+    // Only the genuinely-marked set (id 1) is restored; the orphan
+    // adds 0, so the grand "N new" badge stays correct.
+    assert_eq!(
+        tab.total_new_count(),
+        before_unmark + 1,
+        "total_new_count grows by exactly the real restore (orphan would over-count by 1)"
+    );
+    // Both the genuinely-marked set (id 1, restored to missing) and the
+    // orphan (id 99, dropped) leave the marked group — so it's empty.
+    assert_eq!(tab.selection.marked_installed.len(), 0);
+}
+
+#[test]
+fn preview_marked_first_then_missing() {
+    let mut tab = seeded();
+    tab.descend();
+    tab.selection.collections_cursor = Some(0); // Alpha (100)
+    tab.mark_installed_sets(&HashSet::from([2]));
+
+    // Combined preview: marked (2) first, then missing (1).
+    let order: Vec<u32> = tab
+        .preview_entries()
+        .iter()
+        .map(|e| match e {
+            crate::app::update_source::PreviewEntry::Missing(i) => {
+                tab.selection.cached_missing_sets[*i].id
+            }
+            crate::app::update_source::PreviewEntry::Marked(i) => {
+                tab.selection.marked_installed[*i].id
+            }
+        })
+        .collect();
+    assert_eq!(order, vec![2, 1], "marked rows render before missing rows");
+
+    // The focused-row-derived id lists stay collection-scoped.
+    assert_eq!(tab.highlighted_collection_marked_ids(), vec![2]);
+    assert_eq!(tab.highlighted_collection_missing_ids(), vec![1]);
+
+    // Cursor maps onto the marked entry at index 0 (no divider shift there).
+    tab.selection.preview_cursor = Some(0);
+    assert!(tab.preview_focused_is_marked());
+    assert_eq!(tab.preview_focused_id(), vec![2]);
+}
+
+#[test]
+fn preview_combines_missing_then_marked_for_highlighted_collection() {
+    let mut tab = seeded();
+    tab.descend();
+    tab.selection.collections_cursor = Some(0); // Alpha (100)
+    tab.mark_installed_sets(&HashSet::from([2]));
+
+    // Marked (2) precedes the missing (1) in the combined preview.
+    let order: Vec<u32> = tab
+        .preview_entries()
+        .iter()
+        .map(|e| match e {
+            crate::app::update_source::PreviewEntry::Missing(i) => {
+                tab.selection.cached_missing_sets[*i].id
+            }
+            crate::app::update_source::PreviewEntry::Marked(i) => {
+                tab.selection.marked_installed[*i].id
+            }
+        })
+        .collect();
+    assert_eq!(order, vec![2, 1], "marked rows render before missing rows");
+
+    tab.selection.preview_cursor = Some(0);
+    assert!(
+        tab.preview_focused_is_marked(),
+        "focused marked row reports marked"
+    );
+    assert_eq!(tab.highlighted_collection_marked_ids(), vec![2]);
+    assert_eq!(tab.highlighted_collection_missing_ids(), vec![1]);
+
+    // Orphan marked rows (collection_id 0) show under any highlighted collection.
+    tab.sync_marked_installed(&HashSet::from([2, 99]));
+    assert!(
+        tab.highlighted_collection_marked_ids().contains(&99),
+        "orphan marked rows are reachable from any collection"
+    );
 }
 
 #[test]

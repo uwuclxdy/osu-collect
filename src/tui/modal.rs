@@ -121,6 +121,7 @@ const HOME_TAB: &[HelpRow] = &[
     HelpRow::new("s", "jump to download / cycle sort"),
     HelpRow::new("a / A", "select all / none (update)"),
     HelpRow::new("i / I", "mark installed (update preview)"),
+    HelpRow::new("u / U", "restore marked-installed (update preview)"),
     HelpRow::new("r", "recheck failed (update)"),
 ];
 

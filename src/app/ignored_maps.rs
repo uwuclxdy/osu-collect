@@ -110,6 +110,18 @@ pub fn record_ignored(path: &Path, ids: impl IntoIterator<Item = u32>) {
     save(&ignored, path);
 }
 
+/// Remove `ids` from the ignore list (the manual "un-mark installed" action),
+/// the reciprocal of [`record_ignored`].
+pub fn record_unignored(path: &Path, ids: impl IntoIterator<Item = u32>) {
+    let ids: HashSet<u32> = ids.into_iter().collect();
+    if ids.is_empty() {
+        return;
+    }
+    let mut ignored = load(path);
+    ignored.remove_all(&ids);
+    save(&ignored, path);
+}
+
 /// Drop any ignored id that is now genuinely installed (present in
 /// `installed`), persist the trimmed list, and return the ids still to hide for
 /// this scan. The auto-clear half of the reconcile pattern: a real install

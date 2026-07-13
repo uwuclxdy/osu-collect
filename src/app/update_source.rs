@@ -160,6 +160,16 @@ impl ScanState {
     }
 }
 
+/// A preview row's backing store, so the cursor can address both the live
+/// missing list and the manually "marked installed" list in one combined pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreviewEntry {
+    /// Index into `cached_missing_sets`.
+    Missing(usize),
+    /// Index into `marked_installed`.
+    Marked(usize),
+}
+
 #[derive(Debug, Clone)]
 pub struct SelectionState {
     /// The user's osu!collector collections; `.selected` = include in download.
@@ -168,6 +178,11 @@ pub struct SelectionState {
     pub collections_default_order: Vec<CollectionEntry>,
     /// Every missing beatmapset across all collections.
     pub cached_missing_sets: Vec<MissingBeatmapset>,
+    /// Beatmapsets the user manually marked installed (hidden from the missing
+    /// list) but can still reverse here — see `mark_installed_sets` /
+    /// `unmark_installed_sets`. Mirrors `ignored-beatmapsets.json`, kept in sync
+    /// at scan-land by `sync_marked_installed` so a reload restores the rows.
+    pub marked_installed: Vec<MissingBeatmapset>,
     /// Cursor in the left collections list (an index into `local_collections`).
     pub collections_cursor: Option<usize>,
     /// Cursor within the highlighted collection's preview list.
@@ -187,6 +202,7 @@ impl SelectionState {
             local_collections: Vec::new(),
             collections_default_order: Vec::new(),
             cached_missing_sets: Vec::new(),
+            marked_installed: Vec::new(),
             collections_cursor: None,
             preview_cursor: None,
             descended: false,
@@ -433,14 +449,16 @@ impl UpdateSource {
             .and_then(|idx| self.selection.local_collections.get(idx))
     }
 
+    fn highlighted_collection_id_u32(&self) -> Option<u32> {
+        self.highlighted_collection()
+            .and_then(|c| c.collection_id)
+            .and_then(|id| u32::try_from(id).ok())
+    }
+
     /// Indices into `cached_missing_sets` for the highlighted collection's
     /// missing sets, ordered by the active preview sort.
     pub fn preview_missing_indices(&self) -> Vec<usize> {
-        let Some(collection_id) = self
-            .highlighted_collection()
-            .and_then(|c| c.collection_id)
-            .and_then(|id| u32::try_from(id).ok())
-        else {
+        let Some(collection_id) = self.highlighted_collection_id_u32() else {
             return Vec::new();
         };
 
@@ -453,33 +471,75 @@ impl UpdateSource {
             .map(|(idx, _)| idx)
             .collect();
 
-        let cached = &self.selection.cached_missing_sets;
+        self.sort_preview_indices(&mut indices, &self.selection.cached_missing_sets);
+        indices
+    }
+
+    /// Combined preview rows for the highlighted collection: manually-marked-installed
+    /// sets first (so they're immediately visible and restorable), then its missing
+    /// sets (sorted). Orphan marked sets (no collection, e.g. from a prior
+    /// session's file) are shown under every collection so they stay reachable
+    /// and reversible.
+    pub fn preview_entries(&self) -> Vec<PreviewEntry> {
+        let collection_id = self.highlighted_collection_id_u32();
+        let mut marked: Vec<usize> = self
+            .selection
+            .marked_installed
+            .iter()
+            .enumerate()
+            .filter(|(_, set)| {
+                collection_id.is_none_or(|id| set.collection_id == id || set.collection_id == 0)
+            })
+            .map(|(idx, _)| idx)
+            .collect();
+        self.sort_preview_indices(&mut marked, &self.selection.marked_installed);
+
+        let mut missing: Vec<usize> = match collection_id {
+            Some(id) => self
+                .selection
+                .cached_missing_sets
+                .iter()
+                .enumerate()
+                .filter(|(_, set)| set.collection_id == id)
+                .map(|(idx, _)| idx)
+                .collect(),
+            None => Vec::new(),
+        };
+        self.sort_preview_indices(&mut missing, &self.selection.cached_missing_sets);
+
+        let mut entries = marked
+            .into_iter()
+            .map(PreviewEntry::Marked)
+            .collect::<Vec<_>>();
+        entries.extend(missing.into_iter().map(PreviewEntry::Missing));
+        entries
+    }
+
+    fn sort_preview_indices(&self, indices: &mut [usize], sets: &[MissingBeatmapset]) {
         match self.selection.beatmap_sort {
             BeatmapSort::Default => {}
             BeatmapSort::Name => indices.sort_by(|&a, &b| {
-                let name_a = cached
+                let name_a = sets
                     .get(a)
                     .map(|m| m.collection_name.as_str())
                     .unwrap_or("");
-                let name_b = cached
+                let name_b = sets
                     .get(b)
                     .map(|m| m.collection_name.as_str())
                     .unwrap_or("");
                 name_a.to_lowercase().cmp(&name_b.to_lowercase())
             }),
             BeatmapSort::Status => indices.sort_by_key(|&idx| {
-                cached
-                    .get(idx)
+                sets.get(idx)
                     .map(|m| m.previously_deleted as u8)
                     .unwrap_or(0)
             }),
         }
-        indices
     }
 
-    /// Number of missing sets in the highlighted collection's preview.
+    /// Number of preview rows (missing + marked) for the highlighted collection.
     pub fn preview_len(&self) -> usize {
-        self.preview_missing_indices().len()
+        self.preview_entries().len()
     }
 
     /// Count of missing sets belonging to `collection_id` (the per-collection "N new" badge).
@@ -560,17 +620,36 @@ impl UpdateSource {
             .collect()
     }
 
-    // ── ignored-maps (mark installed) ─────────────────────────────────────────
+    // ── ignored-maps (mark / unmark installed) ─────────────────────────────────
 
-    /// The single missing-set id under the preview cursor (for `i`).
+    /// The single missing-set id under the preview cursor (for `i` / `u`).
     pub fn preview_focused_id(&self) -> Vec<u32> {
-        let indices = self.preview_missing_indices();
+        match self.preview_focused_entry() {
+            Some(PreviewEntry::Missing(i)) => self
+                .selection
+                .cached_missing_sets
+                .get(i)
+                .map(|set| vec![set.id])
+                .unwrap_or_default(),
+            Some(PreviewEntry::Marked(i)) => self
+                .selection
+                .marked_installed
+                .get(i)
+                .map(|set| vec![set.id])
+                .unwrap_or_default(),
+            None => Vec::new(),
+        }
+    }
+
+    /// The preview row under the cursor, addressed against the combined list.
+    pub fn preview_focused_entry(&self) -> Option<PreviewEntry> {
         self.selection
             .preview_cursor
-            .and_then(|cursor| indices.get(cursor).copied())
-            .and_then(|idx| self.selection.cached_missing_sets.get(idx))
-            .map(|set| vec![set.id])
-            .unwrap_or_default()
+            .and_then(|cursor| self.preview_entries().get(cursor).copied())
+    }
+
+    pub fn preview_focused_is_marked(&self) -> bool {
+        matches!(self.preview_focused_entry(), Some(PreviewEntry::Marked(_)))
     }
 
     /// Every missing-set id of the highlighted collection (for `I`).
@@ -580,6 +659,139 @@ impl UpdateSource {
             .filter_map(|&idx| self.selection.cached_missing_sets.get(idx))
             .map(|set| set.id)
             .collect()
+    }
+
+    /// Every marked-installed id of the highlighted collection (for `U`), plus
+    /// any orphan marked sets (no collection) so they stay reversible anywhere.
+    pub fn highlighted_collection_marked_ids(&self) -> Vec<u32> {
+        let collection_id = self.highlighted_collection_id_u32();
+        self.selection
+            .marked_installed
+            .iter()
+            .filter(|set| {
+                collection_id.is_none_or(|id| set.collection_id == id || set.collection_id == 0)
+            })
+            .map(|set| set.id)
+            .collect()
+    }
+
+    /// Move the given missing sets into the marked-installed list (the manual
+    /// "mark installed" action). The file write lives in the caller; this only
+    /// reshapes the in-memory view so the rows re-home into the preview's marked
+    /// group immediately.
+    pub fn mark_installed_sets(&mut self, ids: &HashSet<u32>) {
+        if ids.is_empty() {
+            return;
+        }
+        let moved: Vec<MissingBeatmapset> = self
+            .selection
+            .cached_missing_sets
+            .iter()
+            .filter(|set| ids.contains(&set.id))
+            .cloned()
+            .collect();
+        if moved.is_empty() {
+            return;
+        }
+        self.selection
+            .cached_missing_sets
+            .retain(|set| !ids.contains(&set.id));
+        self.selection.marked_installed.extend(moved);
+        // The marked group now leads the combined preview, so the row the user
+        // just acted on shifts position — keep the cursor on it.
+        self.rehome_preview_cursor_to(ids);
+        self.clamp_preview_cursor();
+    }
+
+    /// Reverse of [`mark_installed_sets`]: move the given marked sets back into the
+    /// missing list so they reappear at once (no rescan needed). The file prune
+    /// lives in the caller. In-memory moves keep full data; id-only file entries
+    /// (prior session, `collection_id == 0`) have no `MissingBeatmapset` to
+    /// restore, so they drop from view and reappear as missing on the next scan.
+    /// Orphan placeholders (`collection_id == 0`) are skipped entirely to avoid
+    /// inflating `total_new_count()`.
+    pub fn unmark_installed_sets(&mut self, ids: &HashSet<u32>) {
+        if ids.is_empty() {
+            return;
+        }
+        let moved: Vec<MissingBeatmapset> = self
+            .selection
+            .marked_installed
+            .iter()
+            .filter(|set| ids.contains(&set.id) && set.collection_id != 0)
+            .cloned()
+            .collect();
+        self.selection
+            .marked_installed
+            .retain(|set| !ids.contains(&set.id));
+        if !moved.is_empty() {
+            self.selection.cached_missing_sets.extend(moved);
+        }
+        // Re-home the cursor onto a restored row (marked-first ordering moves it);
+        // an orphan-only unmark leaves nothing in the preview, so the cursor just
+        // clamps.
+        self.rehome_preview_cursor_to(ids);
+        self.clamp_preview_cursor();
+    }
+
+    /// After moving rows between the missing/marked groups, point `preview_cursor`
+    /// at the first moved set still present in the combined preview, so the
+    /// keyboard cursor keeps tracking the row the user just acted on (its index
+    /// shifts because the marked group now leads the preview).
+    fn rehome_preview_cursor_to(&mut self, ids: &HashSet<u32>) {
+        let entries = self.preview_entries();
+        let pos = entries.iter().position(|e| {
+            let id = match e {
+                PreviewEntry::Missing(i) => {
+                    self.selection.cached_missing_sets.get(*i).map(|s| s.id)
+                }
+                PreviewEntry::Marked(i) => self.selection.marked_installed.get(*i).map(|s| s.id),
+            };
+            id.is_some_and(|id| ids.contains(&id))
+        });
+        if let Some(pos) = pos {
+            self.selection.preview_cursor = Some(pos);
+        }
+    }
+
+    /// Reconcile the in-memory marked list with the on-disk ignored set after a
+    /// scan: drop rows the file no longer lists (genuine install / external
+    /// prune) and add id-only placeholders for file entries not held in memory
+    /// (prior session), so they remain visible and reversible.
+    pub fn sync_marked_installed(&mut self, still_ignored: &HashSet<u32>) {
+        self.selection
+            .marked_installed
+            .retain(|set| still_ignored.contains(&set.id));
+        let held: HashSet<u32> = self
+            .selection
+            .marked_installed
+            .iter()
+            .map(|s| s.id)
+            .collect();
+        for id in still_ignored {
+            if held.contains(id) {
+                continue;
+            }
+            self.selection.marked_installed.push(MissingBeatmapset {
+                id: *id,
+                status: MissingStatus::NotInstalled,
+                collection_id: 0,
+                collection_name: String::new(),
+                selected: false,
+                previously_deleted: false,
+                enrich_diff_id: None,
+            });
+        }
+    }
+
+    fn clamp_preview_cursor(&mut self) {
+        let len = self.preview_len();
+        match self.selection.preview_cursor {
+            Some(c) if c >= len => {
+                self.selection.preview_cursor = if len == 0 { None } else { Some(len - 1) };
+            }
+            _ => {}
+        }
     }
 
     // ── scroll ────────────────────────────────────────────────────────────────
@@ -800,6 +1012,7 @@ impl UpdateSource {
         self.scan.all_local_checksums.clear();
         self.scan.local_beatmapsets.clear();
         self.selection.cached_missing_sets.clear();
+        self.selection.marked_installed.clear();
         self.selection.collections_cursor = None;
         self.selection.preview_cursor = None;
         self.selection.descended = false;

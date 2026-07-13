@@ -6,7 +6,7 @@
 
 use crate::app::{
     EnrichSink, HomeField, LibraryState, ScanCta, UpdateSource,
-    update_source::{MissingBeatmapset, ScanStatus},
+    update_source::{MissingBeatmapset, PreviewEntry, ScanStatus},
 };
 use crate::osu_db::OsuClient;
 use crate::utils::pretty_path;
@@ -147,12 +147,24 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource, tick: u
         .count();
     let list_meta = (total > 0).then(|| widgets::ratio_line(selected, total));
 
-    let preview_indices = form.preview_missing_indices();
-    let preview_items: Vec<ListItem<'static>> = preview_indices
-        .iter()
-        .filter_map(|&idx| form.selection.cached_missing_sets.get(idx))
-        .map(|set| preview_row(set, form.set_meta(set.id)))
-        .collect();
+    let preview_entries = form.preview_entries();
+    let mut preview_items: Vec<ListItem<'static>> = Vec::with_capacity(preview_entries.len());
+    for entry in &preview_entries {
+        match entry {
+            PreviewEntry::Marked(idx) => {
+                if let Some(set) = form.selection.marked_installed.get(*idx) {
+                    preview_items.push(preview_row(set, form.set_meta(set.id), true));
+                }
+            }
+            PreviewEntry::Missing(idx) => {
+                if let Some(set) = form.selection.cached_missing_sets.get(*idx) {
+                    preview_items.push(preview_row(set, form.set_meta(set.id), false));
+                }
+            }
+        }
+    }
+    // The logical cursor indexes `preview_entries` 1:1; there is no separator
+    // row between the marked and missing groups, so no visual shift.
     let preview_selected = form
         .preview_focused()
         .then(|| {
@@ -238,10 +250,25 @@ fn collection_stats_meta(new: usize, removed: usize) -> Line<'static> {
 
 /// One read-only preview row: the missing set as `artist - title` once its
 /// enrichment page lands, else the bare id — plus a marker for a set the user
-/// previously deleted from the collection.
-fn preview_row(set: &MissingBeatmapset, meta: Option<&BeatmapSetMeta>) -> ListItem<'static> {
-    let mut spans = widgets::browse_row_label(set.id, meta, Style::default().fg(text_dim()));
-    if set.previously_deleted {
+/// previously deleted from the collection. `marked` tints the row as a
+/// manually-installed (reversible) entry.
+fn preview_row(
+    set: &MissingBeatmapset,
+    meta: Option<&BeatmapSetMeta>,
+    marked: bool,
+) -> ListItem<'static> {
+    let label_style = if marked {
+        Style::default().fg(success())
+    } else {
+        Style::default().fg(text_dim())
+    };
+    let mut spans = widgets::browse_row_label(set.id, meta, label_style);
+    if marked {
+        spans.push(Span::styled(
+            "  ✓ installed",
+            Style::default().fg(success()),
+        ));
+    } else if set.previously_deleted {
         spans.push(Span::styled(
             format!("  {TAG_PREVIOUSLY_DELETED}"),
             Style::default().fg(text_faint()),

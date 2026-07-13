@@ -72,7 +72,8 @@ const HINT_SELECT_ALL_NONE: &str = "a all / A none";
 /// Update browse (either pane): `s` cycles the focused pane's sort.
 const HINT_SORT: &str = "s sort";
 const HINT_RECHECK: &str = "r recheck";
-const HINT_MARK_INSTALLED: &str = "i installed / I all";
+const HINT_MARK_INSTALLED: &str = "i install / I all";
+const HINT_RESTORE: &str = "u restore / U all";
 const HINT_QUIT: &str = "q quit";
 const HINT_HELP: &str = "? help";
 const HINT_UPDATE: &str = "u update";
@@ -213,7 +214,7 @@ fn hint_segments(app: &App) -> Vec<HintSegment> {
     if !app.login_open() {
         segments.push(HintSegment::global(HINT_SWITCH_CLIENT, RANK_SWITCH_CLIENT));
     }
-    if app.available_update.is_some() {
+    if app.available_update.is_some() && !app.home.update.is_browsing() {
         segments.push(HintSegment::global(HINT_UPDATE, RANK_UPDATE));
     }
     if !app.toasts.is_empty() {
@@ -466,7 +467,18 @@ fn update_source_hints(form: &HomeTab) -> (Vec<&'static str>, Option<&'static st
         // `s` cycles the focused pane's sort (collection list / missing-set
         // preview) — the only way to find it otherwise is reading the source.
         let mut segments = if update.preview_focused() {
-            vec![HINT_SCROLL, HINT_MARK_INSTALLED, HINT_SORT, HINT_FOCUS_LIST]
+            // Dynamic hints based on focused row state: show only the relevant
+            // group (mark OR restore, never both).
+            let is_marked = update.preview_focused_is_marked();
+            let mut s = vec![HINT_SCROLL];
+            if is_marked {
+                s.push(HINT_RESTORE);
+            } else {
+                s.push(HINT_MARK_INSTALLED);
+            }
+            s.push(HINT_SORT);
+            s.push(HINT_FOCUS_LIST);
+            s
         } else {
             vec![
                 HINT_SCROLL,

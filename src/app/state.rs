@@ -901,9 +901,10 @@ impl App {
         let _ = save_config(&config);
     }
 
-    /// Mark beatmapsets as installed: persist them to the ignore list and drop
-    /// them from the missing list at once. A later scan that detects a genuine
-    /// install auto-clears the entry (see `ignored_maps::reconcile_installed`).
+    /// Mark beatmapsets as installed: persist them to the ignore list and move
+    /// them out of the missing list into the marked-installed group at once. A
+    /// later scan that detects a genuine install auto-clears the entry (see
+    /// `ignored_maps::reconcile_installed`); `unmark_installed` is the manual undo.
     fn mark_installed(&mut self, ids: Vec<u32>) {
         if ids.is_empty() {
             return;
@@ -913,18 +914,36 @@ impl App {
             ignored_maps::record_ignored(&path, ids.iter().copied());
         }
         let count = ids.len();
-        self.home.update.hide_missing(&ids);
+        self.home.update.mark_installed_sets(&ids);
         self.toast_ok(format!(
             "marked {count} mapset{} installed",
             if count == 1 { "" } else { "s" }
         ));
     }
 
+    /// Reverse `mark_installed`: prune the ids from the ignore list and move them
+    /// back into the missing list so they reappear at once (no rescan needed).
+    fn unmark_installed(&mut self, ids: Vec<u32>) {
+        if ids.is_empty() {
+            return;
+        }
+        let ids: HashSet<u32> = ids.into_iter().collect();
+        if let Some(path) = ignored_maps::ignored_maps_path() {
+            ignored_maps::record_unignored(&path, ids.iter().copied());
+        }
+        let count = ids.len();
+        self.home.update.unmark_installed_sets(&ids);
+        self.toast_ok(format!(
+            "restored {count} mapset{}",
+            if count == 1 { "" } else { "s" }
+        ));
+    }
+
     /// Letter-key dispatch while browsing the update source's two panes. `a`/`A`
     /// select-all/none (list pane), `s` cycles the focused pane's sort, `i`/`I`
-    /// mark the preview's focused row / whole collection installed, and `r`
-    /// rechecks known-bad maps. Only `r` yields a command; the rest mutate in
-    /// place.
+    /// mark the preview's focused row / whole collection installed, `u`/`U`
+    /// reverse that (restore), and `r` rechecks known-bad maps. Only `r` yields a
+    /// command; the rest mutate in place.
     fn handle_update_browse_char(&mut self, ch: char) -> Option<AppCommand> {
         let list_focused = !self.home.update.preview_focused();
         match ch {
@@ -937,13 +956,25 @@ impl App {
                     self.home.update.cycle_collection_sort();
                 }
             }
-            'i' if self.home.update.preview_focused() => {
+            'i' if self.home.update.preview_focused()
+                && !self.home.update.preview_focused_is_marked() =>
+            {
                 let ids = self.home.update.preview_focused_id();
                 self.mark_installed(ids);
             }
             'I' if self.home.update.preview_focused() => {
                 let ids = self.home.update.highlighted_collection_missing_ids();
                 self.mark_installed(ids);
+            }
+            'u' if self.home.update.preview_focused()
+                && self.home.update.preview_focused_is_marked() =>
+            {
+                let ids = self.home.update.preview_focused_id();
+                self.unmark_installed(ids);
+            }
+            'U' if self.home.update.preview_focused() => {
+                let ids = self.home.update.highlighted_collection_marked_ids();
+                self.unmark_installed(ids);
             }
             'r' if self.home.update.can_recheck_failed_maps() => {
                 return Some(AppCommand::RecheckFailedMaps);
@@ -2008,7 +2039,9 @@ impl App {
                 self.help_scroll.set(0);
                 return None;
             }
-            KeyCode::Char('u') if !typing && self.available_update.is_some() => {
+            KeyCode::Char('u')
+                if !typing && self.available_update.is_some() && !self.update_browsing() =>
+            {
                 self.open_update_modal();
                 return None;
             }
@@ -2411,7 +2444,7 @@ impl App {
             KeyCode::Char(ch) => match self.active_tab() {
                 Tab::Home => {
                     // Update-source browse owns letter keys (a/A select, s sort,
-                    // i/I mark-installed, r recheck).
+                    // i/I mark-installed, u/U restore, r recheck).
                     if self.update_browsing() {
                         return self.handle_update_browse_char(ch);
                     }

@@ -160,6 +160,13 @@ pub(super) fn handle_updates_event(
             app.home
                 .update
                 .set_missing_beatmaps(missing, &app.home.meta_cache);
+            // Re-home any manually-marked-installed rows from the ignore file so
+            // they stay visible and reversible after a scan (full data when held
+            // in memory, id-only placeholder otherwise).
+            if let Some(path) = ignored_maps::ignored_maps_path() {
+                let still_ignored = ignored_maps::load(&path).ids();
+                app.home.update.sync_marked_installed(&still_ignored);
+            }
             app.home
                 .update
                 .set_removed_counts(&collection_removed_counts);
