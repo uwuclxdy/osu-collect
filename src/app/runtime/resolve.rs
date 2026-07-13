@@ -110,9 +110,6 @@ fn user_facing_error(err: &str) -> String {
 }
 
 pub fn handle_home_resolve_event(event: HomeResolveEvent, home: &mut crate::app::HomeTab) {
-    // Any resolve outcome invalidates a deferred collection-browse open: the rows
-    // it was going to show may have changed, so drop the pending wait.
-    home.collection_browse_pending = None;
     match event {
         HomeResolveEvent::Loading => {
             home.set_collection_resolve(ResolveState::Loading, "resolving…");

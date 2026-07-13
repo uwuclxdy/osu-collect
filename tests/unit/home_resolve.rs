@@ -256,19 +256,3 @@ fn resolve_single_map_uses_singular() {
         "should not contain '1 mapsets': {text}"
     );
 }
-
-/// A resolve outcome invalidates a deferred collection-browse open (its rows may
-/// have changed), so any pending wait is dropped.
-#[test]
-fn resolve_event_clears_pending_collection_browse() {
-    let config = Config::default();
-    let mut home = crate::app::HomeTab::new(&config);
-    home.collection_browse_pending = Some(7);
-
-    handle_home_resolve_event(HomeResolveEvent::Cleared, &mut home);
-
-    assert!(
-        home.collection_browse_pending.is_none(),
-        "a resolve/clear drops a deferred open"
-    );
-}

@@ -96,15 +96,10 @@ pub fn push_form_rows(
     // enabled once a scan actually found something (bare `view maps` while
     // empty so it doesn't read as a zero count).
     let new_count = form.total_new_count();
-    let view_label = if new_count > 0 {
-        widgets::view_maps_label(new_count)
-    } else {
-        "view maps".to_string()
-    };
     items.push_focusable(
         HomeField::UpdateBrowse,
-        widgets::button_item_with_loading_cue(
-            &view_label,
+        widgets::view_browse_button(
+            new_count,
             focus == HomeField::UpdateBrowse,
             new_count > 0,
             form.is_enriching(),

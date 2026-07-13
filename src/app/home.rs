@@ -496,12 +496,6 @@ pub struct HomeTab {
     /// the download dispatches against the collection the rows came from even if
     /// an in-flight resolve updates `resolved_collection` mid-browse.
     pub collection_browse_id: Option<u32>,
-    /// The pager generation a deferred collection-browse open is waiting on:
-    /// `Some(g)` while `view N mapsets` has fetched but not yet descended (the
-    /// browse opens when page `g` lands, fail-soft descends id-only on failure).
-    /// The `CollectionBrowse` button is disabled while set, so the TUI renders a
-    /// spinner instead of re-firing the fetch.
-    pub(crate) collection_browse_pending: Option<u64>,
     /// Session-lived osu-batch metadata cache, keyed by beatmapSET id. Every
     /// landed enrichment page (and every osu search row) feeds it, and every
     /// id-only browse hydrates + prunes against it — so a reopen, rescan, or
@@ -590,7 +584,6 @@ impl HomeTab {
             find: FindSource::new(),
             collection_browse: SetBrowse::new(),
             collection_browse_id: None,
-            collection_browse_pending: None,
             meta_cache: HashMap::new(),
             collection_cache: CollectionCache::default(),
         }
@@ -613,12 +606,6 @@ impl HomeTab {
         self.resolved_collection = None;
         self.resolved_enrich_pairs = Vec::new();
         self.resolved_folder_name = None;
-    }
-
-    /// Whether a `view N mapsets` press is waiting on its first enrichment page
-    /// before the collection browse opens (drives the button's loading spinner).
-    pub fn collection_browse_opening(&self) -> bool {
-        self.collection_browse_pending.is_some()
     }
 
     pub fn set_collection_resolve(&mut self, state: ResolveState, text: impl Into<String>) {
@@ -746,15 +733,10 @@ impl HomeTab {
                 GetMapsSource::Find => self.find.browse.selected_count() > 0,
                 GetMapsSource::Update => self.update.selected_new_count() > 0,
             },
-            HomeField::CollectionBrowse => {
-                // Disabled while a deferred open is in flight — a re-press must not
-                // re-fire the fetch (the browse opens when page 1 lands).
-                self.collection_browse_pending.is_none()
-                    && self
-                        .resolved_collection
-                        .as_ref()
-                        .is_some_and(|(_, ids)| !ids.is_empty())
-            }
+            HomeField::CollectionBrowse => self
+                .resolved_collection
+                .as_ref()
+                .is_some_and(|(_, ids)| !ids.is_empty()),
             HomeField::FindRun => !matches!(self.find.status_msg, FindStatusMsg::Loading),
             HomeField::FindBrowse => {
                 !self.find.browse.rows.is_empty() && self.find.results_current()

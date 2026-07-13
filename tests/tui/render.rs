@@ -1118,31 +1118,30 @@ fn config_tab_shows_mirrors_section_before_download() {
 // ── enrichment loading cues ──────────────────────────────────────────────────
 
 #[test]
-fn collection_browse_button_shows_opening_spinner_while_deferred() {
+fn collection_browse_opens_id_only_immediately_on_enter() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use osu_collect::app::{GetMapsSource, HomeField};
 
     let mut app = make_app();
     app.home.source = GetMapsSource::Collection;
     app.home.set_resolved_collection(7, vec![10, 20, 30]);
-    // Unenriched (set, diff) pairs so `open_collection_browse` has something to
-    // fetch and defers the descend instead of opening instantly.
+    // Unenriched (set, diff) pairs so the open still has titles to page.
     app.home.resolved_enrich_pairs = vec![(10, 100), (20, 200), (30, 300)];
     app.home.focus = HomeField::CollectionBrowse;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
     assert!(
-        app.home.collection_browse_opening(),
-        "the press defers on the first enrichment page"
-    );
-    assert!(
-        !app.home.collection_browse.is_browsing(),
-        "the browse must not open until that page lands"
+        app.home.collection_browse.is_browsing(),
+        "the browse descends immediately, id-only — no deferred wait on enrichment"
     );
 
     let content = render_content(&app, 120, 40);
     assert!(
-        content.contains("⠋ opening"),
-        "the view button swaps to an inline opening spinner while deferred: {content}"
+        !content.contains("opening"),
+        "the deferred `opening` spinner is gone: {content}"
+    );
+    assert!(
+        content.contains("#10"),
+        "the browse renders id-only rows until titles land: {content}"
     );
 }
 

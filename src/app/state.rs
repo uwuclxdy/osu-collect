@@ -1418,12 +1418,11 @@ impl App {
     /// selected; re-opening the same collection preserves the prior picks. No-op
     /// with a toast until a collection has resolved.
     ///
-    /// Enrichment starts at this first press (the earliest known intent). When any
-    /// title still needs fetching, the descend is DEFERRED: the browse opens once
-    /// page 1 lands (or, fail-soft, descends id-only on failure), and this returns
-    /// `LoadEnrichment{Collection}`. When every set is already cached, it descends
-    /// immediately and returns `None`. A re-press while pending is a no-op (the
-    /// button is disabled), so the fetch never fires twice.
+    /// The browse descends immediately, id-only (osu!collector exposes no set
+    /// metadata), and titles fill in behind the loading cue. Returns
+    /// `LoadEnrichment{Collection}` when any title still needs fetching, else
+    /// `None`; a reopen of a fully-cached collection hydrates from `meta_cache`
+    /// with no flash.
     fn open_collection_browse(&mut self) -> Option<AppCommand> {
         let Some((collection_id, ids)) = self.home.resolved_collection.clone() else {
             self.toast_warn("resolve a collection first");
@@ -1431,10 +1430,6 @@ impl App {
         };
         if ids.is_empty() {
             self.toast_warn("collection has no mapsets");
-            return None;
-        }
-        // A press while a deferred open is already in flight is a no-op.
-        if self.home.collection_browse_pending.is_some() {
             return None;
         }
         // Re-opening the same collection keeps the user's selection alive;
@@ -1467,18 +1462,13 @@ impl App {
         // Snapshot the id so the dispatch stays paired with these rows even if a
         // late resolve updates `resolved_collection` while the browse is open.
         self.home.collection_browse_id = Some(collection_id);
-        if self.home.collection_browse.has_more_enrichment() {
-            // Something to fetch: defer the descend until its first page lands.
-            self.home.collection_browse_pending =
-                Some(self.home.collection_browse.enrich_generation());
-            Some(AppCommand::LoadEnrichment {
+        self.home.collection_browse.descend();
+        self.home
+            .collection_browse
+            .has_more_enrichment()
+            .then_some(AppCommand::LoadEnrichment {
                 target: EnrichTarget::Collection,
             })
-        } else {
-            // Every set already cached: open instantly, no fetch.
-            self.home.collection_browse.descend();
-            None
-        }
     }
 
     /// Build a fetch-skipping download from the picked find results. The run

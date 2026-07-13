@@ -369,28 +369,84 @@ fn late_prior_page_event_does_not_clear_a_newer_fetchs_cue() {
     );
 }
 
-/// Seed the collection browse with id-only rows + a deferred open waiting on the
-/// pager's current generation, as `open_collection_browse` would.
-fn seed_pending_collection(app: &mut App, ids: &[u32], seeds: Vec<(u32, Option<u32>)>) -> u64 {
+/// Seed the collection browse as `open_collection_browse` leaves it: id-only
+/// rows, an enrichment pager with its first page dispatched, and the browse
+/// already descended. Returns the live generation for a follow-up page event.
+fn seed_descended_collection(app: &mut App, ids: &[u32], seeds: Vec<(u32, Option<u32>)>) -> u64 {
     app.home
         .collection_browse
         .set_rows(id_only_rows(ids), &HashMap::new());
     app.home
         .collection_browse
         .seed_enrichment(seeds, &HashMap::new());
+    app.home.collection_browse.descend();
     let _ = app.home.collection_browse.next_enrich_page();
     app.home.collection_browse.mark_enrichment_dispatched();
-    let generation = app.home.collection_browse.enrich_generation();
-    app.home.collection_browse_pending = Some(generation);
-    generation
+    app.home.collection_browse.enrich_generation()
 }
 
 #[test]
-fn collection_pending_descends_when_first_page_lands() {
+fn open_collection_browse_descends_immediately_and_requests_enrichment() {
+    use crate::app::{AppCommand, GetMapsSource, HomeField};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = app();
+    app.home.source = GetMapsSource::Collection;
+    app.home.set_resolved_collection(7, vec![10, 20]);
+    // Nothing cached this session → titles still need paging.
+    app.home.resolved_enrich_pairs = vec![(10, 100), (20, 200)];
+    app.home.focus = HomeField::CollectionBrowse;
+
+    let cmd = app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
+
+    assert!(
+        app.home.collection_browse.is_browsing(),
+        "the browse opens id-only immediately — no deferred descend"
+    );
+    assert!(
+        matches!(
+            cmd,
+            Some(AppCommand::LoadEnrichment {
+                target: EnrichTarget::Collection
+            })
+        ),
+        "opening with unfetched titles kicks the first enrichment page"
+    );
+}
+
+#[test]
+fn open_collection_browse_fully_cached_descends_without_enrichment() {
+    use crate::app::{GetMapsSource, HomeField};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = app();
+    app.home.source = GetMapsSource::Collection;
+    app.home.set_resolved_collection(7, vec![10, 20]);
+    app.home.resolved_enrich_pairs = vec![(10, 100), (20, 200)];
+    // Both sets already known this session → seeding prunes every page.
+    app.home
+        .meta_cache
+        .insert(10, beatmap_row(0, 10, "cached a", false, false).beatmapset);
+    app.home
+        .meta_cache
+        .insert(20, beatmap_row(0, 20, "cached b", false, false).beatmapset);
+    app.home.focus = HomeField::CollectionBrowse;
+
+    let cmd = app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
+
+    assert!(app.home.collection_browse.is_browsing());
+    assert!(
+        cmd.is_none(),
+        "a fully-cached reopen descends with no enrichment page"
+    );
+}
+
+#[test]
+fn collection_enrichment_page_folds_into_the_open_browse() {
     let mut app = app();
     let generation =
-        seed_pending_collection(&mut app, &[10, 20], vec![(1, Some(10)), (2, Some(20))]);
-    assert!(!app.home.collection_browse.is_browsing());
+        seed_descended_collection(&mut app, &[10, 20], vec![(1, Some(10)), (2, Some(20))]);
+    assert!(app.home.collection_browse.is_browsing());
 
     handle_enrich_event(
         EnrichEvent::Enriched {
@@ -404,86 +460,22 @@ fn collection_pending_descends_when_first_page_lands() {
         &mut app,
     );
 
-    assert!(
-        app.home.collection_browse.is_browsing(),
-        "the deferred open descends once page 1 lands"
+    assert_eq!(
+        app.home.collection_browse.rows[0]
+            .meta
+            .as_ref()
+            .map(|m| m.title.as_str()),
+        Some("col a"),
+        "the landed page folds titles into the already-open browse"
     );
     assert!(
-        app.home.collection_browse_pending.is_none(),
-        "pending clears on the matching page"
+        app.home.collection_browse.is_browsing(),
+        "folding a page never disturbs the browse's open state"
     );
     assert_eq!(
         app.home.meta_cache.get(&10).map(|m| m.title.as_str()),
         Some("col a"),
         "the landed page fed the session cache"
-    );
-}
-
-#[test]
-fn collection_pending_descends_id_only_on_failure() {
-    let mut app = app();
-    let before = app.home.collection_browse.enrich_cursor();
-    let generation = seed_pending_collection(&mut app, &[10], vec![(1, Some(10))]);
-
-    handle_enrich_event(
-        EnrichEvent::Failed {
-            target: EnrichTarget::Collection,
-            generation,
-            rewind_to: before,
-            reason: "HTTP 500".to_string(),
-        },
-        &mut app,
-    );
-
-    assert!(
-        app.home.collection_browse.is_browsing(),
-        "a failed first page still opens the browse (fail-soft, never a stall)"
-    );
-    assert!(app.home.collection_browse_pending.is_none());
-    assert!(
-        app.home
-            .collection_browse
-            .rows
-            .iter()
-            .all(|r| r.meta.is_none()),
-        "the rows stay id-only after the failed page"
-    );
-}
-
-#[test]
-fn stale_generation_land_does_not_descend_pending_open() {
-    let mut app = app();
-    app.home
-        .collection_browse
-        .set_rows(id_only_rows(&[10]), &HashMap::new());
-    app.home
-        .collection_browse
-        .seed_enrichment(vec![(1, Some(10))], &HashMap::new());
-    let stale = app.home.collection_browse.enrich_generation();
-    // A newer reseed bumps the generation; the deferred open waits on the NEW one.
-    app.home
-        .collection_browse
-        .seed_enrichment(vec![(1, Some(10))], &HashMap::new());
-    let current = app.home.collection_browse.enrich_generation();
-    app.home.collection_browse_pending = Some(current);
-
-    handle_enrich_event(
-        EnrichEvent::Enriched {
-            target: EnrichTarget::Collection,
-            generation: stale,
-            rows: vec![beatmap_row(1, 10, "late", false, false)],
-        },
-        &mut app,
-    );
-
-    assert!(
-        !app.home.collection_browse.is_browsing(),
-        "a superseded page must not open the deferred browse"
-    );
-    assert_eq!(
-        app.home.collection_browse_pending,
-        Some(current),
-        "pending stays until its own page lands"
     );
 }
 

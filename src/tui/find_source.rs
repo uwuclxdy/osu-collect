@@ -155,15 +155,10 @@ pub fn push_form_rows(
     // fresh results still matching the inputs are loaded.
     let loaded = find.browse.rows.len();
     let view_current = loaded > 0 && find.results_current();
-    let view_label = if view_current {
-        widgets::view_maps_label(loaded)
-    } else {
-        "view maps".to_string()
-    };
     items.push_focusable(
         HomeField::FindBrowse,
-        widgets::button_item_with_loading_cue(
-            &view_label,
+        widgets::view_browse_button(
+            loaded,
             focus == HomeField::FindBrowse,
             view_current,
             find.browse.is_enriching(),

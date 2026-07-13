@@ -781,9 +781,10 @@ pub fn button_item_with_trailing(
 }
 
 /// [`button_item`] with a trailing `⠋ loading titles` cue while `enriching` —
-/// the update/find `view N mapsets` buttons stay pressable mid-fetch (unlike
-/// the collection browse's `opening` label-swap, whose deferred descend makes
-/// the button briefly inert instead), so their loading state trails the pill.
+/// a `view N mapsets` button stays pressable mid-fetch, so its loading state
+/// trails the pill rather than swapping the label. Wrapped by
+/// [`view_browse_button`], the single path every source's view button routes
+/// through.
 pub fn button_item_with_loading_cue(
     label: &str,
     focused: bool,
@@ -852,6 +853,28 @@ pub fn download_button_label_with_size(selected: usize, known_bytes: u64) -> (St
 /// (loaded rows / new count / resolved set count). Singular at 1.
 pub fn view_maps_label(n: usize) -> String {
     format!("view {n} {}", if n == 1 { "mapset" } else { "mapsets" })
+}
+
+/// A source's "open the results browse" button, unified across every Get Maps
+/// source (find / update / collection). One path so all three read and behave
+/// identically: the browse opens id-only immediately and titles fill in behind
+/// the trailing `⠋ loading titles` cue — no source defers its descend. `enabled`
+/// gates the count label too, so a disabled button shows a generic `view maps`
+/// (a stale-find or unresolved-collection button never advertises a count it
+/// can't open).
+pub fn view_browse_button(
+    count: usize,
+    focused: bool,
+    enabled: bool,
+    enriching: bool,
+    tick: u64,
+) -> ListItem<'static> {
+    let label = if enabled {
+        view_maps_label(count)
+    } else {
+        "view maps".to_string()
+    };
+    button_item_with_loading_cue(&label, focused, enabled, enriching, tick)
 }
 
 /// The main-content spans of a beatmapset browse row, shared by every "view

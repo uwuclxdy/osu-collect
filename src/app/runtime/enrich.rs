@@ -79,7 +79,7 @@ pub fn handle_enrich_event(event: EnrichEvent, app: &mut App) {
             rows,
         } => {
             // Generation guard first: a page from a superseded run drops before it
-            // can fold, write the cache, or open a deferred browse.
+            // can fold or write the cache.
             if enrich_sink_mut(app, target).enrich_generation() != generation {
                 return;
             }
@@ -108,7 +108,6 @@ pub fn handle_enrich_event(event: EnrichEvent, app: &mut App) {
             // dispatch's cue survives a stale page's late event).
             sink.mark_enrichment_settled();
             sink.fold_meta(meta_by_set);
-            maybe_open_pending_collection(app, target, generation);
         }
         EnrichEvent::Failed {
             target,
@@ -127,23 +126,7 @@ pub fn handle_enrich_event(event: EnrichEvent, app: &mut App) {
                 sink.rewind_enrichment(rewind_to);
             }
             app.toast_warn(format!("map details unavailable: {reason}"));
-            // Fail-soft: a deferred open still descends (id-only) so it never
-            // stalls waiting on a page that will not arrive.
-            maybe_open_pending_collection(app, target, generation);
         }
-    }
-}
-
-/// Descend a deferred collection-browse open once the page it waited on settles.
-/// [`open_collection_browse`](crate::app::App) records the pager generation in
-/// `collection_browse_pending` and holds the descend; the matching page (success
-/// or failure) opens the browse here. A non-matching generation leaves it pending
-/// (a superseded page never opens a browse it no longer backs).
-fn maybe_open_pending_collection(app: &mut App, target: EnrichTarget, generation: u64) {
-    if target == EnrichTarget::Collection && app.home.collection_browse_pending == Some(generation)
-    {
-        app.home.collection_browse_pending = None;
-        app.home.collection_browse.descend();
     }
 }
 
