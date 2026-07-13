@@ -11,7 +11,7 @@
 [![Downloads](https://shields.uwuclxdy.dev/github/downloads/uwuclxdy/osu-collect/total?style=for-the-badge&logo=github&color=ff66aa)](https://github.com/uwuclxdy/osu-collect/releases)
 ![Platforms](https://shields.uwuclxdy.dev/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-ff66aa?style=for-the-badge)
 
-[Features](#features) · [Install](#installation) · [Usage](#usage) · [Import](#importing-into-osu) · [Configuration](#configuration) · [FAQ](#faq)
+[Features](#features) · [Install](#installation) · [Usage](#usage) · [Import](#importing-into-osu) · [Configuration](#configuration) · [FAQ](#faq) · [Wiki](https://github.com/uwuclxdy/osu-collect/wiki)
 
 </div>
 
@@ -27,16 +27,16 @@ osu!collect is a terminal app (TUI) that **downloads osu! beatmap collections fr
 ## Features
 
 - **Batch downloads** from any osu!collector collection. Paste a URL or ID, press <kbd>↵</kbd>.
-- **Find maps without a collection**: free-text search plus per-difficulty criteria (stars, AR, CS, OD, HP, BPM, length, keys, favourites, ranked date, farm/stream/ranked-mapper flags), auto-routed between the osu! api and nzbasic's community database.
-- **Mirrors with automatic failover**: osu!direct, Nerinyan, Sayobot, Nekoha, Beatconnect, osu!dl, catboy.best, the Hinamizawa cascade, the nzbasic CDN, your own custom mirrors, plus the official osu! servers once you log in.
-- **Rate-limit aware**: throttled mirrors sit out while the rest keep downloading, with per-map cooldown countdowns in the UI. Requests to each mirror are spaced out and slow down on their own when a mirror pushes back, so load spreads instead of hammering a single host. A map that hits a limit waits its turn and goes back in the queue rather than getting dropped.
-- **Collections updater**: Re-check a collection later and download only the maps that are missing or newly added.
-- **Ez import with `collection.db`**: Maps arrive as a proper osu! collection, not a loose folder of `.osz` files.
+- **Find maps without a collection**: free-text search plus per-difficulty criteria (stars, AR, CS, OD, HP, BPM, length, keys, favourites, ranked date, farm/stream/ranked-mapper flags), auto-routed between the osu! api and nzbasic's community database. [Criteria + filter syntax.](https://github.com/uwuclxdy/osu-collect/wiki/Finding-Maps)
+- **Mirrors with automatic failover**: osu!direct, Nerinyan, Sayobot, Nekoha, Beatconnect, osu!dl, catboy.best, the Hinamizawa cascade, the nzbasic CDN, your own custom mirrors. Logging in adds the official osu! servers. [Full list.](https://github.com/uwuclxdy/osu-collect/wiki/Mirrors)
+- **Rate-limit aware**: throttled mirrors sit out with per-map cooldown countdowns while the rest keep downloading; a map that hits a limit re-queues instead of getting dropped. [How it's handled.](https://github.com/uwuclxdy/osu-collect/wiki/Mirrors#rate-limit-handling)
+- **Collections updater**: re-check a collection later and download only the maps that are missing or newly added. [Guide.](https://github.com/uwuclxdy/osu-collect/wiki/Updating-Collections)
+- **Ez import with `collection.db`**: maps arrive as a proper osu! collection, not a loose folder of `.osz` files.
 - **Integrity verification**: MD5 plus archive validation on every download; files already on disk are verified and skipped.
-- **Skips what you already own**: Reads your osu! library (stable `osu!.db` / lazer realm) and skips maps you've already imported instead of re-fetching them; they still go into the generated `collection.db`.
-- **Retry failed maps**: Failures persist between runs. Retry them with one key, or on the next download.
-- **Self-updating**: Checks for a newer release on launch and installs it. Flip auto-update off in config to just get a notice; then press <kbd>u</kbd> to read the changelog and update when you want.
-- **Downloads tab with history**: Every run — active or past — lives on one list; open a run for live per-map progress. Past runs (including cancelled ones) survive restarts.
+- **Skips what you already own**: reads your osu! library (stable `osu!.db` / lazer Realm) and skips maps you've already imported instead of re-fetching them; they still go into the generated `collection.db`.
+- **Retry failed maps**: failures persist between runs. Retry them with one key, or on the next download.
+- **Self-updating**: checks for a newer release on launch and installs it. Flip auto-update off in config to only get a notice; then press <kbd>u</kbd> to read the changelog and update when you want.
+- **Downloads tab with history**: active and past runs live on one list; open a run for live per-map progress. Past runs (including cancelled ones) survive restarts.
 
 ## Installation
 
@@ -54,17 +54,14 @@ curl -fsSL https://raw.githubusercontent.com/uwuclxdy/osu-collect/main/install.s
 iwr https://raw.githubusercontent.com/uwuclxdy/osu-collect/main/install.bat -OutFile "$env:TEMP\osu-install.bat"; & "$env:TEMP\osu-install.bat"
 ```
 
-This installs to `%LOCALAPPDATA%\Programs\osu-collect`, adds it to your `PATH`, creates a desktop
-shortcut and registers itself in **Settings → Apps → Installed apps**. No admin needed.
+Installs to `%LOCALAPPDATA%\Programs\osu-collect`, adds it to `PATH`, creates a desktop shortcut and registers in **Settings → Apps → Installed apps**. No admin needed.
 
 ### Prebuilt binary
 
 Download from [Releases](https://github.com/uwuclxdy/osu-collect/releases/latest) and run it in a terminal.
 
 > [!NOTE]
-> osu!collect runs in a terminal. Windows users should be able to open it with a double click as well,
-> but it's not guaranteed. Open an [Issue](https://github.com/uwuclxdy/osu-collect/issues/new/choose) if it doesn't work.
-> Windows Terminal or PowerShell 7+ are recommended.
+> osu!collect runs in a terminal. Windows users should be able to open it with a double click as well, but it's not guaranteed. Open an [Issue](https://github.com/uwuclxdy/osu-collect/issues/new/choose) if it doesn't work. Windows Terminal or PowerShell 7+ are recommended.
 
 ### Install latest from source (Rust 1.85+)
 
@@ -72,9 +69,11 @@ Download from [Releases](https://github.com/uwuclxdy/osu-collect/releases/latest
 cargo install --git https://github.com/uwuclxdy/osu-collect
 ```
 
+Building from source and more: [Installation](https://github.com/uwuclxdy/osu-collect/wiki/Installation) in the wiki.
+
 ## Uninstall
 
-**Windows**: Settings → Apps → Installed apps → **osu!collect** → Uninstall. 
+**Windows**: Settings → Apps → Installed apps → **osu!collect** → Uninstall.
 
 **Linux/macOS**: run `rm ~/.local/bin/osu-collect`.
 
@@ -84,73 +83,14 @@ cargo install --git https://github.com/uwuclxdy/osu-collect
 osu-collect
 ```
 
-Paste a collection link, pick a directory, press <kbd>↵</kbd>.
+Paste a collection link, pick a directory, press <kbd>↵</kbd>. The get maps tab has two more sources: **find** searches maps by per-difficulty criteria with no collection needed; **update** re-checks collections you downloaded and fetches only what's missing. Press <kbd>?</kbd> in-app for every key.
 
-| Field | What it does |
-|---|---|
-| **Collection URL or ID** | Accepts `https://osucollector.com/collections/{id}` or a bare ID. Resolves as you type and remembers recent collections. *Required.* |
-| **Download directory** | Defaults to the last used folder. <kbd>tab</kbd> completes filesystem paths. |
-| **Threads** | Parallel downloads. Defaults to your CPU core count; 20 or fewer avoids rate limiting. |
-| **Custom mirror URLs** *(config tab)* | Add as many as you want — each must include the `{id}` placeholder. A new empty row appears as you type; clearing a row removes it. Tried after the built-in mirror toggles. |
-| **Overwrite existing** | Off (default) verifies and skips maps already on disk; on skips the recheck and redownloads every map fresh. |
-| **Video** | Includes beatmap videos (on by default); off downloads video-free where the mirror supports it. |
+Full guides in the wiki:
 
-### Controls
-
-| Keys | Action |
-|---|---|
-| <kbd>↑</kbd> <kbd>↓</kbd> | Move between rows |
-| <kbd>←</kbd> <kbd>→</kbd> <kbd>tab</kbd> <kbd>shift</kbd>+<kbd>tab</kbd> | Switch tabs (<kbd>tab</kbd> path-completes the directory while editing it) |
-| <kbd>↵</kbd> | Activate, toggle, start a download, or edit a field; on the downloads tab, open the highlighted run |
-| <kbd>space</kbd> | Toggle the focused checkbox or switch |
-| <kbd>s</kbd> | Jump to / cycle the form's buttons; in an open run, defer maps stuck on a rate-limit cooldown so they retry later |
-| <kbd>S</kbd> | In an open run, drop maps stuck on a rate-limit cooldown for the rest of the run |
-| <kbd>+</kbd> <kbd>-</kbd> | Adjust thread count |
-| <kbd>r</kbd> | Retry all failed maps in an open run |
-| <kbd>?</kbd> | Help overlay listing every key |
-| <kbd>u</kbd> | Open the changelog + update prompt when a newer release is available (shows only when auto-update is off) |
-| <kbd>esc</kbd> | Back; steps out of an open run without cancelling it (cancel is <kbd>q</kbd>) |
-| <kbd>q</kbd> | In an open run that's still downloading, cancel it; otherwise quit (press twice to confirm; running downloads stop) |
-| <kbd>ctrl</kbd>+<kbd>c</kbd> | Quit immediately from anywhere |
-| <kbd>home</kbd> <kbd>end</kbd> | Jump to the first / last row of a list or form |
-| <kbd>pgup</kbd> <kbd>pgdn</kbd> | Page a list up / down |
-
-Text fields support full caret editing: <kbd>home</kbd>, <kbd>end</kbd>, <kbd>delete</kbd>, <kbd>ctrl</kbd>+<kbd>w</kbd> deletes the previous word.
-
-**Vim keys** (off by default, toggle on the config tab): <kbd>h</kbd> <kbd>j</kbd> <kbd>k</kbd> <kbd>l</kbd> move, <kbd>g</kbd><kbd>g</kbd> / <kbd>G</kbd> jump to top / bottom, <kbd>ctrl</kbd>+<kbd>u</kbd> / <kbd>ctrl</kbd>+<kbd>d</kbd> page, and <kbd>i</kbd> / <kbd>a</kbd> start editing the focused field. A field in edit mode types literally; <kbd>esc</kbd> leaves it. When enabled, a <kbd>vim</kbd> marker shows in the footer.
-
-### Downloads tab
-
-Every run lives on the downloads tab, active ones first, then past ones (including cancelled) that survive restarts. Open a run with <kbd>↵</kbd> for live per-map progress, speed and ETA, rate-limit countdowns, and a failure summary with reasons. Failed maps persist between runs. Retry them with <kbd>r</kbd>, or accept the prompt on your next download of that collection (configurable). A download switches to this tab by default; turn off `jump to downloads on start` in config to stay where you are instead.
-
-### Finding maps
-
-The get maps tab's `find` source is one form: type a query and/or set criteria, press `find`, pick results, download. Under the hood two backends serve it: the osu! api and nzbasic's batch-beatmap-downloader database. The form routes automatically by what you asked for: farm/stream/ranked-mapper flags and a couple of sort orders only exist on nzbasic, free text and a few other criteria only exist on osu!. A `via osu! api` / `via nzbasic` tag on the `find` button's row always shows where the run will go. An impossible combination errors, naming the two clashing fields instead of guessing.
-
-Artist, mapper and title match as **exact phrases** on the osu! api route. The nzbasic route matches substrings instead, so force it with a farm/stream/ranked-mapper flag (or the `bpm ↓` / `length ↑` sorts) if you want contains-matching. The default sort is **newest ranked first**; cycling to `relevance` switches the route to the osu! api.
-
-Ranked date takes a `2020..2024`-style range, also open-ended (`2020..` / `..2024`). Checked results show an approximate total size on the download button as sizes load. Press <kbd>m</kbd> to load more results on the osu! route. Results land in their own subfolder per search, so runs never collide.
-
-### Updating collections
-
-The get maps tab's `update` source re-checks every collection you've downloaded against osu!collector and shows what's missing or was removed. Check the collections you want and download their missing maps, so keeping a collection current never means redownloading it. If a map you already own keeps showing as missing, mark it installed with <kbd>i</kbd> (or <kbd>I</kbd> for the whole collection) to hide it; a later scan that actually finds it on disk un-hides it automatically. Your osu! install path and client choice persist across restarts.
-
-### Logging in with your osu! account (optional)
-
-The config tab's login chip opens a **login panel** that docks on the right side of the config tab, where you enter your osu! username and password (masked). It closes when you press <kbd>esc</kbd> or switch tabs. Logging in goes through osu!lazer's first-party client, the only way to enable the **osu! official** download mirror. If osu! needs to verify a new device, the panel prompts for the emailed code. Your password is sent only to `osu.ppy.sh` and never stored — only the resulting token lives in `auth.json` (local).
-
-> Heads up: this uses osu!lazer's first-party login, an unofficial grey area. The official mirror is rate-limited (~10–20 downloads/hour) and stays **off by default** — keep it as a last-resort source and use it sparingly. Requests to osu! are throttled automatically (about one per second, shared across all download threads) to stay within its general API rate; the hourly download cap still applies and shows up as a temporary rate-limit when reached.
-
-## How it works
-
-```mermaid
-flowchart LR
-    A[Paste collection<br/>URL or ID] --> B[Resolve from<br/>osu!collector]
-    B --> C[Download across<br/>mirrors]
-    C --> D[Verify MD5<br/>+ archive]
-    D --> E[Write<br/>collection.db]
-    E --> F[Import<br/>into osu!]
-```
+- [Usage](https://github.com/uwuclxdy/osu-collect/wiki/Usage)
+- [Finding maps](https://github.com/uwuclxdy/osu-collect/wiki/Finding-Maps)
+- [Updating collections](https://github.com/uwuclxdy/osu-collect/wiki/Updating-Collections)
+- [Keybindings](https://github.com/uwuclxdy/osu-collect/wiki/Keybindings)
 
 ## Importing into osu!
 
@@ -168,27 +108,29 @@ flowchart LR
 <details>
 <summary><b>osu! stable</b></summary>
 
-Drag the downloaded `.osz` files into osu!, then merge the generated `collection.db` with a tool like [Collection Manager](https://github.com/Piotrekol/CollectionManager). If you have no existing collections, back up your own `collection.db` and swap in the generated one.
+Drag the downloaded `.osz` files into osu!, then merge the generated `collection.db` with a tool like [Collection Manager](https://github.com/Piotrekol/CollectionManager). If you have no existing collections, you can just replace your `collection.db` with the generated one.
 
 </details>
 
+More detail: [Importing into osu!](https://github.com/uwuclxdy/osu-collect/wiki/Importing-into-osu) in the wiki.
+
 ## Configuration
 
-osu!collect reads an optional config file with defaults for mirrors, threads, archive validation, retry policy, theme, and logging:
+osu!collect reads an optional config file; most settings are also editable live on the config tab, where changes apply and save immediately.
 
 | OS | Path |
 |---|---|
 | Linux / macOS | `~/.config/osu-collect/config.toml` |
 | Windows | `%APPDATA%\osu-collect\config.toml` |
 
-Every key is documented in [config.toml.example](config.toml.example). Most settings are also editable live on the config tab, where changes apply and save immediately.
+See [config.toml.example](config.toml.example) and [Configuration](https://github.com/uwuclxdy/osu-collect/wiki/Configuration) (wiki).
 
 ## Alternatives
 
 | Tool | How osu!collect differs |
 |---|---|
-| [osu!Collector desktop client](https://osucollector.com/app) | The official app. Bulk download needs a paid subscription; osu!collect is free. |
-| [BatchBeatmapDownloader](https://github.com/nzbasic/batch-beatmap-downloader) | Downloads by filters and criteria rather than osu!collector collections. The original inspiration for this project. |
+| [osu!Collector desktop client](https://osucollector.com/app) | The official app that needs a paid subscription; osu!collect is free. |
+| [BatchBeatmapDownloader](https://github.com/nzbasic/batch-beatmap-downloader) | Downloads by filters and criteria rather than osu!collector collections. |
 | [osu-collector-dl](https://github.com/roogue/osu-collector-dl) | A CLI script with no TUI, no `collection.db` generation, and no updater. |
 | [OsuCollectionDownloader](https://github.com/waylaa/OsuCollectionDownloader) | Generates `.osdb` files and needs the .NET runtime. |
 | [Collection Manager](https://github.com/Piotrekol/CollectionManager) | Manages and merges existing collections; pairs well with osu!collect for stable imports. |
@@ -199,7 +141,7 @@ Every key is documented in [config.toml.example](config.toml.example). Most sett
 Run osu!collect, paste the collection URL, press <kbd>↵</kbd>. Downloads come from public beatmap mirrors, or the official servers if you log in. No subscription needed.
 
 **Does it work with osu! lazer?**
-Yes. See [Importing into osu!](#importing-into-osu). The generated `collection.db` imports through lazer's first-time-setup flow.
+Yes. See [Importing into osu!](#importing-into-osu). The generated `collection.db` imports through lazer's "first-time-setup".
 
 **Do I need an osu! account?**
 No. Logging in is optional and only adds the official osu! servers as an extra source.
@@ -210,26 +152,29 @@ Yes. The update source on the get maps tab diffs your downloaded collections aga
 **A download failed or got rate-limited. What now?**
 Failures save per collection. Open the run on the downloads tab and press <kbd>r</kbd> to retry them all, or accept the retry prompt next time you download that collection. Rate-limited mirrors cool down on their own while the others keep going. A map that stays throttled past the auto-defer delay (60s by default, configurable) goes back in the queue on its own and retries later, so the run never stalls; press <kbd>s</kbd> to defer the currently-stuck maps yourself, or <kbd>S</kbd> to drop them for the rest of the run.
 
-## Building from source
+## Documentation
 
-```bash
-cargo build --release
-```
+See more on the wiki:
 
-<details>
-<summary><b>Windows cross-builds and requirements</b></summary>
-
-Requires Rust 1.85+ (edition 2024). For Windows cross-builds, `build.sh` produces Linux and Windows binaries in `build/`.
-
-</details>
+| Page | Covers |
+|---|---|
+| [Installation](https://github.com/uwuclxdy/osu-collect/wiki/Installation) | Install details, self-update, uninstall, building from source |
+| [Usage](https://github.com/uwuclxdy/osu-collect/wiki/Usage) | The get maps form, downloads tab, failed-map retries |
+| [Finding maps](https://github.com/uwuclxdy/osu-collect/wiki/Finding-Maps) | Search criteria, filter syntax, backend routing |
+| [Updating collections](https://github.com/uwuclxdy/osu-collect/wiki/Updating-Collections) | Re-check scans, marking maps installed |
+| [Importing into osu!](https://github.com/uwuclxdy/osu-collect/wiki/Importing-into-osu) | Step-by-step lazer + stable import |
+| [Keybindings](https://github.com/uwuclxdy/osu-collect/wiki/Keybindings) | Every key, vim keymap |
+| [Configuration](https://github.com/uwuclxdy/osu-collect/wiki/Configuration) | Every config key with its default |
+| [Mirrors](https://github.com/uwuclxdy/osu-collect/wiki/Mirrors) | Mirror list, rate limits, custom mirrors, osu! login |
 
 ## Roadmap
 
 - [ ] All features of [BatchBeatmapDownloader](https://github.com/nzbasic/batch-beatmap-downloader) (🚧 in the works)
+- [ ] Integrate osu!Stats
 
 ## Acknowledgments
 
-Powered by [osu-downloader](osu-downloader/) (the bundled Rust library handling mirrors, failover, validation, and events), [osu-db](https://crates.io/crates/osu-db), and [ratatui](https://ratatui.rs). Inspired by [BatchBeatmapDownloader](https://github.com/nzbasic/batch-beatmap-downloader).
+Powered by [osu-downloader](osu-downloader/) (the bundled Rust library handling mirrors, failover, validation and events), [osu-db](https://crates.io/crates/osu-db) and [ratatui](https://ratatui.rs). Inspired by [BatchBeatmapDownloader](https://github.com/nzbasic/batch-beatmap-downloader).
 
 ## License
 
