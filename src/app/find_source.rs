@@ -50,8 +50,14 @@ pub enum EnrichTarget {
 /// every reseed / clear so a page from a superseded run (a new find run, a fresh
 /// collection open) is dropped by the handler instead of folding into the new
 /// rows. Advancing on dispatch + rewinding a failed page keeps the "`m` retries a
-/// failed page" contract the old `beatmapDetails` pager had. `enriching` tracks
-/// whether a page is in flight so the browse can render an explicit loading cue.
+/// failed page" contract the old `beatmapDetails` pager had. `in_flight` counts
+/// outstanding scheduled pages so the browse can render an explicit loading cue
+/// (`is_enriching()` = a page is still pending). It is a counter, not a flag:
+/// a landed page's event is processed AFTER the next `m` may have scheduled
+/// another, so a plain bool would let the older event clear the cue while a newer
+/// fetch is still pending (the cue vanishing mid-fetch). Each dispatched page
+/// bumps it; each same-generation land/fail event decrements it (a stale-gen
+/// event drops before decrementing); a reseed zeros it.
 ///
 /// Shared by every id-only browse — the flat [`SetBrowse`] and the update
 /// source's missing-set preview — through the [`EnrichSink`] trait.
@@ -60,7 +66,7 @@ pub(crate) struct EnrichPager {
     diff_ids: Vec<u32>,
     cursor: usize,
     generation: u64,
-    enriching: bool,
+    in_flight: u32,
 }
 
 impl EnrichPager {
@@ -69,7 +75,7 @@ impl EnrichPager {
     pub(crate) fn seed(&mut self, diff_ids: Vec<u32>) {
         self.diff_ids = diff_ids;
         self.cursor = 0;
-        self.enriching = false;
+        self.in_flight = 0;
         self.generation = self.generation.wrapping_add(1);
     }
 
@@ -78,7 +84,7 @@ impl EnrichPager {
     pub(crate) fn clear(&mut self) {
         self.diff_ids = Vec::new();
         self.cursor = 0;
-        self.enriching = false;
+        self.in_flight = 0;
         self.generation = self.generation.wrapping_add(1);
     }
 
@@ -112,12 +118,18 @@ impl EnrichPager {
         self.cursor
     }
 
-    pub(crate) fn set_enriching(&mut self, on: bool) {
-        self.enriching = on;
+    /// A page was dispatched — count it as outstanding (drives the loading cue).
+    pub(crate) fn mark_dispatched(&mut self) {
+        self.in_flight = self.in_flight.saturating_add(1);
+    }
+
+    /// A page's result (success or failure) landed — one fewer outstanding.
+    pub(crate) fn mark_settled(&mut self) {
+        self.in_flight = self.in_flight.saturating_sub(1);
     }
 
     pub(crate) fn is_enriching(&self) -> bool {
-        self.enriching
+        self.in_flight > 0
     }
 }
 
@@ -132,8 +144,11 @@ pub trait EnrichSink {
     fn next_enrich_page(&mut self) -> Option<Vec<u32>>;
     fn rewind_enrichment(&mut self, cursor: usize);
     fn has_more_enrichment(&self) -> bool;
-    /// Mark whether a page is in flight (drives the browse's loading spinner).
-    fn set_enriching(&mut self, on: bool);
+    /// Count a page as dispatched (drives the browse's loading cue).
+    fn mark_enrichment_dispatched(&mut self);
+    /// Count a page as settled (its result just landed). Gen-guarded by the
+    /// caller, so this only fires for a page this sink actually dispatched.
+    fn mark_enrichment_settled(&mut self);
     fn is_enriching(&self) -> bool;
     /// Fold a landed batch page's set-level metadata into this browse.
     fn fold_meta(&mut self, meta_by_set: HashMap<u32, BeatmapSetMeta>);
@@ -377,12 +392,16 @@ impl EnrichSink for SetBrowse {
         self.enrich.has_more()
     }
 
-    fn set_enriching(&mut self, on: bool) {
-        self.enrich.enriching = on;
+    fn mark_enrichment_dispatched(&mut self) {
+        self.enrich.mark_dispatched();
+    }
+
+    fn mark_enrichment_settled(&mut self) {
+        self.enrich.mark_settled();
     }
 
     fn is_enriching(&self) -> bool {
-        self.enrich.enriching
+        self.enrich.is_enriching()
     }
 
     /// Fold set-level metadata into the id-only rows. `meta_by_set` is keyed by

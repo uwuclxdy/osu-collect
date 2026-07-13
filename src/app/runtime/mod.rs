@@ -511,9 +511,11 @@ fn dispatch_command(
                 let rewind_to = sink.enrich_cursor();
                 // A dry pager (every page requested) makes this a no-op.
                 if let Some(page) = sink.next_enrich_page() {
-                    // Flip the loading cue on before the fetch; the landing /
-                    // failing event clears it (`handle_enrich_event`).
-                    sink.set_enriching(true);
+                    // Count this page as outstanding; the landing / failing
+                    // event decrements it (`handle_enrich_event`). A counter
+                    // (not a bool) so an older page's late event can't clear
+                    // the cue while a newer fetch is still pending.
+                    sink.mark_enrichment_dispatched();
                     schedule_enrichment(
                         target,
                         generation,

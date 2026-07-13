@@ -881,8 +881,12 @@ impl EnrichSink for UpdateSource {
         self.enrich.has_more()
     }
 
-    fn set_enriching(&mut self, on: bool) {
-        self.enrich.set_enriching(on);
+    fn mark_enrichment_dispatched(&mut self) {
+        self.enrich.mark_dispatched();
+    }
+
+    fn mark_enrichment_settled(&mut self) {
+        self.enrich.mark_settled();
     }
 
     fn is_enriching(&self) -> bool {

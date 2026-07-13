@@ -82,8 +82,9 @@ pub fn handle_enrich_event(event: EnrichEvent, app: &mut App) {
             if sink.enrich_generation() != generation {
                 return;
             }
-            // This generation's in-flight page landed — clear the loading cue.
-            sink.set_enriching(false);
+            // This page settled — one fewer outstanding (a counter, so a newer
+            // dispatch's cue survives a stale page's late event).
+            sink.mark_enrichment_settled();
             // Dedupe to set-level metadata; the first diff of a set wins (title /
             // artist / creator / status are set-level, and the batch nests each
             // row's full set). Holes (ids the server omitted) simply contribute no
@@ -108,7 +109,7 @@ pub fn handle_enrich_event(event: EnrichEvent, app: &mut App) {
             if sink.enrich_generation() != generation {
                 return;
             }
-            sink.set_enriching(false);
+            sink.mark_enrichment_settled();
             sink.rewind_enrichment(rewind_to);
             app.toast_warn(format!("map details unavailable: {reason}"));
         }

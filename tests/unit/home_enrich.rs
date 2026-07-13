@@ -239,7 +239,7 @@ fn update_target_folds_into_missing_set_cache_and_clears_loading() {
         }]);
     app.home.update.descend(); // seeds the pager off the missing sets
     let _ = app.home.update.next_enrich_page();
-    app.home.update.set_enriching(true);
+    app.home.update.mark_enrichment_dispatched();
     let generation = app.home.update.enrich_generation();
 
     handle_enrich_event(
@@ -259,6 +259,63 @@ fn update_target_folds_into_missing_set_cache_and_clears_loading() {
     assert!(
         !app.home.update.is_enriching(),
         "a landed page clears the loading cue"
+    );
+}
+
+#[test]
+fn late_prior_page_event_does_not_clear_a_newer_fetchs_cue() {
+    // Reproduces the race the counter fixes: page N's task finished but its
+    // Enriched event is still queued when the user presses `m`, scheduling page
+    // N+1. Draining page N's event must NOT clear the cue while N+1 is pending.
+    let mut app = app();
+    app.home.find.browse.set_rows(id_only_rows(&[10, 20, 30]));
+    app.home.find.browse.seed_enrichment((0..300).collect());
+
+    // Page N requested + dispatched (in-flight = 1).
+    let _ = app.home.find.browse.next_enrich_page();
+    app.home.find.browse.mark_enrichment_dispatched();
+    let gen_n = app.home.find.browse.enrich_generation();
+
+    // Before N's event drains, the user presses `m`: page N+1 requested +
+    // dispatched (in-flight = 2), same generation (no reseed).
+    let _ = app.home.find.browse.next_enrich_page();
+    app.home.find.browse.mark_enrichment_dispatched();
+
+    // Now N's (older) Enriched event drains first. It must fold its rows but
+    // leave the cue ON — page N+1 is still outstanding.
+    handle_enrich_event(
+        EnrichEvent::Enriched {
+            target: EnrichTarget::Find,
+            generation: gen_n,
+            rows: vec![beatmap_row(0, 10, "page N", false, false)],
+        },
+        &mut app,
+    );
+    assert_eq!(
+        app.home.find.browse.rows[0]
+            .meta
+            .as_ref()
+            .map(|m| m.title.as_str()),
+        Some("page N"),
+        "the older page still folds"
+    );
+    assert!(
+        app.home.find.browse.is_enriching(),
+        "the cue stays on while page N+1 is in flight (no flicker)"
+    );
+
+    // N+1 lands → in-flight back to 0 → cue clears.
+    handle_enrich_event(
+        EnrichEvent::Enriched {
+            target: EnrichTarget::Find,
+            generation: gen_n,
+            rows: vec![beatmap_row(1, 20, "page N+1", false, false)],
+        },
+        &mut app,
+    );
+    assert!(
+        !app.home.find.browse.is_enriching(),
+        "the cue clears once dry"
     );
 }
 
