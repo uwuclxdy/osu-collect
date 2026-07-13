@@ -145,7 +145,11 @@ fn paging_clamps_at_the_ends_without_wrapping() {
     browse.page_down();
     assert_eq!(browse.list_cursor(), Some(20));
     browse.page_down();
-    assert_eq!(browse.list_cursor(), Some(24), "page clamps to the last row");
+    assert_eq!(
+        browse.list_cursor(),
+        Some(24),
+        "page clamps to the last row"
+    );
     // A second page at the bottom must NOT wrap to the top (unlike a step).
     browse.page_down();
     assert_eq!(browse.list_cursor(), Some(24), "paging never wraps");

@@ -40,42 +40,52 @@ pub enum EnrichTarget {
     Find,
     /// The collection browse&pick surface (`HomeTab::collection_browse`).
     Collection,
+    /// The update source's missing-set preview (`UpdateSource`) — the scan lands
+    /// set ids only; the batch backfills each set's title/artist.
+    Update,
 }
 
 /// Lazy osu-batch enrichment cursor for one browse: walks a list of diff ids in
-/// [`ENRICH_PAGE`]-sized pages, feeding [`BrowseRow::meta`] backfill. `generation`
-/// bumps on every reseed / clear so a page from a superseded run (a new find run,
-/// a fresh collection open) is dropped by the handler instead of folding into the
-/// new rows. Advancing on dispatch + rewinding a failed page keeps the "`m`
-/// retries a failed page" contract the old `beatmapDetails` pager had.
+/// [`ENRICH_PAGE`]-sized pages, feeding metadata backfill. `generation` bumps on
+/// every reseed / clear so a page from a superseded run (a new find run, a fresh
+/// collection open) is dropped by the handler instead of folding into the new
+/// rows. Advancing on dispatch + rewinding a failed page keeps the "`m` retries a
+/// failed page" contract the old `beatmapDetails` pager had. `enriching` tracks
+/// whether a page is in flight so the browse can render an explicit loading cue.
+///
+/// Shared by every id-only browse — the flat [`SetBrowse`] and the update
+/// source's missing-set preview — through the [`EnrichSink`] trait.
 #[derive(Debug, Clone, Default)]
-struct EnrichPager {
+pub(crate) struct EnrichPager {
     diff_ids: Vec<u32>,
     cursor: usize,
     generation: u64,
+    enriching: bool,
 }
 
 impl EnrichPager {
     /// Adopt a fresh diff-id list (new results / a new collection open), homing
     /// the cursor and invalidating any in-flight page.
-    fn seed(&mut self, diff_ids: Vec<u32>) {
+    pub(crate) fn seed(&mut self, diff_ids: Vec<u32>) {
         self.diff_ids = diff_ids;
         self.cursor = 0;
+        self.enriching = false;
         self.generation = self.generation.wrapping_add(1);
     }
 
     /// Drop the pager (the rows it enriched are gone), invalidating any in-flight
     /// page.
-    fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.diff_ids = Vec::new();
         self.cursor = 0;
+        self.enriching = false;
         self.generation = self.generation.wrapping_add(1);
     }
 
     /// The next unfetched page, advancing the cursor past it. `None` once every
     /// diff id has been requested. Holes (ids the server omits) don't stall the
     /// cursor — it advances by the requested count regardless.
-    fn next_page(&mut self) -> Option<Vec<u32>> {
+    pub(crate) fn next_page(&mut self) -> Option<Vec<u32>> {
         if self.cursor >= self.diff_ids.len() {
             return None;
         }
@@ -86,13 +96,47 @@ impl EnrichPager {
     }
 
     /// Rewind to `cursor` (a failed page retries on the next `m`).
-    fn rewind(&mut self, cursor: usize) {
+    pub(crate) fn rewind(&mut self, cursor: usize) {
         self.cursor = cursor.min(self.diff_ids.len());
     }
 
-    fn has_more(&self) -> bool {
+    pub(crate) fn has_more(&self) -> bool {
         self.cursor < self.diff_ids.len()
     }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub(crate) fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    pub(crate) fn set_enriching(&mut self, on: bool) {
+        self.enriching = on;
+    }
+
+    pub(crate) fn is_enriching(&self) -> bool {
+        self.enriching
+    }
+}
+
+/// An id-only browse that the shared osu-batch enrichment pager backfills. Lets
+/// the runtime drive [`SetBrowse`] and the update source's missing-set preview
+/// through one code path (`src/app/runtime/enrich.rs`): the generic pager methods
+/// plus a `fold_meta` that each consumer routes into its own row/cache shape and
+/// an `enriching` flag that gates the loading cue.
+pub trait EnrichSink {
+    fn enrich_generation(&self) -> u64;
+    fn enrich_cursor(&self) -> usize;
+    fn next_enrich_page(&mut self) -> Option<Vec<u32>>;
+    fn rewind_enrichment(&mut self, cursor: usize);
+    fn has_more_enrichment(&self) -> bool;
+    /// Mark whether a page is in flight (drives the browse's loading spinner).
+    fn set_enriching(&mut self, on: bool);
+    fn is_enriching(&self) -> bool;
+    /// Fold a landed batch page's set-level metadata into this browse.
+    fn fold_meta(&mut self, meta_by_set: HashMap<u32, BeatmapSetMeta>);
 }
 
 /// One row in a [`SetBrowse`]: a beatmapset id plus optional metadata for the
@@ -303,38 +347,48 @@ impl SetBrowse {
     pub fn seed_enrichment(&mut self, diff_ids: Vec<u32>) {
         self.enrich.seed(diff_ids);
     }
+}
 
+impl EnrichSink for SetBrowse {
     /// The pager generation, bumped on every reseed / clear. The runtime tags each
     /// scheduled page with it and drops a returned page whose generation no longer
     /// matches (a superseding run reseeded meanwhile).
-    pub fn enrich_generation(&self) -> u64 {
+    fn enrich_generation(&self) -> u64 {
         self.enrich.generation
     }
 
     /// The pager offset (captured before a fetch so a failure can rewind to it).
-    pub fn enrich_cursor(&self) -> usize {
+    fn enrich_cursor(&self) -> usize {
         self.enrich.cursor
     }
 
     /// Pull the next unfetched enrichment page, advancing the cursor.
-    pub fn next_enrich_page(&mut self) -> Option<Vec<u32>> {
+    fn next_enrich_page(&mut self) -> Option<Vec<u32>> {
         self.enrich.next_page()
     }
 
     /// Rewind the pager to `cursor` (a failed page retries on the next `m`).
-    pub fn rewind_enrichment(&mut self, cursor: usize) {
+    fn rewind_enrichment(&mut self, cursor: usize) {
         self.enrich.rewind(cursor);
     }
 
     /// Whether `m` still has enrichment pages to load.
-    pub fn has_more_enrichment(&self) -> bool {
+    fn has_more_enrichment(&self) -> bool {
         self.enrich.has_more()
+    }
+
+    fn set_enriching(&mut self, on: bool) {
+        self.enrich.enriching = on;
+    }
+
+    fn is_enriching(&self) -> bool {
+        self.enrich.enriching
     }
 
     /// Fold set-level metadata into the id-only rows. `meta_by_set` is keyed by
     /// beatmapset id (the caller dedupes per set, first diff wins); only rows
     /// still missing `meta` are filled, so a re-fetch never clobbers a preview.
-    pub fn fold_meta(&mut self, mut meta_by_set: HashMap<u32, BeatmapSetMeta>) {
+    fn fold_meta(&mut self, mut meta_by_set: HashMap<u32, BeatmapSetMeta>) {
         for row in &mut self.rows {
             if row.meta.is_none()
                 && let Some(meta) = meta_by_set.remove(&row.id)

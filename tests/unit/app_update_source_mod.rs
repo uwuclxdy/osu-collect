@@ -2,7 +2,9 @@ use super::{
     BeatmapSort, CollectionSort, MissingBeatmapset, MissingStatus, ScanCta, ScanStatus,
     UpdateSource, scroll_list,
 };
+use crate::app::EnrichSink;
 use crate::osu_db::LocalCollection;
+use osu_downloader::search::BeatmapSetMeta;
 use std::collections::HashMap;
 
 fn local_col(name: &str, count: usize) -> LocalCollection {
@@ -20,7 +22,78 @@ fn missing(id: u32, collection_id: u32, previously_deleted: bool) -> MissingBeat
         collection_name: format!("col {collection_id}"),
         selected: true,
         previously_deleted,
+        enrich_diff_id: None,
     }
+}
+
+fn missing_with_diff(id: u32, collection_id: u32, diff: Option<u32>) -> MissingBeatmapset {
+    MissingBeatmapset {
+        enrich_diff_id: diff,
+        ..missing(id, collection_id, false)
+    }
+}
+
+fn meta_val(id: u32, title: &str) -> BeatmapSetMeta {
+    BeatmapSetMeta {
+        id,
+        title: title.to_string(),
+        artist: "artist".to_string(),
+        creator: "mapper".to_string(),
+        status: "ranked".to_string(),
+        favourite_count: 0,
+        play_count: 0,
+        nsfw: false,
+        video: false,
+    }
+}
+
+#[test]
+fn enrichment_seeds_one_deduped_diff_per_missing_set() {
+    let mut tab = UpdateSource::new();
+    tab.set_missing_beatmaps(vec![
+        missing_with_diff(10, 100, Some(1000)),
+        missing_with_diff(10, 200, Some(1000)), // same set, other collection → deduped
+        missing_with_diff(20, 100, Some(2000)),
+        missing_with_diff(30, 100, None), // no diff id → contributes nothing
+    ]);
+    tab.descend(); // seeds the enrichment pager off the missing sets
+
+    let page = tab
+        .next_enrich_page()
+        .expect("a page of diff ids to enrich");
+    assert_eq!(
+        page,
+        vec![1000, 2000],
+        "one diff per unique set, in set order, holes skipped"
+    );
+    assert!(
+        tab.next_enrich_page().is_none(),
+        "the pager dries up after the seeded ids"
+    );
+}
+
+#[test]
+fn fold_meta_backfills_the_missing_set_cache() {
+    let mut tab = UpdateSource::new();
+    tab.set_missing_beatmaps(vec![missing_with_diff(10, 100, Some(1000))]);
+    tab.descend();
+    assert!(
+        tab.set_meta(10).is_none(),
+        "no metadata before a page lands"
+    );
+
+    let mut folded = HashMap::new();
+    folded.insert(10, meta_val(10, "Song A"));
+    folded.insert(99, meta_val(99, "unlisted")); // a set not previewed is harmless
+    tab.fold_meta(folded);
+    assert_eq!(tab.set_meta(10).map(|m| m.title.as_str()), Some("Song A"));
+
+    // A re-descend reseeds and clears the cache (a fresh scan is a new identity).
+    tab.descend();
+    assert!(
+        tab.set_meta(10).is_none(),
+        "re-descend clears stale metadata"
+    );
 }
 
 /// Two collections (ids 100 / 200) with three missing sets: two in 100, one in 200.

@@ -605,6 +605,7 @@ fn space_in_update_browse_toggles_highlighted_collection() {
             collection_name: "test - 1234".to_string(),
             selected: false,
             previously_deleted: false,
+            enrich_diff_id: None,
         }]);
     app.home.update.descend();
 
@@ -1014,6 +1015,7 @@ fn enter_on_collection_toggles_and_stays_in_browse() {
             collection_name: "test - 1234".to_string(),
             selected: false,
             previously_deleted: false,
+            enrich_diff_id: None,
         }]);
     app.home.update.descend();
     let before = app.home.update.selection.local_collections[0].selected;
@@ -1055,6 +1057,7 @@ fn enter_on_update_download_button_dispatches_selective() {
             collection_name: "test - 1234".to_string(),
             selected: false,
             previously_deleted: false,
+            enrich_diff_id: None,
         }]);
     // The download now fires from the form's `download (N)` button, not an
     // in-browse action bar.
@@ -1416,7 +1419,7 @@ fn filter_chips_cycle_on_space_and_presets_seed_fields() {
 
 #[test]
 fn m_in_filter_browse_loads_more_enrichment() {
-    use osu_collect::app::{BrowseRow, EnrichTarget, FindBackend, GetMapsSource};
+    use osu_collect::app::{BrowseRow, EnrichSink, EnrichTarget, FindBackend, GetMapsSource};
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
     // `m` routes by the backend that produced the results, so mark it nzbasic.
@@ -1445,6 +1448,39 @@ fn m_in_filter_browse_loads_more_enrichment() {
     let _ = app.home.find.browse.next_enrich_page();
     let cmd = app.handle_key(press(KeyCode::Char('m')));
     assert!(cmd.is_none(), "a dry pager must not dispatch, got {cmd:?}");
+}
+
+#[test]
+fn m_in_update_browse_loads_more_missing_set_enrichment() {
+    use osu_collect::app::update_source::{MissingBeatmapset, MissingStatus};
+    use osu_collect::app::{EnrichTarget, GetMapsSource};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Update;
+    app.home
+        .update
+        .set_missing_beatmaps(vec![MissingBeatmapset {
+            id: 10,
+            status: MissingStatus::NotInstalled,
+            collection_id: 100,
+            collection_name: "col".to_string(),
+            selected: true,
+            previously_deleted: false,
+            enrich_diff_id: Some(1000),
+        }]);
+    // descend() seeds the pager (one unfetched diff id) but the auto first-page
+    // fetch is the returned command, not applied here, so a page remains.
+    app.home.update.descend();
+
+    let cmd = app.handle_key(press(KeyCode::Char('m')));
+    assert!(
+        matches!(
+            cmd,
+            Some(AppCommand::LoadEnrichment {
+                target: EnrichTarget::Update
+            })
+        ),
+        "`m` in the update browse backfills the next enrichment page, got {cmd:?}"
+    );
 }
 
 #[test]

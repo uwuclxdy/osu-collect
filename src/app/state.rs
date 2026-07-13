@@ -6,7 +6,7 @@ use super::{
     download_history::DownloadHistory,
     downloads_tab::{DownloadsRow, DownloadsTab},
     failed_maps,
-    find_source::{BrowseRow, EnrichTarget, FindPlan, FindStatusMsg, SetBrowse},
+    find_source::{BrowseRow, EnrichSink, EnrichTarget, FindPlan, FindStatusMsg, SetBrowse},
     home::{FindBackend, GetMapsSource, HomeField, HomeTab},
     ignored_maps,
     library::LibraryState,
@@ -946,6 +946,13 @@ impl App {
             }
             'r' if self.home.update.can_recheck_failed_maps() => {
                 return Some(AppCommand::RecheckFailedMaps);
+            }
+            // Missing-set rows are id-only until enriched; `m` backfills the next
+            // osu-batch page of titles (mirrors the flat browse's `m`).
+            'm' if self.home.update.has_more_enrichment() => {
+                return Some(AppCommand::LoadEnrichment {
+                    target: EnrichTarget::Update,
+                });
             }
             _ => {}
         }
@@ -2204,7 +2211,13 @@ impl App {
                             // on it, so guard the descend (disabled rows are no-ops).
                             HomeField::UpdateBrowse => {
                                 if self.home.update.total_new_count() > 0 {
+                                    // descend() reseeds the enrichment pager; kick
+                                    // its first page so the missing-set titles fill
+                                    // in (mirrors the collection browse's descend).
                                     self.home.update.descend();
+                                    return Some(AppCommand::LoadEnrichment {
+                                        target: EnrichTarget::Update,
+                                    });
                                 }
                             }
                             // Reopen the find results browse without re-fetching.

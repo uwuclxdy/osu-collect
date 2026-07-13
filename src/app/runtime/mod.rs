@@ -37,7 +37,7 @@ use auth::{
     AuthEvent, handle_auth_event, spawn_lazer_login_task, spawn_logout_task, spawn_reissue_task,
     spawn_verification_task,
 };
-use enrich::{enrich_browse_mut, schedule_enrichment};
+use enrich::{enrich_sink_mut, schedule_enrichment};
 use filter::schedule_filter;
 use mirror_probe::{handle_mirror_probe_event, schedule_probe};
 use resolve::schedule_resolve;
@@ -110,6 +110,7 @@ pub async fn run(
         home_filter_tx,
         enrich_find: None,
         enrich_collection: None,
+        enrich_update: None,
         home_enrich_tx,
         home_size_tx,
         mirror_probe: None,
@@ -260,6 +261,9 @@ pub async fn run(
         handle.abort();
     }
     if let Some(handle) = tasks.enrich_collection.take() {
+        handle.abort();
+    }
+    if let Some(handle) = tasks.enrich_update.take() {
         handle.abort();
     }
     if let Some(handle) = tasks.mirror_probe.take() {
@@ -489,23 +493,27 @@ fn dispatch_command(
             let enrich_handle = match target {
                 EnrichTarget::Find => &mut tasks.enrich_find,
                 EnrichTarget::Collection => &mut tasks.enrich_collection,
+                EnrichTarget::Update => &mut tasks.enrich_update,
             };
-            let browse = enrich_browse_mut(app, target);
+            let sink = enrich_sink_mut(app, target);
             // The first page (cursor 0) follows a reseed: the reseed already
             // invalidated any in-flight page via the generation guard, so start
             // fresh (`schedule_enrichment` aborts the target's prior task). A
             // `m`-triggered page (cursor > 0) respects busy — aborting an
             // in-flight page AFTER the pager advanced past it would lose those
             // rows (rewind fires on a failure event, not on abort-by-supersede).
-            let first_page = browse.enrich_cursor() == 0;
+            let first_page = sink.enrich_cursor() == 0;
             let busy = enrich_handle
                 .as_ref()
                 .is_some_and(|handle| !handle.is_finished());
             if first_page || !busy {
-                let generation = browse.enrich_generation();
-                let rewind_to = browse.enrich_cursor();
+                let generation = sink.enrich_generation();
+                let rewind_to = sink.enrich_cursor();
                 // A dry pager (every page requested) makes this a no-op.
-                if let Some(page) = browse.next_enrich_page() {
+                if let Some(page) = sink.next_enrich_page() {
+                    // Flip the loading cue on before the fetch; the landing /
+                    // failing event clears it (`handle_enrich_event`).
+                    sink.set_enriching(true);
                     schedule_enrichment(
                         target,
                         generation,
@@ -647,6 +655,7 @@ struct BackgroundTasks {
     /// fires no event, so its rows would stay id-only with the cursor advanced).
     enrich_find: Option<tokio::task::JoinHandle<()>>,
     enrich_collection: Option<tokio::task::JoinHandle<()>>,
+    enrich_update: Option<tokio::task::JoinHandle<()>>,
     home_enrich_tx: mpsc::UnboundedSender<EnrichEvent>,
     /// Nekoha size-probe channel. Fire-and-forget (no stored handle) — a probe
     /// left running at quit just finds the receiver dropped and ends.

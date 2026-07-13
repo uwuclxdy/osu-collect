@@ -5,11 +5,12 @@
 //! body via [`super::master_detail`].
 
 use crate::app::{
-    HomeField, LibraryState, ScanCta, UpdateSource,
+    EnrichSink, HomeField, LibraryState, ScanCta, UpdateSource,
     update_source::{MissingBeatmapset, ScanStatus},
 };
 use crate::osu_db::OsuClient;
 use crate::utils::pretty_path;
+use osu_downloader::search::BeatmapSetMeta;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -109,9 +110,11 @@ pub fn push_form_rows(
 }
 
 /// Render the two-pane browse over the whole body area.
-pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource) {
+pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource, tick: u64) {
     // Caret + label promotion render only while the list pane owns focus.
     let list_focused = !form.preview_focused();
+    // While a batch page is in flight the missing-set rows read as loading.
+    let enriching = form.is_enriching();
     let list_selected = form.selection.collections_cursor;
     let list_items: Vec<ListItem<'static>> = form
         .selection
@@ -146,7 +149,7 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource) {
     let preview_items: Vec<ListItem<'static>> = preview_indices
         .iter()
         .filter_map(|&idx| form.selection.cached_missing_sets.get(idx))
-        .map(preview_row)
+        .map(|set| preview_row(set, form.set_meta(set.id), enriching, tick))
         .collect();
     let preview_selected = form
         .preview_focused()
@@ -230,13 +233,22 @@ fn collection_stats_meta(new: usize, removed: usize) -> Line<'static> {
     Line::from(spans)
 }
 
-/// One read-only preview row: the missing set id, plus a marker for a set the
-/// user previously deleted from the collection.
-fn preview_row(set: &MissingBeatmapset) -> ListItem<'static> {
-    let mut spans = vec![Span::styled(
-        format!("#{}", set.id),
+/// One read-only preview row: the missing set as `artist - title` once its
+/// enrichment page lands, a spinner + id while fetching, else the bare id — plus
+/// a marker for a set the user previously deleted from the collection.
+fn preview_row(
+    set: &MissingBeatmapset,
+    meta: Option<&BeatmapSetMeta>,
+    enriching: bool,
+    tick: u64,
+) -> ListItem<'static> {
+    let mut spans = widgets::browse_row_label(
+        set.id,
+        meta,
+        enriching,
+        tick,
         Style::default().fg(text_dim()),
-    )];
+    );
     if set.previously_deleted {
         spans.push(Span::styled(
             format!("  {TAG_PREVIOUSLY_DELETED}"),

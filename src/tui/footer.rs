@@ -1,6 +1,6 @@
 use crate::app::{
-    App, ConfigField, ConfigTab, FindBackend, GetMapsSource, HomeField, HomeTab, LoginField, Tab,
-    messages::AppMessage,
+    App, ConfigField, ConfigTab, EnrichSink, FindBackend, GetMapsSource, HomeField, HomeTab,
+    LoginField, Tab, messages::AppMessage,
 };
 use crate::download::DownloadStage;
 use ratatui::{
@@ -478,6 +478,11 @@ fn update_source_hints(form: &HomeTab) -> (Vec<&'static str>, Option<&'static st
         };
         if can_recheck {
             segments.push(HINT_RECHECK);
+        }
+        // `m` backfills the next osu-batch page of missing-set titles (mirrors the
+        // flat browse's `m more`), advertised only while pages remain.
+        if update.has_more_enrichment() {
+            segments.push(HINT_MORE);
         }
         // The browse ascends on esc rather than quitting; that back step is left
         // unadvertised (esc-to-go-back is universal), so no trailing key.

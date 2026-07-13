@@ -3,6 +3,7 @@ use crate::{
     download::DownloadStage,
     utils::format_bytes,
 };
+use osu_downloader::search::BeatmapSetMeta;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -829,6 +830,38 @@ pub fn download_button_label_with_size(selected: usize, known_bytes: u64) -> (St
 /// (loaded rows / new count / resolved set count). Singular at 1.
 pub fn view_maps_label(n: usize) -> String {
     format!("view {n} {}", if n == 1 { "mapset" } else { "mapsets" })
+}
+
+/// The main-content spans of a beatmapset browse row, shared by every "view
+/// beatmaps" surface (find results, collection browse&pick, update missing-sets).
+/// Reflects the row's enrichment state so metadata loading is explicit:
+/// - metadata folded in → `artist - title` in `style`;
+/// - still fetching (`enriching`) → a dim spinner then `#id`;
+/// - no metadata (enrichment idle / a server hole) → a bare `#id`.
+///
+/// `style` colors the id/title (the caller owns the cursor/dim treatment); the
+/// loading spinner is always dim so it reads as chrome, not content.
+pub fn browse_row_label(
+    id: u32,
+    meta: Option<&BeatmapSetMeta>,
+    enriching: bool,
+    tick: u64,
+    style: Style,
+) -> Vec<Span<'static>> {
+    match meta {
+        Some(meta) => vec![Span::styled(
+            format!("{} - {}", meta.artist, meta.title),
+            style,
+        )],
+        None if enriching => vec![
+            Span::styled(
+                format!("{} ", super::spinner_str(tick).trim()),
+                Style::default().fg(text_dim()),
+            ),
+            Span::styled(format!("#{id}"), style),
+        ],
+        None => vec![Span::styled(format!("#{id}"), style)],
+    }
 }
 
 /// A `label value` metric line separated by [`SEPARATOR`].

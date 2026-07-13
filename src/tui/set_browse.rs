@@ -7,6 +7,7 @@
 //! Rows with [`BeatmapSetMeta`] render rich (title / artist / mapper); id-only
 //! rows (collection browse&pick) render as `#id`.
 
+use crate::app::EnrichSink;
 use crate::app::find_source::{BrowseRow, SetBrowse};
 use osu_downloader::search::BeatmapSetMeta;
 use ratatui::{
@@ -19,7 +20,7 @@ use ratatui::{
 
 use super::master_detail::{self, MasterDetail, Pane};
 use super::widgets;
-use super::{accent, focused_label, text, text_dim, text_faint, warning};
+use super::{accent, focused_label, spinner_str, text, text_dim, text_faint, warning};
 
 const PREVIEW_TITLE: &str = " PREVIEW ";
 /// Widest key on the preview card, for column-aligning the static kv rows.
@@ -34,11 +35,15 @@ pub fn render(
     browse: &SetBrowse,
     list_title: &'static str,
     list_meta: Line<'static>,
+    tick: u64,
 ) {
     // Caret + label promotion render only while the list pane owns focus (the
     // contract's per-pane cursor rule); a descended preview drops both.
     let list_focused = !browse.preview_focused();
     let cursor = browse.list_cursor();
+    // A single browse-wide flag: while a batch page is in flight the id-only rows
+    // read as loading (spinner), resolving to a title or a genuine "no metadata".
+    let enriching = browse.is_enriching();
     let list_items: Vec<ListItem<'static>> = browse
         .rows
         .iter()
@@ -48,13 +53,15 @@ pub fn render(
                 row,
                 browse.is_selected(row.id),
                 list_focused && cursor == Some(i),
+                enriching,
+                tick,
             )
         })
         .collect();
 
     let preview_items = browse
         .highlighted_row()
-        .map(preview_rows)
+        .map(|row| preview_rows(row, enriching, tick))
         .unwrap_or_default();
 
     let view = MasterDetail {
@@ -81,36 +88,53 @@ pub fn render(
 }
 
 /// One list row: checkbox plus the set's compact label. Rich when metadata is
-/// present (`artist - title`), else the bare id.
-fn list_row(row: &BrowseRow, selected: bool, is_cursor: bool) -> ListItem<'static> {
-    // caret → checkbox → label (the contract's checkbox-row order); only the
-    // cursor row's label promotes to TEXT + bold.
+/// present (`artist - title`), a spinner + id while its enrichment is in flight,
+/// else the bare id. Only the cursor row's label promotes to TEXT + bold.
+fn list_row(
+    row: &BrowseRow,
+    selected: bool,
+    is_cursor: bool,
+    enriching: bool,
+    tick: u64,
+) -> ListItem<'static> {
+    // caret → checkbox → label (the contract's checkbox-row order).
     let mut spans = vec![widgets::focus_span(is_cursor)];
     spans.extend(widgets::checkbox_spans(selected));
-    let label = match &row.meta {
-        Some(meta) => format!(" {} - {}", meta.artist, meta.title),
-        None => format!(" #{}", row.id),
-    };
-    spans.push(Span::styled(label, focused_label(is_cursor)));
+    spans.push(Span::raw(" "));
+    spans.extend(widgets::browse_row_label(
+        row.id,
+        row.meta.as_ref(),
+        enriching,
+        tick,
+        focused_label(is_cursor),
+    ));
     ListItem::new(Line::from(spans))
 }
 
-/// The read-only detail of the highlighted set. Rich metadata when present, else
-/// an id-only line with a "no preview" note (collection browse&pick has no
-/// per-set metadata to show).
-fn preview_rows(row: &BrowseRow) -> Vec<ListItem<'static>> {
+/// The read-only detail of the highlighted set. Rich metadata when present; while
+/// its enrichment is still fetching, an id line plus a `loading metadata…`
+/// spinner; once enrichment is idle and still empty, a genuine "no metadata" note.
+fn preview_rows(row: &BrowseRow, enriching: bool, tick: u64) -> Vec<ListItem<'static>> {
     match &row.meta {
         Some(meta) => meta_preview(meta),
-        None => vec![
-            ListItem::new(Line::from(Span::styled(
+        None => {
+            let id_line = ListItem::new(Line::from(Span::styled(
                 format!("#{}", row.id),
                 Style::default().fg(text()),
-            ))),
-            ListItem::new(Line::from(Span::styled(
-                "no preview · osu!collector exposes no per-mapset metadata",
-                Style::default().fg(text_faint()),
-            ))),
-        ],
+            )));
+            let note = if enriching {
+                ListItem::new(Line::from(Span::styled(
+                    format!("{} loading metadata…", spinner_str(tick).trim()),
+                    Style::default().fg(text_dim()),
+                )))
+            } else {
+                ListItem::new(Line::from(Span::styled(
+                    "no metadata available",
+                    Style::default().fg(text_faint()),
+                )))
+            };
+            vec![id_line, note]
+        }
     }
 }
 

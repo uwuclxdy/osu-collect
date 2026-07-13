@@ -1,5 +1,5 @@
 use super::{EnrichEvent, handle_enrich_event};
-use crate::app::{App, BrowseRow, EnrichTarget};
+use crate::app::{App, BrowseRow, EnrichSink, EnrichTarget};
 use crate::config::Config;
 use osu_downloader::search::{BeatmapRow, BeatmapSetMeta};
 
@@ -219,6 +219,46 @@ fn collection_target_folds_into_collection_browse_only() {
     assert!(
         app.home.find.browse.rows.iter().all(|r| r.meta.is_none()),
         "a collection-targeted page must not fold into the find browse"
+    );
+}
+
+#[test]
+fn update_target_folds_into_missing_set_cache_and_clears_loading() {
+    use crate::app::update_source::{MissingBeatmapset, MissingStatus};
+    let mut app = app();
+    app.home
+        .update
+        .set_missing_beatmaps(vec![MissingBeatmapset {
+            id: 10,
+            status: MissingStatus::NotInstalled,
+            collection_id: 100,
+            collection_name: "col".to_string(),
+            selected: true,
+            previously_deleted: false,
+            enrich_diff_id: Some(1000),
+        }]);
+    app.home.update.descend(); // seeds the pager off the missing sets
+    let _ = app.home.update.next_enrich_page();
+    app.home.update.set_enriching(true);
+    let generation = app.home.update.enrich_generation();
+
+    handle_enrich_event(
+        EnrichEvent::Enriched {
+            target: EnrichTarget::Update,
+            generation,
+            rows: vec![beatmap_row(1000, 10, "missing song", false, false)],
+        },
+        &mut app,
+    );
+
+    assert_eq!(
+        app.home.update.set_meta(10).map(|m| m.title.as_str()),
+        Some("missing song"),
+        "the batch page backfills the missing set's title"
+    );
+    assert!(
+        !app.home.update.is_enriching(),
+        "a landed page clears the loading cue"
     );
 }
 

@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::{App, AppCommand, EnrichTarget, FindStatusMsg};
+use crate::app::{App, AppCommand, EnrichSink, EnrichTarget, FindStatusMsg};
 use crate::config::Config;
 use osu_downloader::filter::FilterResults;
 use std::collections::HashMap;

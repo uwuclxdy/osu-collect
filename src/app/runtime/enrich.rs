@@ -9,7 +9,7 @@
 //! [`HttpSearchService`](crate::core::search::HttpSearchService) — the same guest
 //! or user bearer as search, never a second token path.
 
-use crate::app::{App, EnrichTarget, SetBrowse};
+use crate::app::{App, EnrichSink, EnrichTarget};
 use crate::core::search::{BeatmapRow, BeatmapSetMeta, shared_service};
 use std::collections::HashMap;
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -78,10 +78,12 @@ pub fn handle_enrich_event(event: EnrichEvent, app: &mut App) {
             generation,
             rows,
         } => {
-            let browse = enrich_browse_mut(app, target);
-            if browse.enrich_generation() != generation {
+            let sink = enrich_sink_mut(app, target);
+            if sink.enrich_generation() != generation {
                 return;
             }
+            // This generation's in-flight page landed — clear the loading cue.
+            sink.set_enriching(false);
             // Dedupe to set-level metadata; the first diff of a set wins (title /
             // artist / creator / status are set-level, and the batch nests each
             // row's full set). Holes (ids the server omitted) simply contribute no
@@ -92,7 +94,7 @@ pub fn handle_enrich_event(event: EnrichEvent, app: &mut App) {
                     .entry(row.beatmapset_id)
                     .or_insert(row.beatmapset);
             }
-            browse.fold_meta(meta_by_set);
+            sink.fold_meta(meta_by_set);
         }
         EnrichEvent::Failed {
             target,
@@ -100,23 +102,25 @@ pub fn handle_enrich_event(event: EnrichEvent, app: &mut App) {
             rewind_to,
             reason,
         } => {
-            let browse = enrich_browse_mut(app, target);
+            let sink = enrich_sink_mut(app, target);
             // A stale page's failure drops silently — a superseding reseed
             // already invalidated it, so there is nothing to retry or report.
-            if browse.enrich_generation() != generation {
+            if sink.enrich_generation() != generation {
                 return;
             }
-            browse.rewind_enrichment(rewind_to);
+            sink.set_enriching(false);
+            sink.rewind_enrichment(rewind_to);
             app.toast_warn(format!("map details unavailable: {reason}"));
         }
     }
 }
 
-/// The [`SetBrowse`] an enrichment page targets.
-pub fn enrich_browse_mut(app: &mut App, target: EnrichTarget) -> &mut SetBrowse {
+/// The [`EnrichSink`] an enrichment page targets.
+pub fn enrich_sink_mut(app: &mut App, target: EnrichTarget) -> &mut dyn EnrichSink {
     match target {
         EnrichTarget::Find => &mut app.home.find.browse,
         EnrichTarget::Collection => &mut app.home.collection_browse,
+        EnrichTarget::Update => &mut app.home.update,
     }
 }
 

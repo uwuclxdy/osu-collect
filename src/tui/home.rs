@@ -54,10 +54,10 @@ pub fn render(
 ) {
     // A browse claims the whole body regardless of density.
     if form.source == GetMapsSource::Update && form.update.is_browsing() {
-        update_source::render_browse(frame, area, &form.update);
+        update_source::render_browse(frame, area, &form.update, tick);
         return;
     }
-    if maybe_render_set_browse(frame, area, form) {
+    if maybe_render_set_browse(frame, area, form, tick) {
         return;
     }
     // Compact (< COMPACT_HEIGHT) drops the section headers, spacers, and per-row
@@ -89,7 +89,7 @@ fn home_cursor_col(form: &HomeTab, library: &LibraryState, editing: bool) -> Opt
 /// If the active source is in a flat set browse (search results / collection
 /// browse&pick), render it over the whole body and return `true`. The update
 /// source's two-level browse is handled separately by its own render.
-fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab) -> bool {
+fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab, tick: u64) -> bool {
     match form.source {
         // One union browse: both backends' results land in `find.browse`, so the
         // list title is the shared ` RESULTS ` regardless of which form ran.
@@ -104,6 +104,7 @@ fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab) -> boo
                 &form.find.browse,
                 find_source::BROWSE_LIST_TITLE,
                 status,
+                tick,
             );
             true
         }
@@ -118,6 +119,7 @@ fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab) -> boo
                 &form.collection_browse,
                 COLLECTION_BROWSE_TITLE,
                 status,
+                tick,
             );
             true
         }

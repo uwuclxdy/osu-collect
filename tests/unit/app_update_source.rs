@@ -19,6 +19,7 @@ fn missing(id: u32, collection_id: u32, previously_deleted: bool) -> MissingBeat
         collection_name: format!("col {collection_id}"),
         selected: true,
         previously_deleted,
+        enrich_diff_id: None,
     }
 }
 

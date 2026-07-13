@@ -517,6 +517,9 @@ pub fn should_hide_failed_beatmapset(settings: &FetchCompareSettings, beatmapset
 struct CollectionBeatmapset {
     id: u32,
     checksums: Vec<Md5>,
+    /// One diff (beatmap) id from this set's upstream listing, forwarded to the
+    /// missing-set enrichment pager (the osu-batch keys on diff ids).
+    enrich_diff_id: Option<u32>,
 }
 
 impl CollectionBeatmapset {
@@ -692,6 +695,7 @@ pub async fn fetch_missing_beatmapsets(
                         .iter()
                         .filter_map(|beatmap| checksum::parse_hex(&beatmap.checksum))
                         .collect(),
+                    enrich_diff_id: beatmapset.beatmaps.first().map(|beatmap| beatmap.id),
                 },
                 collection_id,
                 collection.name.to_string(),
@@ -726,6 +730,7 @@ pub async fn fetch_missing_beatmapsets(
             collection_name,
             selected: !previously_deleted,
             previously_deleted,
+            enrich_diff_id: beatmapset.enrich_diff_id,
         });
     }
 

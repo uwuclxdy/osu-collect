@@ -2,8 +2,10 @@ use super::messages::{AppMessage, clear_app_message};
 
 /// Cursor step for a list page-scroll (`Ctrl+d` / `Ctrl+u`).
 pub(crate) const LIST_PAGE: i64 = 10;
+use super::find_source::{EnrichPager, EnrichSink};
 use crate::osu_db::{LocalBeatmapset, LocalCollection, Md5};
-use std::collections::HashSet;
+use osu_downloader::search::BeatmapSetMeta;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use tracing::{debug, info};
 
@@ -118,6 +120,10 @@ pub struct MissingBeatmapset {
     /// the scan-side construction in `runtime/scan.rs` still compiles.
     pub selected: bool,
     pub previously_deleted: bool,
+    /// One diff (beatmap) id from this set, captured at scan time, to seed the
+    /// osu-batch enrichment pager (`GET /beatmaps?ids[]=` keys on diff ids, not
+    /// set ids). `None` when the upstream set carried no listable diff.
+    pub enrich_diff_id: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -199,6 +205,11 @@ pub struct UpdateSource {
     pub list_offset: std::cell::Cell<usize>,
     /// Persisted preview-list scroll offset.
     pub preview_offset: std::cell::Cell<usize>,
+    /// osu-batch backfill for the missing-set preview: the pager walks one diff
+    /// id per missing set, folding the returned set metadata into `meta` (keyed by
+    /// set id) so the preview rows read `artist - title` instead of a bare `#id`.
+    enrich: EnrichPager,
+    meta: HashMap<u32, BeatmapSetMeta>,
 }
 
 impl UpdateSource {
@@ -209,18 +220,47 @@ impl UpdateSource {
             message: None,
             list_offset: std::cell::Cell::new(0),
             preview_offset: std::cell::Cell::new(0),
+            enrich: EnrichPager::default(),
+            meta: HashMap::new(),
         }
+    }
+
+    // ── missing-set enrichment ────────────────────────────────────────────────
+
+    /// Seed the enrichment pager with one diff id per missing set (deduped by set
+    /// id, first diff wins). The runtime auto-fetches the first page after this.
+    /// Called on descend so the visible titles fill in without a keystroke.
+    pub fn seed_enrichment(&mut self) {
+        let mut seen: HashSet<u32> = HashSet::new();
+        let diff_ids: Vec<u32> = self
+            .selection
+            .cached_missing_sets
+            .iter()
+            .filter_map(|set| {
+                let diff = set.enrich_diff_id?;
+                seen.insert(set.id).then_some(diff)
+            })
+            .collect();
+        self.enrich.seed(diff_ids);
+        self.meta.clear();
+    }
+
+    /// Folded set metadata for a missing set, once its enrichment page has landed.
+    pub fn set_meta(&self, set_id: u32) -> Option<&BeatmapSetMeta> {
+        self.meta.get(&set_id)
     }
 
     // ── browse descend / ascend ───────────────────────────────────────────────
 
     /// Descend from the form into the two-pane browse: focus the collections
-    /// list with both cursors homed.
+    /// list with both cursors homed. Seeds the missing-set enrichment pager so the
+    /// preview titles backfill (the runtime auto-fetches the first page).
     pub fn descend(&mut self) {
         self.selection.descended = true;
         self.selection.preview_focused = false;
         self.selection.collections_cursor = Some(0);
         self.selection.preview_cursor = Some(0);
+        self.seed_enrichment();
     }
 
     /// One step back out of the browse (drives `esc`): preview → collections
@@ -818,6 +858,44 @@ pub fn extract_collection_id(name: &str) -> Option<u64> {
     }
 
     None
+}
+
+impl EnrichSink for UpdateSource {
+    fn enrich_generation(&self) -> u64 {
+        self.enrich.generation()
+    }
+
+    fn enrich_cursor(&self) -> usize {
+        self.enrich.cursor()
+    }
+
+    fn next_enrich_page(&mut self) -> Option<Vec<u32>> {
+        self.enrich.next_page()
+    }
+
+    fn rewind_enrichment(&mut self, cursor: usize) {
+        self.enrich.rewind(cursor);
+    }
+
+    fn has_more_enrichment(&self) -> bool {
+        self.enrich.has_more()
+    }
+
+    fn set_enriching(&mut self, on: bool) {
+        self.enrich.set_enriching(on);
+    }
+
+    fn is_enriching(&self) -> bool {
+        self.enrich.is_enriching()
+    }
+
+    /// Fold set-level metadata into the missing-set cache (keyed by set id). Only
+    /// sets not already known are inserted, so a re-fetch never clobbers a title.
+    fn fold_meta(&mut self, meta_by_set: HashMap<u32, BeatmapSetMeta>) {
+        for (set_id, meta) in meta_by_set {
+            self.meta.entry(set_id).or_insert(meta);
+        }
+    }
 }
 
 impl Default for UpdateSource {
