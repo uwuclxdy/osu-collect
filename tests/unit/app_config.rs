@@ -103,19 +103,19 @@ fn prev_field_cycles_through_auth_chip() {
 }
 
 #[test]
-fn jump_to_downloads_defaults_off_and_round_trips() {
+fn jump_to_downloads_defaults_on_and_round_trips() {
     let mut tab = tab_logged_in();
-    assert!(!tab.jump_to_downloads, "default is stay on get maps");
+    assert!(tab.jump_to_downloads, "default is jump to downloads");
 
     tab.focus = ConfigField::JumpToDownloads;
     tab.toggle_current();
-    assert!(tab.jump_to_downloads);
+    assert!(!tab.jump_to_downloads);
 
     let built = tab.build_config().unwrap();
-    assert!(built.display.jump_to_downloads);
+    assert!(!built.display.jump_to_downloads);
     assert!(
-        !ConfigTab::new(&Config::default()).jump_to_downloads,
-        "absent config key stays off"
+        ConfigTab::new(&Config::default()).jump_to_downloads,
+        "absent config key stays on"
     );
 }
 

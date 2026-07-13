@@ -388,8 +388,8 @@ fn queueing_from_another_tab_resets_stale_preview_focus() {
     assert_eq!(app.downloads_tab.selected, 1, "cursor on the new run");
     assert_eq!(
         app.active_tab,
-        Tab::Home,
-        "default launch behavior stays on the current tab"
+        Tab::Downloads,
+        "default: jump to downloads on start"
     );
 }
 

@@ -121,7 +121,7 @@ Text fields support full caret editing: <kbd>home</kbd>, <kbd>end</kbd>, <kbd>de
 
 ### Downloads tab
 
-Every run lives on the downloads tab, active ones first, then past ones (including cancelled) that survive restarts. Open a run with <kbd>↵</kbd> for live per-map progress, speed and ETA, rate-limit countdowns, and a failure summary with reasons. Failed maps persist between runs. Retry them with <kbd>r</kbd>, or accept the prompt on your next download of that collection (configurable). Starting a download keeps you where you are by default; turn on `jump to downloads on start` in config to land here instead.
+Every run lives on the downloads tab, active ones first, then past ones (including cancelled) that survive restarts. Open a run with <kbd>↵</kbd> for live per-map progress, speed and ETA, rate-limit countdowns, and a failure summary with reasons. Failed maps persist between runs. Retry them with <kbd>r</kbd>, or accept the prompt on your next download of that collection (configurable). A download switches to this tab by default; turn off `jump to downloads on start` in config to stay where you are instead.
 
 ### Finding maps
 

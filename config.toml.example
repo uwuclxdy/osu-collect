@@ -48,8 +48,8 @@ theme = "full"
 # off by default; also toggleable live on the config tab.
 vim_keys = false
 # switch to the downloads tab when a download starts.
-# off by default (stay on the current tab); also toggleable live on the config tab.
-jump_to_downloads = false
+# on by default; also toggleable live on the config tab.
+jump_to_downloads = true
 
 [logging]
 # structured logging is disabled by default, set to true to enable tracing output

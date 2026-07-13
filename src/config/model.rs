@@ -80,7 +80,7 @@ pub enum ThemeMode {
     Compatible,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct DisplayConfig {
     /// Explicit palette choice. `None` (key absent) selects the full truecolor
@@ -94,11 +94,24 @@ pub struct DisplayConfig {
     /// text field in edit mode bypasses the layer so typing stays literal.
     #[serde(default)]
     pub vim_keys: bool,
-    /// On download launch, switch to the Downloads tab (landing on the run
-    /// list). Off by default: launch stays on the current tab, signalled by
-    /// the queued toast.
-    #[serde(default)]
+    /// Switch to the Downloads tab when a download starts. On by default;
+    /// turn off to stay on the current tab instead.
+    #[serde(default = "default_jump_to_downloads")]
     pub jump_to_downloads: bool,
+}
+
+fn default_jump_to_downloads() -> bool {
+    true
+}
+
+impl Default for DisplayConfig {
+    fn default() -> Self {
+        Self {
+            theme: None,
+            vim_keys: false,
+            jump_to_downloads: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
