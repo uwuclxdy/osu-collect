@@ -3,18 +3,33 @@
 # every key is optional — missing keys fall back to the defaults shown here
 
 [mirror]
-# built-in beatmap mirrors; enable any combination (all on by default)
+# built-in beatmap mirrors; enable any combination
 nerinyan = true
 osu_direct = true
 sayobot = true
 nekoha = true
+beatconnect = true
+# ranked/approved/loved coverage only — rotation backfills the rest
+osudl = true
+catboy = true
+# server-side cascade that races the other mirrors; redundant alongside them
+hinamizawa = false
+# needs a logged-in osu! account (config tab); 10–20 downloads/hour
+osu_official = false
+# a solo dev's free instance; coverage is what its backend has cached
+nzbasic = false
 
 # optional custom beatmap mirrors; each template must contain {id}
 # tried after the built-ins, in list order (legacy single `url = "..."` is still read)
 # urls = ["https://example.com/d/{id}", "https://mirror.example.net/d/{id}"]
 
-# the official osu! mirror is enabled by logging in on the config tab
-# (credentials are stored in auth.json next to ts file, not here)
+# try-order for the built-ins as host keys; empty = the default order.
+# easier edited on the config tab (shift+up/down) — unknown keys are dropped,
+# missing built-ins appended, so it can never hide a mirror
+# order = ["osu.direct", "api.nerinyan.moe"]
+
+# login credentials for the official mirror are stored in auth.json next to
+# this file, not here
 
 [download]
 # parallel downloads; defaults to your CPU core count when unset
@@ -42,7 +57,7 @@ skip_already_imported = true
 
 [display]
 # "full" (truecolor, default) or "compatible" (xterm-256/16-color).
-# Omit this key entirely to auto-detect from the terminal's color depth on first run.
+# absent picks the full palette — there is no terminal auto-detection
 theme = "full"
 # vim navigation keymap (hjkl move, gg/G top/bottom, ctrl+u/d page, i/a edit).
 # off by default; also toggleable live on the config tab.
@@ -69,5 +84,8 @@ format = "compact"
 # automatically; false only surfaces that one is available (header indicator +
 # `u` changelog modal) so you review and apply it on demand
 auto_update = true
+
+# also consider GitHub prereleases in the update check (highest semver wins)
+prereleases = false
 
 # [recent] is managed automatically (last collection + download dir) — no need to edit it
