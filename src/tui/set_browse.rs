@@ -41,8 +41,9 @@ pub fn render(
     // contract's per-pane cursor rule); a descended preview drops both.
     let list_focused = !browse.preview_focused();
     let cursor = browse.list_cursor();
-    // A single browse-wide flag: while a batch page is in flight the id-only rows
-    // read as loading (spinner), resolving to a title or a genuine "no metadata".
+    // A single browse-wide flag: while a batch page is in flight the loading
+    // cue moves into the list pane's title (see `meta_with_loading_cue`) and the
+    // preview's id-only detail; list rows themselves stay id-only, no per-row cue.
     let enriching = browse.is_enriching();
     let list_items: Vec<ListItem<'static>> = browse
         .rows
@@ -53,8 +54,6 @@ pub fn render(
                 row,
                 browse.is_selected(row.id),
                 list_focused && cursor == Some(i),
-                enriching,
-                tick,
             )
         })
         .collect();
@@ -67,7 +66,7 @@ pub fn render(
     let view = MasterDetail {
         status: None,
         list_title: list_title.into(),
-        list_meta: Some(list_meta),
+        list_meta: Some(widgets::meta_with_loading_cue(list_meta, enriching, tick)),
         list_items,
         list_selected: cursor,
         list_offset: &browse.list_offset,
@@ -88,15 +87,9 @@ pub fn render(
 }
 
 /// One list row: checkbox plus the set's compact label. Rich when metadata is
-/// present (`artist - title`), a spinner + id while its enrichment is in flight,
-/// else the bare id. Only the cursor row's label promotes to TEXT + bold.
-fn list_row(
-    row: &BrowseRow,
-    selected: bool,
-    is_cursor: bool,
-    enriching: bool,
-    tick: u64,
-) -> ListItem<'static> {
+/// present (`artist - title`), else the bare id. Only the cursor row's label
+/// promotes to TEXT + bold.
+fn list_row(row: &BrowseRow, selected: bool, is_cursor: bool) -> ListItem<'static> {
     // caret → checkbox → label (the contract's checkbox-row order).
     let mut spans = vec![widgets::focus_span(is_cursor)];
     spans.extend(widgets::checkbox_spans(selected));
@@ -104,8 +97,6 @@ fn list_row(
     spans.extend(widgets::browse_row_label(
         row.id,
         row.meta.as_ref(),
-        enriching,
-        tick,
         focused_label(is_cursor),
     ));
     ListItem::new(Line::from(spans))

@@ -22,8 +22,8 @@ use std::time::Instant;
 use super::theme::{Tier, theme};
 use super::{
     FILL_BLOCK, FILL_SHADE, FILL_SPACE, GLYPH_BLOCK, GLYPH_SHADE, GLYPH_SPACE, accent, accent_alt,
-    bg, bg_hover, bg_raised, danger, focused_label, glyph_fill, info, line, line_strong, success,
-    text_dim, text_faint, warning,
+    bg, bg_hover, bg_raised, danger, focused_label, glyph_fill, info, line, line_strong,
+    spinner_str, success, text_dim, text_faint, warning,
 };
 
 pub const FOCUS_MARK: &str = "❯ ";
@@ -780,6 +780,28 @@ pub fn button_item_with_trailing(
     ListItem::new(Line::from(spans))
 }
 
+/// [`button_item`] with a trailing `⠋ loading titles` cue while `enriching` —
+/// the update/find `view N mapsets` buttons stay pressable mid-fetch (unlike
+/// the collection browse's `opening` label-swap, whose deferred descend makes
+/// the button briefly inert instead), so their loading state trails the pill.
+pub fn button_item_with_loading_cue(
+    label: &str,
+    focused: bool,
+    enabled: bool,
+    enriching: bool,
+    tick: u64,
+) -> ListItem<'static> {
+    if !enriching {
+        return button_item(label, focused, enabled);
+    }
+    button_item_with_trailing(
+        label,
+        focused,
+        enabled,
+        vec![Span::raw("  "), loading_titles_span(tick)],
+    )
+}
+
 fn button_spans(label: &str, focused: bool, enabled: bool) -> Vec<Span<'static>> {
     let pill = format!(" {label} ");
 
@@ -834,18 +856,14 @@ pub fn view_maps_label(n: usize) -> String {
 
 /// The main-content spans of a beatmapset browse row, shared by every "view
 /// beatmaps" surface (find results, collection browse&pick, update missing-sets).
-/// Reflects the row's enrichment state so metadata loading is explicit:
-/// - metadata folded in → `artist - title` in `style`;
-/// - still fetching (`enriching`) → a dim spinner then `#id`;
-/// - no metadata (enrichment idle / a server hole) → a bare `#id`.
+/// `artist - title` once metadata is folded in, else a bare `#id` — the
+/// enrichment-in-flight state is no longer a per-row concern (it reads from the
+/// owning panel's title-right meta instead, see [`meta_with_loading_cue`]).
 ///
-/// `style` colors the id/title (the caller owns the cursor/dim treatment); the
-/// loading spinner is always dim so it reads as chrome, not content.
+/// `style` colors the id/title (the caller owns the cursor/dim treatment).
 pub fn browse_row_label(
     id: u32,
     meta: Option<&BeatmapSetMeta>,
-    enriching: bool,
-    tick: u64,
     style: Style,
 ) -> Vec<Span<'static>> {
     match meta {
@@ -853,15 +871,34 @@ pub fn browse_row_label(
             format!("{} - {}", meta.artist, meta.title),
             style,
         )],
-        None if enriching => vec![
-            Span::styled(
-                format!("{} ", super::spinner_str(tick).trim()),
-                Style::default().fg(text_dim()),
-            ),
-            Span::styled(format!("#{id}"), style),
-        ],
         None => vec![Span::styled(format!("#{id}"), style)],
     }
+}
+
+/// The enrichment-in-flight cue text (`⠋ loading titles`), dim so it reads as
+/// chrome. Shared by [`button_item_with_loading_cue`] and
+/// [`meta_with_loading_cue`] so every surface waiting on the same osu-batch
+/// backfill reads identically.
+fn loading_titles_span(tick: u64) -> Span<'static> {
+    Span::styled(
+        format!("{} loading titles", spinner_str(tick).trim()),
+        Style::default().fg(text_dim()),
+    )
+}
+
+/// Appends the [`loading_titles_span`] cue to a panel's title-right meta line
+/// while `enriching`, e.g. the set-browse list pane's selected/total ratio or
+/// the update preview's `N new · M removed` — the existing line is kept, never
+/// dropped, so the cue reads as an addition rather than a replacement. `base`
+/// passes through unchanged while idle.
+pub fn meta_with_loading_cue(base: Line<'static>, enriching: bool, tick: u64) -> Line<'static> {
+    if !enriching {
+        return base;
+    }
+    let mut spans = base.spans;
+    spans.push(Span::styled(SEPARATOR, Style::default().fg(line())));
+    spans.push(loading_titles_span(tick));
+    Line::from(spans)
 }
 
 /// A `label value` metric line separated by [`SEPARATOR`].

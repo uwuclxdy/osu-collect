@@ -9,8 +9,8 @@ use ratatui::{
 
 use super::widgets;
 use super::{
-    accent, danger, find_source, focused_label, line, set_browse, success, text_dim, text_faint,
-    update_source, warning,
+    accent, danger, find_source, focused_label, line, set_browse, spinner_str, success, text_dim,
+    text_faint, update_source, warning,
 };
 use crate::utils::pretty_path;
 use std::path::Path;
@@ -149,11 +149,20 @@ fn collection_download_button(form: &HomeTab) -> (String, bool) {
 /// The collection source's `view N maps` button — opens the resolved collection
 /// in the checkbox browse. Labelled with the set count once resolved (and
 /// non-empty); disabled otherwise via [`HomeTab::button_enabled`].
-fn collection_browse_button(form: &HomeTab) -> (String, bool) {
+///
+/// A press that must wait on its first enrichment page before the browse can
+/// open ([`HomeTab::collection_browse_opening`]) swaps the label for an inline
+/// spinner instead — mirroring the scan/find CTA label-swap idiom, since the
+/// button is already inert here (`button_enabled` is false while pending).
+fn collection_browse_button(form: &HomeTab, tick: u64) -> (String, bool) {
     let enabled = form.button_enabled(HomeField::CollectionBrowse);
-    let label = match form.resolved_collection.as_ref() {
-        Some((_, ids)) if !ids.is_empty() => widgets::view_maps_label(ids.len()),
-        _ => "view maps".to_string(),
+    let label = if form.collection_browse_opening() {
+        format!("{} opening", spinner_str(tick).trim())
+    } else {
+        match form.resolved_collection.as_ref() {
+            Some((_, ids)) if !ids.is_empty() => widgets::view_maps_label(ids.len()),
+            _ => "view maps".to_string(),
+        }
     };
     (label, enabled)
 }
@@ -228,7 +237,7 @@ fn render_form(
             if chrome {
                 items.push(widgets::spacer());
             }
-            let (browse_label, browse_enabled) = collection_browse_button(form);
+            let (browse_label, browse_enabled) = collection_browse_button(form, tick);
             items.push_focusable(
                 HomeField::CollectionBrowse,
                 widgets::button_item(

@@ -161,7 +161,20 @@ pub async fn run(
             }
             Some(event) = updates_rx.recv() => {
                 trace!(?event, "Received updates event");
-                handle_updates_event(event, &mut app, &updates_tx);
+                // The handler may hand back a follow-up (the auto-fetch of the
+                // missing-set enrichment's first page after a scan lands); run it
+                // through the same dispatch, mirroring the search/filter arms.
+                let follow_up = handle_updates_event(event, &mut app, &updates_tx);
+                should_quit = dispatch_command(
+                    follow_up,
+                    &mut app,
+                    &download_tx,
+                    &updates_tx,
+                    &auth_tx,
+                    &update_tx,
+                    &mut active_downloads,
+                    &mut tasks,
+                );
             }
             Some(event) = auth_rx.recv() => {
                 trace!(?event, "Received auth event");

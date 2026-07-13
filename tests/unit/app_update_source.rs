@@ -3,7 +3,7 @@ use crate::app::{
     update_source::{MissingBeatmapset, MissingStatus, UpdateSource},
 };
 use crate::osu_db::{LocalBeatmap, LocalBeatmapset, LocalCollection, Md5};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 fn test_md5(seed: u8) -> Md5 {
     let mut out = [0u8; 16];
@@ -133,7 +133,7 @@ fn installed_beatmapset_not_in_missing() {
         beatmaps: [LocalBeatmap { checksum: cksum }].into(),
     }]);
     tab.set_all_checksums(vec![cksum]);
-    tab.set_missing_beatmaps(vec![]);
+    tab.set_missing_beatmaps(vec![], &HashMap::new());
 
     assert_eq!(tab.total_new_count(), 0);
 }
@@ -151,11 +151,14 @@ fn selected_beatmapset_ids_returns_only_selected_collections() {
             beatmap_checksums: Box::new([]),
         },
     ]);
-    tab.set_missing_beatmaps(vec![
-        missing(1, 100, false),
-        missing(2, 100, false),
-        missing(3, 200, false),
-    ]);
+    tab.set_missing_beatmaps(
+        vec![
+            missing(1, 100, false),
+            missing(2, 100, false),
+            missing(3, 200, false),
+        ],
+        &HashMap::new(),
+    );
 
     let mut all = tab.selected_beatmapset_ids();
     all.sort_unstable();
@@ -174,7 +177,10 @@ fn previously_deleted_flag_is_stored_on_missing_sets() {
         name: "coll - 100".to_string(),
         beatmap_checksums: Box::new([]),
     }]);
-    tab.set_missing_beatmaps(vec![missing(10, 100, true), missing(20, 100, false)]);
+    tab.set_missing_beatmaps(
+        vec![missing(10, 100, true), missing(20, 100, false)],
+        &HashMap::new(),
+    );
 
     let del = tab
         .selection

@@ -2,9 +2,16 @@ use super::{EnrichEvent, handle_enrich_event};
 use crate::app::{App, BrowseRow, EnrichSink, EnrichTarget};
 use crate::config::Config;
 use osu_downloader::search::{BeatmapRow, BeatmapSetMeta};
+use std::collections::HashMap;
 
 fn app() -> App {
     App::new(Config::default())
+}
+
+/// `(diff_id, None)` seeds for the flat browse — find/nzbasic rows carry no set
+/// pairing, so nothing prunes against a cache.
+fn diff_seeds(ids: impl IntoIterator<Item = u32>) -> Vec<(u32, Option<u32>)> {
+    ids.into_iter().map(|id| (id, None)).collect()
 }
 
 /// A batch row for diff `id` under set `set_id`, with `nsfw`/`video` set so a
@@ -35,8 +42,14 @@ fn id_only_rows(ids: &[u32]) -> Vec<BrowseRow> {
 /// Seed the find browse with id-only rows + an enrichment pager and pull the
 /// first page (as the runtime dispatch would), returning the live generation.
 fn seed_find(app: &mut App, set_ids: &[u32], diff_ids: Vec<u32>) -> u64 {
-    app.home.find.browse.set_rows(id_only_rows(set_ids));
-    app.home.find.browse.seed_enrichment(diff_ids);
+    app.home
+        .find
+        .browse
+        .set_rows(id_only_rows(set_ids), &HashMap::new());
+    app.home
+        .find
+        .browse
+        .seed_enrichment(diff_seeds(diff_ids), &HashMap::new());
     let _ = app.home.find.browse.next_enrich_page();
     app.home.find.browse.enrich_generation()
 }
@@ -67,6 +80,13 @@ fn enriched_folds_set_level_meta_first_diff_wins() {
         rows[1].meta.as_ref().map(|m| m.title.as_str()),
         Some("other set")
     );
+    // The landed page also feeds the session cache (one write point), so a later
+    // reopen / rescan of any browse can reuse it instead of refetching.
+    assert_eq!(
+        app.home.meta_cache.get(&10).map(|m| m.title.as_str()),
+        Some("first"),
+        "the folded metadata is cached for the whole app"
+    );
 }
 
 #[test]
@@ -95,8 +115,14 @@ fn stale_generation_page_is_dropped() {
     let mut app = app();
     let stale = seed_find(&mut app, &[10, 20], vec![1, 2]);
     // A newer run reseeds the pager, bumping the generation.
-    app.home.find.browse.set_rows(id_only_rows(&[10, 20]));
-    app.home.find.browse.seed_enrichment(vec![1, 2]);
+    app.home
+        .find
+        .browse
+        .set_rows(id_only_rows(&[10, 20]), &HashMap::new());
+    app.home
+        .find
+        .browse
+        .seed_enrichment(diff_seeds([1, 2]), &HashMap::new());
     assert_ne!(app.home.find.browse.enrich_generation(), stale);
 
     handle_enrich_event(
@@ -140,8 +166,14 @@ fn hole_tolerance_folds_present_and_leaves_missing_id_only() {
 #[test]
 fn failed_page_rewinds_the_pager_for_retry() {
     let mut app = app();
-    app.home.find.browse.set_rows(id_only_rows(&[10]));
-    app.home.find.browse.seed_enrichment((0..300).collect());
+    app.home
+        .find
+        .browse
+        .set_rows(id_only_rows(&[10]), &HashMap::new());
+    app.home
+        .find
+        .browse
+        .seed_enrichment(diff_seeds(0..300), &HashMap::new());
     let before = app.home.find.browse.enrich_cursor();
     let _ = app.home.find.browse.next_enrich_page();
     let generation = app.home.find.browse.enrich_generation();
@@ -164,8 +196,14 @@ fn stale_failed_page_drops_silently() {
     let mut app = app();
     let stale = seed_find(&mut app, &[10], vec![1, 2]);
     // A newer run reseeds the pager, bumping the generation.
-    app.home.find.browse.set_rows(id_only_rows(&[10]));
-    app.home.find.browse.seed_enrichment(vec![1, 2]);
+    app.home
+        .find
+        .browse
+        .set_rows(id_only_rows(&[10]), &HashMap::new());
+    app.home
+        .find
+        .browse
+        .seed_enrichment(diff_seeds([1, 2]), &HashMap::new());
     let cursor = app.home.find.browse.enrich_cursor();
 
     handle_enrich_event(
@@ -193,8 +231,12 @@ fn collection_target_folds_into_collection_browse_only() {
     let mut app = app();
     // Seed the find browse too, to prove the collection page doesn't touch it.
     let _ = seed_find(&mut app, &[10], vec![1]);
-    app.home.collection_browse.set_rows(id_only_rows(&[10, 20]));
-    app.home.collection_browse.seed_enrichment(vec![1, 2]);
+    app.home
+        .collection_browse
+        .set_rows(id_only_rows(&[10, 20]), &HashMap::new());
+    app.home
+        .collection_browse
+        .seed_enrichment(diff_seeds([1, 2]), &HashMap::new());
     let _ = app.home.collection_browse.next_enrich_page();
     let generation = app.home.collection_browse.enrich_generation();
 
@@ -226,9 +268,9 @@ fn collection_target_folds_into_collection_browse_only() {
 fn update_target_folds_into_missing_set_cache_and_clears_loading() {
     use crate::app::update_source::{MissingBeatmapset, MissingStatus};
     let mut app = app();
-    app.home
-        .update
-        .set_missing_beatmaps(vec![MissingBeatmapset {
+    // Seeding now happens at scan-land (`set_missing_beatmaps`), not on descend.
+    app.home.update.set_missing_beatmaps(
+        vec![MissingBeatmapset {
             id: 10,
             status: MissingStatus::NotInstalled,
             collection_id: 100,
@@ -236,8 +278,10 @@ fn update_target_folds_into_missing_set_cache_and_clears_loading() {
             selected: true,
             previously_deleted: false,
             enrich_diff_id: Some(1000),
-        }]);
-    app.home.update.descend(); // seeds the pager off the missing sets
+        }],
+        &HashMap::new(),
+    );
+    app.home.update.descend(); // pure descend — the pager was already seeded
     let _ = app.home.update.next_enrich_page();
     app.home.update.mark_enrichment_dispatched();
     let generation = app.home.update.enrich_generation();
@@ -268,8 +312,14 @@ fn late_prior_page_event_does_not_clear_a_newer_fetchs_cue() {
     // Enriched event is still queued when the user presses `m`, scheduling page
     // N+1. Draining page N's event must NOT clear the cue while N+1 is pending.
     let mut app = app();
-    app.home.find.browse.set_rows(id_only_rows(&[10, 20, 30]));
-    app.home.find.browse.seed_enrichment((0..300).collect());
+    app.home
+        .find
+        .browse
+        .set_rows(id_only_rows(&[10, 20, 30]), &HashMap::new());
+    app.home
+        .find
+        .browse
+        .seed_enrichment(diff_seeds(0..300), &HashMap::new());
 
     // Page N requested + dispatched (in-flight = 1).
     let _ = app.home.find.browse.next_enrich_page();
@@ -316,6 +366,153 @@ fn late_prior_page_event_does_not_clear_a_newer_fetchs_cue() {
     assert!(
         !app.home.find.browse.is_enriching(),
         "the cue clears once dry"
+    );
+}
+
+/// Seed the collection browse with id-only rows + a deferred open waiting on the
+/// pager's current generation, as `open_collection_browse` would.
+fn seed_pending_collection(app: &mut App, ids: &[u32], seeds: Vec<(u32, Option<u32>)>) -> u64 {
+    app.home
+        .collection_browse
+        .set_rows(id_only_rows(ids), &HashMap::new());
+    app.home
+        .collection_browse
+        .seed_enrichment(seeds, &HashMap::new());
+    let _ = app.home.collection_browse.next_enrich_page();
+    app.home.collection_browse.mark_enrichment_dispatched();
+    let generation = app.home.collection_browse.enrich_generation();
+    app.home.collection_browse_pending = Some(generation);
+    generation
+}
+
+#[test]
+fn collection_pending_descends_when_first_page_lands() {
+    let mut app = app();
+    let generation =
+        seed_pending_collection(&mut app, &[10, 20], vec![(1, Some(10)), (2, Some(20))]);
+    assert!(!app.home.collection_browse.is_browsing());
+
+    handle_enrich_event(
+        EnrichEvent::Enriched {
+            target: EnrichTarget::Collection,
+            generation,
+            rows: vec![
+                beatmap_row(1, 10, "col a", false, false),
+                beatmap_row(2, 20, "col b", false, false),
+            ],
+        },
+        &mut app,
+    );
+
+    assert!(
+        app.home.collection_browse.is_browsing(),
+        "the deferred open descends once page 1 lands"
+    );
+    assert!(
+        app.home.collection_browse_pending.is_none(),
+        "pending clears on the matching page"
+    );
+    assert_eq!(
+        app.home.meta_cache.get(&10).map(|m| m.title.as_str()),
+        Some("col a"),
+        "the landed page fed the session cache"
+    );
+}
+
+#[test]
+fn collection_pending_descends_id_only_on_failure() {
+    let mut app = app();
+    let before = app.home.collection_browse.enrich_cursor();
+    let generation = seed_pending_collection(&mut app, &[10], vec![(1, Some(10))]);
+
+    handle_enrich_event(
+        EnrichEvent::Failed {
+            target: EnrichTarget::Collection,
+            generation,
+            rewind_to: before,
+            reason: "HTTP 500".to_string(),
+        },
+        &mut app,
+    );
+
+    assert!(
+        app.home.collection_browse.is_browsing(),
+        "a failed first page still opens the browse (fail-soft, never a stall)"
+    );
+    assert!(app.home.collection_browse_pending.is_none());
+    assert!(
+        app.home
+            .collection_browse
+            .rows
+            .iter()
+            .all(|r| r.meta.is_none()),
+        "the rows stay id-only after the failed page"
+    );
+}
+
+#[test]
+fn stale_generation_land_does_not_descend_pending_open() {
+    let mut app = app();
+    app.home
+        .collection_browse
+        .set_rows(id_only_rows(&[10]), &HashMap::new());
+    app.home
+        .collection_browse
+        .seed_enrichment(vec![(1, Some(10))], &HashMap::new());
+    let stale = app.home.collection_browse.enrich_generation();
+    // A newer reseed bumps the generation; the deferred open waits on the NEW one.
+    app.home
+        .collection_browse
+        .seed_enrichment(vec![(1, Some(10))], &HashMap::new());
+    let current = app.home.collection_browse.enrich_generation();
+    app.home.collection_browse_pending = Some(current);
+
+    handle_enrich_event(
+        EnrichEvent::Enriched {
+            target: EnrichTarget::Collection,
+            generation: stale,
+            rows: vec![beatmap_row(1, 10, "late", false, false)],
+        },
+        &mut app,
+    );
+
+    assert!(
+        !app.home.collection_browse.is_browsing(),
+        "a superseded page must not open the deferred browse"
+    );
+    assert_eq!(
+        app.home.collection_browse_pending,
+        Some(current),
+        "pending stays until its own page lands"
+    );
+}
+
+#[test]
+fn cache_hit_reopen_seeds_a_dry_pager() {
+    // A set already in the session cache hydrates on reopen and is never paged.
+    let mut app = app();
+    app.home
+        .meta_cache
+        .insert(10, beatmap_row(1, 10, "cached", false, false).beatmapset);
+
+    app.home
+        .collection_browse
+        .set_rows(id_only_rows(&[10]), &app.home.meta_cache);
+    assert_eq!(
+        app.home.collection_browse.rows[0]
+            .meta
+            .as_ref()
+            .map(|m| m.title.as_str()),
+        Some("cached"),
+        "a cached id hydrates its row straight from the session cache"
+    );
+
+    app.home
+        .collection_browse
+        .seed_enrichment(vec![(1, Some(10))], &app.home.meta_cache);
+    assert!(
+        !app.home.collection_browse.has_more_enrichment(),
+        "a cached set is pruned, so the pager is dry — no refetch"
     );
 }
 

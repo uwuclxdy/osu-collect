@@ -123,23 +123,29 @@ pub fn handle_home_search_event(event: HomeSearchEvent, app: &mut App) -> Option
                     meta: Some(meta),
                 })
                 .collect();
-            // Scope the find borrow so the guest nudge below can take `&mut app`.
-            {
-                let find = &mut app.home.find;
-                find.next_cursor = cursor;
-                find.status_msg = FindStatusMsg::ReadySearch { total };
-                if append {
-                    find.browse.append_rows(rows);
-                } else {
-                    find.browse.set_rows(rows);
-                    // These rows came from osu for the current inputs; record the
-                    // backend (download subdir prefix) + snapshot the inputs so the
-                    // `view N maps` button stays accurate after a later edit.
-                    find.note_results_backend(FindBackend::Osu);
-                    find.mark_results_current();
-                    // Open the results immediately on a fresh search.
-                    find.browse.descend();
+            // Feed the session cache: these rows never enrich, but the collection
+            // / update browses reuse it to skip refetching a title osu just gave.
+            for row in &rows {
+                if let Some(meta) = &row.meta {
+                    app.home
+                        .meta_cache
+                        .entry(row.id)
+                        .or_insert_with(|| meta.clone());
                 }
+            }
+            app.home.find.next_cursor = cursor;
+            app.home.find.status_msg = FindStatusMsg::ReadySearch { total };
+            if append {
+                app.home.find.browse.append_rows(rows);
+            } else {
+                app.home.find.browse.set_rows(rows, &app.home.meta_cache);
+                // These rows came from osu for the current inputs; record the
+                // backend (download subdir prefix) + snapshot the inputs so the
+                // `view N maps` button stays accurate after a later edit.
+                app.home.find.note_results_backend(FindBackend::Osu);
+                app.home.find.mark_results_current();
+                // Open the results immediately on a fresh search.
+                app.home.find.browse.descend();
             }
             // A search came back, so the token resolved. If that was a guest
             // token (logged out), nudge once toward login for the extra filters.
@@ -149,11 +155,13 @@ pub fn handle_home_search_event(event: HomeSearchEvent, app: &mut App) -> Option
             Some(AppCommand::ProbeFindSizes)
         }
         HomeSearchEvent::Empty => {
-            let find = &mut app.home.find;
-            find.status_msg = FindStatusMsg::Empty;
-            find.next_cursor = None;
-            find.browse.set_rows(Vec::new());
-            find.clear_results_snapshot();
+            app.home.find.status_msg = FindStatusMsg::Empty;
+            app.home.find.next_cursor = None;
+            app.home
+                .find
+                .browse
+                .set_rows(Vec::new(), &app.home.meta_cache);
+            app.home.find.clear_results_snapshot();
             None
         }
         HomeSearchEvent::Failed { reason } => {

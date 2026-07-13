@@ -98,28 +98,36 @@ pub fn handle_home_filter_event(event: HomeFilterEvent, app: &mut App) -> Option
                 .iter()
                 .map(|&id| BrowseRow { id, meta: None })
                 .collect();
-            let find = &mut app.home.find;
-            find.status_msg = FindStatusMsg::ReadyFilter { sets, total_bytes };
-            // `set_rows` clears the pager; seed it with the matching diff ids so
-            // the id-only rows backfill from the osu-batch endpoint.
-            find.browse.set_rows(rows);
-            find.browse.seed_enrichment(results.ids);
+            // nzbasic's diff ids carry no set pairing, so they can't prune against
+            // the cache — every seed pages (id-only rows still hydrate any set the
+            // cache already knows via `set_rows`).
+            let seeds: Vec<(u32, Option<u32>)> = results.ids.iter().map(|&id| (id, None)).collect();
+            app.home.find.status_msg = FindStatusMsg::ReadyFilter { sets, total_bytes };
+            // `set_rows` clears the pager + hydrates cached rows; then seed it with
+            // the matching diff ids so the rest backfill from the osu-batch endpoint.
+            app.home.find.browse.set_rows(rows, &app.home.meta_cache);
+            app.home
+                .find
+                .browse
+                .seed_enrichment(seeds, &app.home.meta_cache);
             // These rows came from nzbasic; record the backend + snapshot inputs.
-            find.note_results_backend(FindBackend::Nzbasic);
-            find.mark_results_current();
+            app.home.find.note_results_backend(FindBackend::Nzbasic);
+            app.home.find.mark_results_current();
             // Open the results immediately on a fresh fetch (search parity).
-            find.browse.descend();
+            app.home.find.browse.descend();
             // Enrich what the user is about to look at: the first page.
             Some(AppCommand::LoadEnrichment {
                 target: EnrichTarget::Find,
             })
         }
         HomeFilterEvent::Empty => {
-            let find = &mut app.home.find;
-            find.status_msg = FindStatusMsg::Empty;
+            app.home.find.status_msg = FindStatusMsg::Empty;
             // Clears the rows and the enrichment pager in one call.
-            find.browse.set_rows(Vec::new());
-            find.clear_results_snapshot();
+            app.home
+                .find
+                .browse
+                .set_rows(Vec::new(), &app.home.meta_cache);
+            app.home.find.clear_results_snapshot();
             None
         }
         HomeFilterEvent::Failed { reason } => {

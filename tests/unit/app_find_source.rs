@@ -4,6 +4,7 @@ use osu_downloader::filter::{
     FilterDirection, FilterMode, FilterRange, FilterSort, FilterSpecial, FilterStatus,
 };
 use osu_downloader::search::{QueryRange, SearchMode, SearchStatus, SortField, SortOrder};
+use std::collections::HashMap;
 
 fn row(id: u32) -> BrowseRow {
     BrowseRow { id, meta: None }
@@ -63,12 +64,12 @@ fn nzbasic(source: &FindSource) -> FilterQuery {
 #[test]
 fn set_rows_homes_cursor_and_drops_stale_selections() {
     let mut browse = SetBrowse::new();
-    browse.set_rows(rows(&[1, 2, 3]));
+    browse.set_rows(rows(&[1, 2, 3]), &HashMap::new());
     browse.set_all_selected(true);
     assert_eq!(browse.selected_count(), 3);
 
     // A fresh result set with different ids drops the old selections entirely.
-    browse.set_rows(rows(&[4, 5]));
+    browse.set_rows(rows(&[4, 5]), &HashMap::new());
     assert_eq!(browse.selected_count(), 0);
     assert_eq!(browse.list_cursor(), Some(0));
 }
@@ -76,10 +77,10 @@ fn set_rows_homes_cursor_and_drops_stale_selections() {
 #[test]
 fn set_rows_keeps_selection_for_surviving_ids() {
     let mut browse = SetBrowse::new();
-    browse.set_rows(rows(&[1, 2, 3]));
+    browse.set_rows(rows(&[1, 2, 3]), &HashMap::new());
     browse.set_all_selected(true);
     // 2 survives into the next set; 1 and 3 drop out.
-    browse.set_rows(rows(&[2, 9]));
+    browse.set_rows(rows(&[2, 9]), &HashMap::new());
     assert!(browse.is_selected(2));
     assert!(!browse.is_selected(9));
     assert_eq!(browse.selected_count(), 1);
@@ -88,7 +89,7 @@ fn set_rows_keeps_selection_for_surviving_ids() {
 #[test]
 fn append_rows_dedups_by_id() {
     let mut browse = SetBrowse::new();
-    browse.set_rows(rows(&[1, 2]));
+    browse.set_rows(rows(&[1, 2]), &HashMap::new());
     // Page overlap: 2 repeats, only 3 and 4 are new.
     browse.append_rows(rows(&[2, 3, 4]));
     let ids: Vec<u32> = browse.rows.iter().map(|r| r.id).collect();
@@ -98,7 +99,7 @@ fn append_rows_dedups_by_id() {
 #[test]
 fn append_rows_keeps_existing_selection() {
     let mut browse = SetBrowse::new();
-    browse.set_rows(rows(&[1, 2]));
+    browse.set_rows(rows(&[1, 2]), &HashMap::new());
     browse.set_all_selected(true);
     browse.append_rows(rows(&[3]));
     // Load-more never clears what was already picked.
@@ -110,7 +111,7 @@ fn append_rows_keeps_existing_selection() {
 #[test]
 fn toggle_selected_flips_row_under_cursor() {
     let mut browse = SetBrowse::new();
-    browse.set_rows(rows(&[10, 20]));
+    browse.set_rows(rows(&[10, 20]), &HashMap::new());
     browse.descend(); // cursor at 0
     browse.toggle_selected();
     assert_eq!(browse.selected_ids(), vec![10]);
@@ -121,7 +122,7 @@ fn toggle_selected_flips_row_under_cursor() {
 #[test]
 fn scroll_wraps_within_rows() {
     let mut browse = SetBrowse::new();
-    browse.set_rows(rows(&[1, 2]));
+    browse.set_rows(rows(&[1, 2]), &HashMap::new());
     browse.descend();
     // A pure selector: every list position is a real row (no action bar), so a
     // row is always highlighted.
@@ -136,7 +137,7 @@ fn scroll_wraps_within_rows() {
 fn paging_clamps_at_the_ends_without_wrapping() {
     let ids: Vec<u32> = (1..=25).collect();
     let mut browse = SetBrowse::new();
-    browse.set_rows(rows(&ids));
+    browse.set_rows(rows(&ids), &HashMap::new());
     browse.descend();
 
     // LIST_PAGE is 10 rows; paging steps by a page and stops at the last row.
@@ -161,7 +162,7 @@ fn paging_clamps_at_the_ends_without_wrapping() {
 #[test]
 fn ascend_steps_preview_then_list_then_form() {
     let mut browse = SetBrowse::new();
-    browse.set_rows(rows(&[1]));
+    browse.set_rows(rows(&[1]), &HashMap::new());
     browse.descend();
     browse.focus_preview();
     assert!(browse.preview_focused());
@@ -179,7 +180,7 @@ fn ascend_steps_preview_then_list_then_form() {
 #[test]
 fn selected_ids_follow_row_order() {
     let mut browse = SetBrowse::new();
-    browse.set_rows(rows(&[30, 10, 20]));
+    browse.set_rows(rows(&[30, 10, 20]), &HashMap::new());
     browse.set_all_selected(true);
     // Order matches the rows, not the id value or hash order.
     assert_eq!(browse.selected_ids(), vec![30, 10, 20]);
@@ -755,7 +756,7 @@ fn seven_star_preset_seeds_stars_min() {
 #[test]
 fn enrichment_pager_walks_pages_then_dries_up() {
     let mut browse = SetBrowse::new();
-    browse.seed_enrichment((0..600).collect());
+    browse.seed_enrichment((0..600).map(|d| (d, None)).collect(), &HashMap::new());
     let first = browse.next_enrich_page().expect("page 1");
     assert_eq!(first.len(), ENRICH_PAGE);
     assert_eq!(first[0], 0);
@@ -770,7 +771,7 @@ fn enrichment_pager_walks_pages_then_dries_up() {
 #[test]
 fn enrichment_pager_rewinds_after_a_failed_page() {
     let mut browse = SetBrowse::new();
-    browse.seed_enrichment((0..300).collect());
+    browse.seed_enrichment((0..300).map(|d| (d, None)).collect(), &HashMap::new());
     let before = browse.enrich_cursor();
     let _ = browse.next_enrich_page().expect("page 1");
     browse.rewind_enrichment(before);
@@ -782,7 +783,7 @@ fn enrichment_pager_rewinds_after_a_failed_page() {
 fn seed_and_set_rows_bump_the_enrichment_generation() {
     let mut browse = SetBrowse::new();
     let g0 = browse.enrich_generation();
-    browse.seed_enrichment(vec![1, 2, 3]);
+    browse.seed_enrichment(vec![(1, None), (2, None), (3, None)], &HashMap::new());
     assert_ne!(
         browse.enrich_generation(),
         g0,
@@ -790,7 +791,7 @@ fn seed_and_set_rows_bump_the_enrichment_generation() {
     );
     let g1 = browse.enrich_generation();
     // New rows are a new identity: `set_rows` clears the pager + bumps again.
-    browse.set_rows(rows(&[10]));
+    browse.set_rows(rows(&[10]), &HashMap::new());
     assert_ne!(browse.enrich_generation(), g1);
     assert!(!browse.has_more_enrichment());
 }
@@ -958,7 +959,7 @@ fn parse_limit_defaults_and_bounds() {
 /// The browse exposes no select-by-id, so each pick is a cursor walk + toggle.
 fn find_with_results(ids: &[u32], checked: &[u32]) -> FindSource {
     let mut find = FindSource::new();
-    find.browse.set_rows(rows(ids));
+    find.browse.set_rows(rows(ids), &HashMap::new());
     find.note_results_backend(FindBackend::Osu);
     for id in checked {
         let index = ids

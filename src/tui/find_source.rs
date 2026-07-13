@@ -8,7 +8,8 @@
 //! Home view; these rows are pushed into the same Home panel.
 
 use crate::app::{
-    FindRoute, FindSource, FindStatusMsg, HomeField, InputField, RangeHint, describe_range,
+    EnrichSink, FindRoute, FindSource, FindStatusMsg, HomeField, InputField, RangeHint,
+    describe_range,
 };
 use crate::utils::format_bytes;
 use ratatui::{
@@ -161,7 +162,13 @@ pub fn push_form_rows(
     };
     items.push_focusable(
         HomeField::FindBrowse,
-        widgets::button_item(&view_label, focus == HomeField::FindBrowse, view_current),
+        widgets::button_item_with_loading_cue(
+            &view_label,
+            focus == HomeField::FindBrowse,
+            view_current,
+            find.browse.is_enriching(),
+            tick,
+        ),
     );
     if let Some(row) = status_row(&find.status_msg) {
         items.push(row);

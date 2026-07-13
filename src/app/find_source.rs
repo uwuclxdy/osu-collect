@@ -199,8 +199,17 @@ impl SetBrowse {
     /// Replace the rows (a fresh find / a fresh collection pick), homing the
     /// cursor and dropping selections for ids no longer present. Clears the
     /// enrichment pager — new rows are a new identity, so any in-flight page is
-    /// stale (the caller reseeds it afterwards for an id-only result set).
-    pub fn set_rows(&mut self, rows: Vec<BrowseRow>) {
+    /// stale (the caller reseeds it afterwards for an id-only result set). Any
+    /// id-only row whose set is already in the session `cache` hydrates straight
+    /// away, so a reopen never refetches a title the app already fetched.
+    pub fn set_rows(&mut self, mut rows: Vec<BrowseRow>, cache: &HashMap<u32, BeatmapSetMeta>) {
+        for row in &mut rows {
+            if row.meta.is_none()
+                && let Some(meta) = cache.get(&row.id)
+            {
+                row.meta = Some(meta.clone());
+            }
+        }
         let present: HashSet<u32> = rows.iter().map(|r| r.id).collect();
         self.selected.retain(|id| present.contains(id));
         self.rows = rows;
@@ -356,12 +365,34 @@ impl SetBrowse {
 
     // ── enrichment pager ──────────────────────────────────────────────────────
 
-    /// Seed the enrichment pager with the diff ids that back these rows (one diff
-    /// per set is enough — the batch response nests each row's set metadata). The
+    /// Seed the enrichment pager from `(diff_id, set_id)` seeds (one diff per set
+    /// is enough — the batch response nests each row's set metadata). A seed whose
+    /// set is already in the session `cache` is pruned, so the pager only pages
+    /// sets whose title the app hasn't fetched yet. Callers with no set pairing
+    /// (find / nzbasic results) pass `None` set ids, which are never pruned. The
     /// runtime auto-fetches the first page after this.
-    pub fn seed_enrichment(&mut self, diff_ids: Vec<u32>) {
-        self.enrich.seed(diff_ids);
+    pub fn seed_enrichment(
+        &mut self,
+        seeds: Vec<(u32, Option<u32>)>,
+        cache: &HashMap<u32, BeatmapSetMeta>,
+    ) {
+        self.enrich.seed(pruned_diff_ids(seeds, cache));
     }
+}
+
+/// Diff ids the enrichment pager must actually fetch: drop any seed whose set is
+/// already in `cache` (its metadata is known, so the batch would refetch it for
+/// nothing). Seeds with no set pairing (`None`) are always kept. Shared by every
+/// cache-aware seeder (the flat browse and the update source's missing preview).
+pub(crate) fn pruned_diff_ids(
+    seeds: Vec<(u32, Option<u32>)>,
+    cache: &HashMap<u32, BeatmapSetMeta>,
+) -> Vec<u32> {
+    seeds
+        .into_iter()
+        .filter(|&(_, set_id)| !set_id.is_some_and(|s| cache.contains_key(&s)))
+        .map(|(diff, _)| diff)
+        .collect()
 }
 
 impl EnrichSink for SetBrowse {

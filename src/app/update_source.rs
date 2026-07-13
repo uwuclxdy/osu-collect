@@ -2,7 +2,7 @@ use super::messages::{AppMessage, clear_app_message};
 
 /// Cursor step for a list page-scroll (`Ctrl+d` / `Ctrl+u`).
 pub(crate) const LIST_PAGE: i64 = 10;
-use super::find_source::{EnrichPager, EnrichSink};
+use super::find_source::{EnrichPager, EnrichSink, pruned_diff_ids};
 use crate::osu_db::{LocalBeatmapset, LocalCollection, Md5};
 use osu_downloader::search::BeatmapSetMeta;
 use std::collections::{HashMap, HashSet};
@@ -227,22 +227,28 @@ impl UpdateSource {
 
     // ── missing-set enrichment ────────────────────────────────────────────────
 
-    /// Seed the enrichment pager with one diff id per missing set (deduped by set
-    /// id, first diff wins). The runtime auto-fetches the first page after this.
-    /// Called on descend so the visible titles fill in without a keystroke.
-    pub fn seed_enrichment(&mut self) {
-        let mut seen: HashSet<u32> = HashSet::new();
-        let diff_ids: Vec<u32> = self
-            .selection
-            .cached_missing_sets
-            .iter()
-            .filter_map(|set| {
-                let diff = set.enrich_diff_id?;
-                seen.insert(set.id).then_some(diff)
-            })
-            .collect();
-        self.enrich.seed(diff_ids);
+    /// Seed the enrichment pager for the current missing sets (deduped by set id,
+    /// first diff wins), rebuilding the preview `meta` from the session `cache` and
+    /// paging only the sets it doesn't already know. Called at scan-land
+    /// ([`set_missing_beatmaps`](Self::set_missing_beatmaps)) so the visible titles
+    /// fill in without a keystroke and a re-enter / rescan never refetches a
+    /// cached set. The runtime auto-fetches the first page after this.
+    fn seed_enrichment(&mut self, cache: &HashMap<u32, BeatmapSetMeta>) {
         self.meta.clear();
+        let mut seen: HashSet<u32> = HashSet::new();
+        let mut seeds: Vec<(u32, Option<u32>)> = Vec::new();
+        for set in &self.selection.cached_missing_sets {
+            if !seen.insert(set.id) {
+                continue;
+            }
+            if let Some(meta) = cache.get(&set.id) {
+                self.meta.insert(set.id, meta.clone());
+            }
+            if let Some(diff) = set.enrich_diff_id {
+                seeds.push((diff, Some(set.id)));
+            }
+        }
+        self.enrich.seed(pruned_diff_ids(seeds, cache));
     }
 
     /// Folded set metadata for a missing set, once its enrichment page has landed.
@@ -253,14 +259,15 @@ impl UpdateSource {
     // ── browse descend / ascend ───────────────────────────────────────────────
 
     /// Descend from the form into the two-pane browse: focus the collections
-    /// list with both cursors homed. Seeds the missing-set enrichment pager so the
-    /// preview titles backfill (the runtime auto-fetches the first page).
+    /// list with both cursors homed. A pure descend — the enrichment pager was
+    /// seeded at scan-land ([`set_missing_beatmaps`](Self::set_missing_beatmaps)),
+    /// so re-entering never reseeds or refetches. The app self-heals a missed
+    /// prefetch by re-kicking page 1 only when nothing was ever fetched.
     pub fn descend(&mut self) {
         self.selection.descended = true;
         self.selection.preview_focused = false;
         self.selection.collections_cursor = Some(0);
         self.selection.preview_cursor = Some(0);
-        self.seed_enrichment();
     }
 
     /// One step back out of the browse (drives `esc`): preview → collections
@@ -747,8 +754,14 @@ impl UpdateSource {
     /// Store the freshly scanned missing sets. Selection is whole-collection, so
     /// there is no per-map selection to preserve — the collection checkboxes
     /// (defaulted to selected by [`set_collections`](Self::set_collections))
-    /// decide the download set.
-    pub fn set_missing_beatmaps(&mut self, missing: Vec<MissingBeatmapset>) {
+    /// decide the download set. Seeds the missing-set enrichment pager here (at
+    /// scan-land, the earliest known intent) against the session `cache`, so the
+    /// preview titles are already loading before the user opens the browse.
+    pub fn set_missing_beatmaps(
+        &mut self,
+        missing: Vec<MissingBeatmapset>,
+        cache: &HashMap<u32, BeatmapSetMeta>,
+    ) {
         self.selection.cached_missing_sets = missing;
         // No-update collections are inert: force them deselected (nothing to
         // download) so a default-selected empty collection can't ride along, then
@@ -761,6 +774,7 @@ impl UpdateSource {
         }
         self.apply_collection_sort();
         self.selection.preview_cursor = Some(0);
+        self.seed_enrichment(cache);
     }
 
     /// Drop the given set ids from the cached missing list (the "mark installed"
@@ -791,6 +805,10 @@ impl UpdateSource {
         self.selection.descended = false;
         self.selection.preview_focused = false;
         self.scan.scan_status = ScanStatus::Idle;
+        // Drop the prior client's enrichment: no live pager or stale titles carry
+        // into the next scan (seeding now happens at scan-land, not on descend).
+        self.enrich.clear();
+        self.meta.clear();
     }
 }
 

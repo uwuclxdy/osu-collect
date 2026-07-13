@@ -103,7 +103,13 @@ pub fn push_form_rows(
     };
     items.push_focusable(
         HomeField::UpdateBrowse,
-        widgets::button_item(&view_label, focus == HomeField::UpdateBrowse, new_count > 0),
+        widgets::button_item_with_loading_cue(
+            &view_label,
+            focus == HomeField::UpdateBrowse,
+            new_count > 0,
+            form.is_enriching(),
+            tick,
+        ),
     );
     // The shared download button + run settings render AFTER this, in the Home
     // view's download section (one section borrowed across all three sources).
@@ -113,7 +119,8 @@ pub fn push_form_rows(
 pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource, tick: u64) {
     // Caret + label promotion render only while the list pane owns focus.
     let list_focused = !form.preview_focused();
-    // While a batch page is in flight the missing-set rows read as loading.
+    // While a batch page is in flight the loading cue joins the preview title's
+    // existing `N new · M removed` meta instead of decorating each row.
     let enriching = form.is_enriching();
     let list_selected = form.selection.collections_cursor;
     let list_items: Vec<ListItem<'static>> = form
@@ -149,7 +156,7 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource, tick: u
     let preview_items: Vec<ListItem<'static>> = preview_indices
         .iter()
         .filter_map(|&idx| form.selection.cached_missing_sets.get(idx))
-        .map(|set| preview_row(set, form.set_meta(set.id), enriching, tick))
+        .map(|set| preview_row(set, form.set_meta(set.id)))
         .collect();
     let preview_selected = form
         .preview_focused()
@@ -173,7 +180,8 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource, tick: u
             .collection_id
             .map(|id| form.new_count_for(id))
             .unwrap_or(0);
-        collection_stats_meta(new, c.removed_count)
+        let base = collection_stats_meta(new, c.removed_count);
+        widgets::meta_with_loading_cue(base, enriching, tick)
     });
 
     let view = MasterDetail {
@@ -234,21 +242,10 @@ fn collection_stats_meta(new: usize, removed: usize) -> Line<'static> {
 }
 
 /// One read-only preview row: the missing set as `artist - title` once its
-/// enrichment page lands, a spinner + id while fetching, else the bare id — plus
-/// a marker for a set the user previously deleted from the collection.
-fn preview_row(
-    set: &MissingBeatmapset,
-    meta: Option<&BeatmapSetMeta>,
-    enriching: bool,
-    tick: u64,
-) -> ListItem<'static> {
-    let mut spans = widgets::browse_row_label(
-        set.id,
-        meta,
-        enriching,
-        tick,
-        Style::default().fg(text_dim()),
-    );
+/// enrichment page lands, else the bare id — plus a marker for a set the user
+/// previously deleted from the collection.
+fn preview_row(set: &MissingBeatmapset, meta: Option<&BeatmapSetMeta>) -> ListItem<'static> {
+    let mut spans = widgets::browse_row_label(set.id, meta, Style::default().fg(text_dim()));
     if set.previously_deleted {
         spans.push(Span::styled(
             format!("  {TAG_PREVIOUSLY_DELETED}"),

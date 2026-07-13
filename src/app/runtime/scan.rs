@@ -1,5 +1,5 @@
 use super::super::{
-    App, Toast, collection_state, failed_maps, ignored_maps,
+    App, AppCommand, EnrichSink, EnrichTarget, Toast, collection_state, failed_maps, ignored_maps,
     messages::{clear_app_message, set_loading_message},
     snapshots,
     update_source::{MissingBeatmapset, MissingStatus, ScanStatus, extract_collection_id},
@@ -56,11 +56,14 @@ pub enum UpdatesEvent {
     Error(String),
 }
 
+/// Fold an updates event into the app. Returns a follow-up command — the
+/// auto-fetch of the missing-set enrichment's first page after a scan lands — for
+/// the runtime loop to dispatch; every other arm returns `None`.
 pub(super) fn handle_updates_event(
     event: UpdatesEvent,
     app: &mut App,
     updates_tx: &mpsc::UnboundedSender<UpdatesEvent>,
-) {
+) -> Option<AppCommand> {
     match event {
         UpdatesEvent::DatabaseRead {
             generation,
@@ -75,7 +78,7 @@ pub(super) fn handle_updates_event(
                     got = generation,
                     "Ignoring stale DatabaseRead event"
                 );
-                return;
+                return None;
             }
 
             app.home.update.set_collections(collections);
@@ -98,10 +101,11 @@ pub(super) fn handle_updates_event(
                 app.home.update.scan.scan_status = ScanStatus::Ready;
                 clear_app_message(&mut app.home.update.message);
                 app.toast_info("no collections with ids found to compare");
-                return;
+                return None;
             }
 
             spawn_fetch_task(app, selected_ids, updates_tx.clone());
+            None
         }
         UpdatesEvent::Progress {
             generation,
@@ -110,6 +114,7 @@ pub(super) fn handle_updates_event(
             if generation == app.home.update.scan.scan_generation {
                 set_loading_message(&mut app.home.update.message, message);
             }
+            None
         }
         UpdatesEvent::ScanComplete {
             generation,
@@ -126,7 +131,7 @@ pub(super) fn handle_updates_event(
                     got = generation,
                     "Ignoring stale ScanComplete event"
                 );
-                return;
+                return None;
             }
 
             let previously_deleted_count = missing.iter().filter(|m| m.previously_deleted).count();
@@ -140,7 +145,12 @@ pub(super) fn handle_updates_event(
                 .collect();
             let local_snapshot: Vec<u32> = local_ids.iter().copied().collect();
             let count = missing.len();
-            app.home.update.set_missing_beatmaps(missing);
+            // Seeds the missing-set enrichment pager against the session cache; the
+            // follow-up below kicks its first page so titles load before the browse
+            // opens (disjoint field paths — `update` vs `meta_cache`).
+            app.home
+                .update
+                .set_missing_beatmaps(missing, &app.home.meta_cache);
             app.home
                 .update
                 .set_removed_counts(&collection_removed_counts);
@@ -183,6 +193,14 @@ pub(super) fn handle_updates_event(
                 let state = app.collection_state.clone();
                 tokio::task::spawn_blocking(move || collection_state::save(&state, &path));
             }
+            // Kick the missing-set enrichment's first page if the scan-land seed
+            // left anything to fetch (a cache-only result needs none).
+            app.home
+                .update
+                .has_more_enrichment()
+                .then_some(AppCommand::LoadEnrichment {
+                    target: EnrichTarget::Update,
+                })
         }
         UpdatesEvent::FailedMapRecheckProgress {
             generation,
@@ -195,6 +213,7 @@ pub(super) fn handle_updates_event(
                     format!("rechecking known bad mapsets {checked}/{total}…"),
                 );
             }
+            None
         }
         UpdatesEvent::FailedMapRecheckComplete {
             generation,
@@ -202,7 +221,7 @@ pub(super) fn handle_updates_event(
             unavailable,
         } => {
             if generation != app.home.update.scan.scan_generation {
-                return;
+                return None;
             }
             clear_app_message(&mut app.home.update.message);
             let mut toast = if available.is_empty() {
@@ -221,9 +240,11 @@ pub(super) fn handle_updates_event(
             app.home.update.scan.scan_generation =
                 app.home.update.scan.scan_generation.wrapping_add(1);
             spawn_scan_task(app, updates_tx.clone());
+            None
         }
         UpdatesEvent::Error(msg) => {
             app.report_scan_error(msg);
+            None
         }
     }
 }

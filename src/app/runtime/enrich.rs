@@ -78,13 +78,11 @@ pub fn handle_enrich_event(event: EnrichEvent, app: &mut App) {
             generation,
             rows,
         } => {
-            let sink = enrich_sink_mut(app, target);
-            if sink.enrich_generation() != generation {
+            // Generation guard first: a page from a superseded run drops before it
+            // can fold, write the cache, or open a deferred browse.
+            if enrich_sink_mut(app, target).enrich_generation() != generation {
                 return;
             }
-            // This page settled — one fewer outstanding (a counter, so a newer
-            // dispatch's cue survives a stale page's late event).
-            sink.mark_enrichment_settled();
             // Dedupe to set-level metadata; the first diff of a set wins (title /
             // artist / creator / status are set-level, and the batch nests each
             // row's full set). Holes (ids the server omitted) simply contribute no
@@ -95,7 +93,22 @@ pub fn handle_enrich_event(event: EnrichEvent, app: &mut App) {
                     .entry(row.beatmapset_id)
                     .or_insert(row.beatmapset);
             }
+            // Every landed page feeds the session cache (cache-miss only, so a
+            // title never clobbers; osu search rows feed it separately in
+            // `runtime/search.rs`), so a later reopen / rescan / re-resolve of
+            // any browse skips the refetch entirely.
+            for (set, meta) in &meta_by_set {
+                app.home
+                    .meta_cache
+                    .entry(*set)
+                    .or_insert_with(|| meta.clone());
+            }
+            let sink = enrich_sink_mut(app, target);
+            // This page settled — one fewer outstanding (a counter, so a newer
+            // dispatch's cue survives a stale page's late event).
+            sink.mark_enrichment_settled();
             sink.fold_meta(meta_by_set);
+            maybe_open_pending_collection(app, target, generation);
         }
         EnrichEvent::Failed {
             target,
@@ -103,16 +116,34 @@ pub fn handle_enrich_event(event: EnrichEvent, app: &mut App) {
             rewind_to,
             reason,
         } => {
-            let sink = enrich_sink_mut(app, target);
             // A stale page's failure drops silently — a superseding reseed
             // already invalidated it, so there is nothing to retry or report.
-            if sink.enrich_generation() != generation {
+            if enrich_sink_mut(app, target).enrich_generation() != generation {
                 return;
             }
-            sink.mark_enrichment_settled();
-            sink.rewind_enrichment(rewind_to);
+            {
+                let sink = enrich_sink_mut(app, target);
+                sink.mark_enrichment_settled();
+                sink.rewind_enrichment(rewind_to);
+            }
             app.toast_warn(format!("map details unavailable: {reason}"));
+            // Fail-soft: a deferred open still descends (id-only) so it never
+            // stalls waiting on a page that will not arrive.
+            maybe_open_pending_collection(app, target, generation);
         }
+    }
+}
+
+/// Descend a deferred collection-browse open once the page it waited on settles.
+/// [`open_collection_browse`](crate::app::App) records the pager generation in
+/// `collection_browse_pending` and holds the descend; the matching page (success
+/// or failure) opens the browse here. A non-matching generation leaves it pending
+/// (a superseded page never opens a browse it no longer backs).
+fn maybe_open_pending_collection(app: &mut App, target: EnrichTarget, generation: u64) {
+    if target == EnrichTarget::Collection && app.home.collection_browse_pending == Some(generation)
+    {
+        app.home.collection_browse_pending = None;
+        app.home.collection_browse.descend();
     }
 }
 

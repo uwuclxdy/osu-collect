@@ -103,7 +103,7 @@ fn resolve_success_event_sets_success_state() {
             map_count: 100,
             collection_id: 1,
             beatmapset_ids: Vec::new(),
-            enrich_ids: vec![101, 202],
+            enrich_pairs: vec![(11, 101), (22, 202)],
             folder_name: "top 100 of 2024-1".to_string(),
         },
         &mut home,
@@ -121,8 +121,8 @@ fn resolve_success_event_sets_success_state() {
         home.resolved_folder_name.as_deref(),
         Some("top 100 of 2024-1")
     );
-    // The diff ids for browse&pick enrichment are stored alongside.
-    assert_eq!(home.resolved_enrich_ids, vec![101, 202]);
+    // The (set, diff) pairs for browse&pick enrichment are stored alongside.
+    assert_eq!(home.resolved_enrich_pairs, vec![(11, 101), (22, 202)]);
 }
 
 /// handle_home_resolve_event with Failed sets Error state.
@@ -169,7 +169,7 @@ fn resolve_single_map_uses_singular() {
             map_count: 1,
             collection_id: 2,
             beatmapset_ids: Vec::new(),
-            enrich_ids: Vec::new(),
+            enrich_pairs: Vec::new(),
             folder_name: "solo-2".to_string(),
         },
         &mut home,
@@ -185,5 +185,21 @@ fn resolve_single_map_uses_singular() {
     assert!(
         !text.contains("1 mapsets"),
         "should not contain '1 mapsets': {text}"
+    );
+}
+
+/// A resolve outcome invalidates a deferred collection-browse open (its rows may
+/// have changed), so any pending wait is dropped.
+#[test]
+fn resolve_event_clears_pending_collection_browse() {
+    let config = Config::default();
+    let mut home = crate::app::HomeTab::new(&config);
+    home.collection_browse_pending = Some(7);
+
+    handle_home_resolve_event(HomeResolveEvent::Cleared, &mut home);
+
+    assert!(
+        home.collection_browse_pending.is_none(),
+        "a resolve/clear drops a deferred open"
     );
 }

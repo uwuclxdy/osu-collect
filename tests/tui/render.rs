@@ -169,11 +169,14 @@ fn home_cta_scrolls_into_view_on_short_terminal() {
     // "download" label would otherwise collide with the "download directory"
     // field, so this pins the assertion to the button, not surrounding chrome.
     app.home.set_resolved_collection(1, vec![10, 20, 30]);
-    app.home.collection_browse.set_rows(vec![
-        BrowseRow { id: 10, meta: None },
-        BrowseRow { id: 20, meta: None },
-        BrowseRow { id: 30, meta: None },
-    ]);
+    app.home.collection_browse.set_rows(
+        vec![
+            BrowseRow { id: 10, meta: None },
+            BrowseRow { id: 20, meta: None },
+            BrowseRow { id: 30, meta: None },
+        ],
+        &std::collections::HashMap::new(),
+    );
     app.home.collection_browse.set_all_selected(true);
     app.home.collection_browse.toggle_selected(); // drop one → a proper subset
     app.home.collection_browse_id = Some(1);
@@ -202,10 +205,13 @@ fn search_view_maps_button_shows_when_results_loaded() {
     use osu_collect::app::{BrowseRow, GetMapsSource, HomeField};
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
-    app.home.find.browse.set_rows(vec![
-        BrowseRow { id: 1, meta: None },
-        BrowseRow { id: 2, meta: None },
-    ]);
+    app.home.find.browse.set_rows(
+        vec![
+            BrowseRow { id: 1, meta: None },
+            BrowseRow { id: 2, meta: None },
+        ],
+        &std::collections::HashMap::new(),
+    );
     // Mirror the Ready handler, which snapshots the inputs the rows are for.
     app.home.find.mark_results_current();
     // The merged find form is long; focus the button so it scrolls into view.
@@ -1109,15 +1115,225 @@ fn config_tab_shows_mirrors_section_before_download() {
     assert!(m < d, "mirrors section should render before download");
 }
 
+// ── enrichment loading cues ──────────────────────────────────────────────────
+
+#[test]
+fn collection_browse_button_shows_opening_spinner_while_deferred() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use osu_collect::app::{GetMapsSource, HomeField};
+
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Collection;
+    app.home.set_resolved_collection(7, vec![10, 20, 30]);
+    // Unenriched (set, diff) pairs so `open_collection_browse` has something to
+    // fetch and defers the descend instead of opening instantly.
+    app.home.resolved_enrich_pairs = vec![(10, 100), (20, 200), (30, 300)];
+    app.home.focus = HomeField::CollectionBrowse;
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
+    assert!(
+        app.home.collection_browse_opening(),
+        "the press defers on the first enrichment page"
+    );
+    assert!(
+        !app.home.collection_browse.is_browsing(),
+        "the browse must not open until that page lands"
+    );
+
+    let content = render_content(&app, 120, 40);
+    assert!(
+        content.contains("⠋ opening"),
+        "the view button swaps to an inline opening spinner while deferred: {content}"
+    );
+}
+
+#[test]
+fn update_view_button_trails_loading_titles_cue_while_enriching() {
+    use osu_collect::app::update_source::{MissingBeatmapset, MissingStatus};
+    use osu_collect::app::{EnrichSink, GetMapsSource, HomeField};
+
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Update;
+    // `set_missing_beatmaps` seeds the pager at scan-land; dispatch its first
+    // page manually to simulate a fetch still in flight.
+    app.home.update.set_missing_beatmaps(
+        vec![MissingBeatmapset {
+            id: 10,
+            status: MissingStatus::NotInstalled,
+            collection_id: 100,
+            collection_name: "test - 100".to_string(),
+            selected: true,
+            previously_deleted: false,
+            enrich_diff_id: Some(1000),
+        }],
+        &std::collections::HashMap::new(),
+    );
+    let _ = app.home.update.next_enrich_page();
+    app.home.update.mark_enrichment_dispatched();
+    assert!(app.home.update.is_enriching());
+
+    app.home.focus = HomeField::UpdateBrowse;
+    let content = render_content(&app, 100, 26);
+    assert!(
+        content.contains("view 1 mapset"),
+        "the button stays pressable (labelled) mid-fetch: {content}"
+    );
+    assert!(
+        content.contains("⠋ loading titles"),
+        "the update view button trails a loading-titles cue while enrichment is in flight: {content}"
+    );
+}
+
+#[test]
+fn find_view_button_trails_loading_titles_cue_while_enriching() {
+    use osu_collect::app::{BrowseRow, EnrichSink, GetMapsSource, HomeField};
+
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    app.home.find.browse.set_rows(
+        vec![
+            BrowseRow { id: 1, meta: None },
+            BrowseRow { id: 2, meta: None },
+        ],
+        &std::collections::HashMap::new(),
+    );
+    app.home.find.mark_results_current();
+    app.home.find.browse.seed_enrichment(
+        vec![(101, Some(1)), (102, Some(2))],
+        &std::collections::HashMap::new(),
+    );
+    let _ = app.home.find.browse.next_enrich_page();
+    app.home.find.browse.mark_enrichment_dispatched();
+    assert!(app.home.find.browse.is_enriching());
+
+    app.home.focus = HomeField::FindBrowse;
+    let content = render_content(&app, 80, 26);
+    assert!(
+        content.contains("view 2 maps"),
+        "the button stays pressable (labelled) mid-fetch: {content}"
+    );
+    assert!(
+        content.contains("⠋ loading titles"),
+        "the find view button trails a loading-titles cue while enrichment is in flight: {content}"
+    );
+}
+
+#[test]
+fn find_results_list_pane_appends_loading_titles_cue_to_the_ratio() {
+    use osu_collect::app::{BrowseRow, EnrichSink, GetMapsSource};
+
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    app.home.find.browse.set_rows(
+        vec![BrowseRow { id: 42, meta: None }],
+        &std::collections::HashMap::new(),
+    );
+    app.home
+        .find
+        .browse
+        .seed_enrichment(vec![(101, Some(42))], &std::collections::HashMap::new());
+    let _ = app.home.find.browse.next_enrich_page();
+    app.home.find.browse.mark_enrichment_dispatched();
+    app.home.find.browse.descend();
+    assert!(app.home.find.browse.is_enriching());
+
+    let content = render_content(&app, 120, 30);
+    assert!(
+        content.contains("0/1"),
+        "the list pane keeps its selected/total ratio: {content}"
+    );
+    assert!(
+        content.contains("⠋ loading titles"),
+        "the results list pane appends a loading-titles cue while enrichment is in flight: {content}"
+    );
+}
+
+#[test]
+fn find_results_row_stays_bare_id_with_no_per_row_spinner_while_enriching() {
+    use osu_collect::app::{BrowseRow, EnrichSink, GetMapsSource};
+
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    app.home.find.browse.set_rows(
+        vec![BrowseRow { id: 42, meta: None }],
+        &std::collections::HashMap::new(),
+    );
+    app.home
+        .find
+        .browse
+        .seed_enrichment(vec![(101, Some(42))], &std::collections::HashMap::new());
+    let _ = app.home.find.browse.next_enrich_page();
+    app.home.find.browse.mark_enrichment_dispatched();
+    app.home.find.browse.descend();
+    assert!(app.home.find.browse.is_enriching());
+
+    let (width, height) = (120u16, 30u16);
+    let buf = render_to_buffer(&app, width, height);
+    let row = (0..height)
+        .map(|y| {
+            (0..width)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect::<String>()
+        })
+        .find(|r| r.contains("#42"))
+        .expect("the id-only row renders");
+    assert!(
+        !row.contains('⠋'),
+        "the row itself carries no per-row spinner (only the panel title does): {row:?}"
+    );
+}
+
+#[test]
+fn update_preview_pane_appends_loading_titles_cue_without_dropping_counts() {
+    use osu_collect::app::update_source::{MissingBeatmapset, MissingStatus};
+    use osu_collect::app::{EnrichSink, GetMapsSource};
+    use osu_collect::osu_db::LocalCollection;
+
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Update;
+    app.home.update.set_collections(vec![LocalCollection {
+        name: "test - 100".to_string(),
+        beatmap_checksums: Vec::new().into(),
+    }]);
+    app.home.update.set_missing_beatmaps(
+        vec![MissingBeatmapset {
+            id: 10,
+            status: MissingStatus::NotInstalled,
+            collection_id: 100,
+            collection_name: "test - 100".to_string(),
+            selected: true,
+            previously_deleted: false,
+            enrich_diff_id: Some(1000),
+        }],
+        &std::collections::HashMap::new(),
+    );
+    let _ = app.home.update.next_enrich_page();
+    app.home.update.mark_enrichment_dispatched();
+    app.home.update.descend();
+    assert!(app.home.update.is_enriching());
+
+    let content = render_content(&app, 120, 30);
+    assert!(
+        content.contains("1 new"),
+        "the preview title-right meta keeps its new/removed counts: {content}"
+    );
+    assert!(
+        content.contains("⠋ loading titles"),
+        "the preview title appends a loading-titles cue while enrichment is in flight: {content}"
+    );
+}
+
 #[test]
 fn find_download_button_shows_approx_size_for_checked_osu_results() {
     use osu_collect::app::{BrowseRow, FindBackend, GetMapsSource, HomeField};
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
-    app.home.find.browse.set_rows(vec![
-        BrowseRow { id: 1, meta: None },
-        BrowseRow { id: 2, meta: None },
-    ]);
+    app.home.find.browse.set_rows(
+        vec![
+            BrowseRow { id: 1, meta: None },
+            BrowseRow { id: 2, meta: None },
+        ],
+        &std::collections::HashMap::new(),
+    );
     // osu-routed results, both checked, with two landed nekoha probes.
     app.home.find.note_results_backend(FindBackend::Osu);
     app.home.find.browse.set_all_selected(true);

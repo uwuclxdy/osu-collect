@@ -396,10 +396,13 @@ fn collection_subset_picked_gates_on_current_collection() {
 
     // Browse&pick collection 42 and uncheck one of its two sets → subset.
     home.set_resolved_collection(42, vec![10, 20]);
-    home.collection_browse.set_rows(vec![
-        BrowseRow { id: 10, meta: None },
-        BrowseRow { id: 20, meta: None },
-    ]);
+    home.collection_browse.set_rows(
+        vec![
+            BrowseRow { id: 10, meta: None },
+            BrowseRow { id: 20, meta: None },
+        ],
+        &home.meta_cache,
+    );
     home.collection_browse.set_all_selected(true);
     home.collection_browse_id = Some(42);
     assert!(

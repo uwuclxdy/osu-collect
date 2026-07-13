@@ -1390,11 +1390,16 @@ impl App {
     }
 
     /// Open the resolved collection in the checkbox browse (the collection
-    /// source's `view N maps` button). A fresh collection defaults all sets selected;
-    /// re-opening the same collection preserves the prior picks. No-op with a
-    /// toast until a collection has resolved. Returns the first-page enrichment
-    /// command (osu-batch metadata backfill for the id-only rows), or `None` when
-    /// there are no diff ids to enrich.
+    /// source's `view N maps` button). A fresh collection defaults all sets
+    /// selected; re-opening the same collection preserves the prior picks. No-op
+    /// with a toast until a collection has resolved.
+    ///
+    /// Enrichment starts at this first press (the earliest known intent). When any
+    /// title still needs fetching, the descend is DEFERRED: the browse opens once
+    /// page 1 lands (or, fail-soft, descends id-only on failure), and this returns
+    /// `LoadEnrichment{Collection}`. When every set is already cached, it descends
+    /// immediately and returns `None`. A re-press while pending is a no-op (the
+    /// button is disabled), so the fetch never fires twice.
     fn open_collection_browse(&mut self) -> Option<AppCommand> {
         let Some((collection_id, ids)) = self.home.resolved_collection.clone() else {
             self.toast_warn("resolve a collection first");
@@ -1404,33 +1409,52 @@ impl App {
             self.toast_warn("collection has no mapsets");
             return None;
         }
+        // A press while a deferred open is already in flight is a no-op.
+        if self.home.collection_browse_pending.is_some() {
+            return None;
+        }
         // Re-opening the same collection keeps the user's selection alive;
         // `set_rows` retains checks for still-present ids, so only a fresh /
-        // changed collection defaults to all-selected.
+        // changed collection defaults to all-selected. Cached rows also hydrate
+        // their metadata straight from the session cache here.
         let fresh = self.home.collection_browse_id != Some(collection_id);
         let rows: Vec<BrowseRow> = ids
             .into_iter()
             .map(|id| BrowseRow { id, meta: None })
             .collect();
-        self.home.collection_browse.set_rows(rows);
+        self.home
+            .collection_browse
+            .set_rows(rows, &self.home.meta_cache);
         if fresh {
             self.home.collection_browse.set_all_selected(true);
         }
-        // Seed the enrichment pager from this resolve's diff ids so the previews
-        // backfill from the osu-batch endpoint (osu!collector exposes no set meta).
+        // Seed the pager from this resolve's (set, diff) pairs; a set already in
+        // the cache is pruned, so a reopen only pages titles the app hasn't
+        // fetched (osu!collector exposes no set metadata of its own).
+        let seeds: Vec<(u32, Option<u32>)> = self
+            .home
+            .resolved_enrich_pairs
+            .iter()
+            .map(|&(set, diff)| (diff, Some(set)))
+            .collect();
         self.home
             .collection_browse
-            .seed_enrichment(self.home.resolved_enrich_ids.clone());
-        self.home.collection_browse.descend();
+            .seed_enrichment(seeds, &self.home.meta_cache);
         // Snapshot the id so the dispatch stays paired with these rows even if a
         // late resolve updates `resolved_collection` while the browse is open.
         self.home.collection_browse_id = Some(collection_id);
-        self.home
-            .collection_browse
-            .has_more_enrichment()
-            .then_some(AppCommand::LoadEnrichment {
+        if self.home.collection_browse.has_more_enrichment() {
+            // Something to fetch: defer the descend until its first page lands.
+            self.home.collection_browse_pending =
+                Some(self.home.collection_browse.enrich_generation());
+            Some(AppCommand::LoadEnrichment {
                 target: EnrichTarget::Collection,
             })
+        } else {
+            // Every set already cached: open instantly, no fetch.
+            self.home.collection_browse.descend();
+            None
+        }
     }
 
     /// Build a fetch-skipping download from the picked find results. The run
@@ -2211,13 +2235,20 @@ impl App {
                             // on it, so guard the descend (disabled rows are no-ops).
                             HomeField::UpdateBrowse => {
                                 if self.home.update.total_new_count() > 0 {
-                                    // descend() reseeds the enrichment pager; kick
-                                    // its first page so the missing-set titles fill
-                                    // in (mirrors the collection browse's descend).
+                                    // Pure descend — the pager was seeded at
+                                    // scan-land. Self-heal a missed/failed prefetch
+                                    // by re-kicking page 1 ONLY when nothing was
+                                    // ever fetched (cursor 0); cursor > 0 means page
+                                    // 1 landed or is in flight, so this never
+                                    // eager-fetches page 2 (that stays on `m`).
                                     self.home.update.descend();
-                                    return Some(AppCommand::LoadEnrichment {
-                                        target: EnrichTarget::Update,
-                                    });
+                                    if self.home.update.enrich_cursor() == 0
+                                        && self.home.update.has_more_enrichment()
+                                    {
+                                        return Some(AppCommand::LoadEnrichment {
+                                            target: EnrichTarget::Update,
+                                        });
+                                    }
                                 }
                             }
                             // Reopen the find results browse without re-fetching.

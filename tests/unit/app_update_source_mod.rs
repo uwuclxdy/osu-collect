@@ -50,13 +50,16 @@ fn meta_val(id: u32, title: &str) -> BeatmapSetMeta {
 #[test]
 fn enrichment_seeds_one_deduped_diff_per_missing_set() {
     let mut tab = UpdateSource::new();
-    tab.set_missing_beatmaps(vec![
-        missing_with_diff(10, 100, Some(1000)),
-        missing_with_diff(10, 200, Some(1000)), // same set, other collection → deduped
-        missing_with_diff(20, 100, Some(2000)),
-        missing_with_diff(30, 100, None), // no diff id → contributes nothing
-    ]);
-    tab.descend(); // seeds the enrichment pager off the missing sets
+    // Seeding happens at scan-land now (against the session cache), not on descend.
+    tab.set_missing_beatmaps(
+        vec![
+            missing_with_diff(10, 100, Some(1000)),
+            missing_with_diff(10, 200, Some(1000)), // same set, other collection → deduped
+            missing_with_diff(20, 100, Some(2000)),
+            missing_with_diff(30, 100, None), // no diff id → contributes nothing
+        ],
+        &HashMap::new(),
+    );
 
     let page = tab
         .next_enrich_page()
@@ -75,11 +78,13 @@ fn enrichment_seeds_one_deduped_diff_per_missing_set() {
 #[test]
 fn fold_meta_backfills_the_missing_set_cache() {
     let mut tab = UpdateSource::new();
-    tab.set_missing_beatmaps(vec![missing_with_diff(10, 100, Some(1000))]);
-    tab.descend();
+    tab.set_missing_beatmaps(
+        vec![missing_with_diff(10, 100, Some(1000))],
+        &HashMap::new(),
+    );
     assert!(
         tab.set_meta(10).is_none(),
-        "no metadata before a page lands"
+        "no metadata before a page lands (empty cache at scan-land)"
     );
 
     let mut folded = HashMap::new();
@@ -88,11 +93,35 @@ fn fold_meta_backfills_the_missing_set_cache() {
     tab.fold_meta(folded);
     assert_eq!(tab.set_meta(10).map(|m| m.title.as_str()), Some("Song A"));
 
-    // A re-descend reseeds and clears the cache (a fresh scan is a new identity).
-    tab.descend();
+    // A fresh scan reseeds and clears stale metadata (a new scan is a new
+    // identity); a re-descend no longer touches the pager or the cache.
+    tab.set_missing_beatmaps(
+        vec![missing_with_diff(10, 100, Some(1000))],
+        &HashMap::new(),
+    );
     assert!(
         tab.set_meta(10).is_none(),
-        "re-descend clears stale metadata"
+        "a fresh scan clears the stale metadata"
+    );
+}
+
+#[test]
+fn scan_land_hydrates_meta_from_cache_and_skips_paging() {
+    // A set already in the session cache hydrates the preview meta at scan-land
+    // and is never paged — the refetch class the cache kills.
+    let mut tab = UpdateSource::new();
+    let mut cache = HashMap::new();
+    cache.insert(10, meta_val(10, "Cached"));
+    tab.set_missing_beatmaps(vec![missing_with_diff(10, 100, Some(1000))], &cache);
+
+    assert_eq!(
+        tab.set_meta(10).map(|m| m.title.as_str()),
+        Some("Cached"),
+        "a cache hit hydrates the preview meta without a fetch"
+    );
+    assert!(
+        !tab.has_more_enrichment(),
+        "a cached set is pruned, so the pager has nothing to page"
     );
 }
 
@@ -103,11 +132,14 @@ fn seeded() -> UpdateSource {
         local_col("Alpha - 100", 3),
         local_col("Beta - 200", 1),
     ]);
-    tab.set_missing_beatmaps(vec![
-        missing(1, 100, false),
-        missing(2, 100, false),
-        missing(3, 200, false),
-    ]);
+    tab.set_missing_beatmaps(
+        vec![
+            missing(1, 100, false),
+            missing(2, 100, false),
+            missing(3, 200, false),
+        ],
+        &HashMap::new(),
+    );
     tab
 }
 
@@ -398,7 +430,10 @@ fn seeded_with_empty() -> UpdateSource {
         local_col("Empty - 200", 2),
         local_col("Also - 300", 1),
     ]);
-    tab.set_missing_beatmaps(vec![missing(1, 100, false), missing(2, 300, false)]);
+    tab.set_missing_beatmaps(
+        vec![missing(1, 100, false), missing(2, 300, false)],
+        &HashMap::new(),
+    );
     tab
 }
 

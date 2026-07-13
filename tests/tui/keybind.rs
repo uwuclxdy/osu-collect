@@ -596,9 +596,8 @@ fn space_in_update_browse_toggles_highlighted_collection() {
             name: "test - 1234".to_string(),
             beatmap_checksums: Vec::new().into(),
         }]);
-    app.home
-        .update
-        .set_missing_beatmaps(vec![MissingBeatmapset {
+    app.home.update.set_missing_beatmaps(
+        vec![MissingBeatmapset {
             id: 42,
             status: MissingStatus::NotInstalled,
             collection_id: 1234,
@@ -606,7 +605,9 @@ fn space_in_update_browse_toggles_highlighted_collection() {
             selected: false,
             previously_deleted: false,
             enrich_diff_id: None,
-        }]);
+        }],
+        &std::collections::HashMap::new(),
+    );
     app.home.update.descend();
 
     let before = app.home.update.selection.local_collections[0].selected;
@@ -1006,9 +1007,8 @@ fn enter_on_collection_toggles_and_stays_in_browse() {
             name: "test - 1234".to_string(),
             beatmap_checksums: Vec::new().into(),
         }]);
-    app.home
-        .update
-        .set_missing_beatmaps(vec![MissingBeatmapset {
+    app.home.update.set_missing_beatmaps(
+        vec![MissingBeatmapset {
             id: 42,
             status: MissingStatus::NotInstalled,
             collection_id: 1234,
@@ -1016,7 +1016,9 @@ fn enter_on_collection_toggles_and_stays_in_browse() {
             selected: false,
             previously_deleted: false,
             enrich_diff_id: None,
-        }]);
+        }],
+        &std::collections::HashMap::new(),
+    );
     app.home.update.descend();
     let before = app.home.update.selection.local_collections[0].selected;
 
@@ -1048,9 +1050,8 @@ fn enter_on_update_download_button_dispatches_selective() {
         }]);
     // One missing set in the (selected-by-default) collection, so the
     // whole-collection selection resolves to a non-empty download set.
-    app.home
-        .update
-        .set_missing_beatmaps(vec![MissingBeatmapset {
+    app.home.update.set_missing_beatmaps(
+        vec![MissingBeatmapset {
             id: 42,
             status: MissingStatus::NotInstalled,
             collection_id: 1234,
@@ -1058,7 +1059,9 @@ fn enter_on_update_download_button_dispatches_selective() {
             selected: false,
             previously_deleted: false,
             enrich_diff_id: None,
-        }]);
+        }],
+        &std::collections::HashMap::new(),
+    );
     // The download now fires from the form's `download (N)` button, not an
     // in-browse action bar.
     app.home.focus = HomeField::Download;
@@ -1202,11 +1205,14 @@ fn request_find_download_osu_route_uses_query_label_and_ids() {
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
     app.home.find.query.set_value("tekno");
-    app.home.find.browse.set_rows(vec![
-        BrowseRow { id: 10, meta: None },
-        BrowseRow { id: 20, meta: None },
-        BrowseRow { id: 30, meta: None },
-    ]);
+    app.home.find.browse.set_rows(
+        vec![
+            BrowseRow { id: 10, meta: None },
+            BrowseRow { id: 20, meta: None },
+            BrowseRow { id: 30, meta: None },
+        ],
+        &std::collections::HashMap::new(),
+    );
     app.home.find.browse.set_all_selected(true);
 
     let (_, request) = app
@@ -1228,10 +1234,13 @@ fn search_view_button_reopens_results_without_re_searching() {
     app.home.source = GetMapsSource::Find;
     app.home.find.query.set_value("tekno");
     app.home.find.status_msg = FindStatusMsg::ReadySearch { total: 2 };
-    app.home.find.browse.set_rows(vec![
-        BrowseRow { id: 10, meta: None },
-        BrowseRow { id: 20, meta: None },
-    ]);
+    app.home.find.browse.set_rows(
+        vec![
+            BrowseRow { id: 10, meta: None },
+            BrowseRow { id: 20, meta: None },
+        ],
+        &std::collections::HashMap::new(),
+    );
     // Mirror the Ready handler: the loaded rows are for the current inputs.
     app.home.find.mark_results_current();
     // On the form (not descended into the browse).
@@ -1264,10 +1273,13 @@ fn search_view_button_is_inert_once_the_query_diverges() {
     app.home.source = GetMapsSource::Find;
     app.home.find.query.set_value("tekno");
     app.home.find.status_msg = FindStatusMsg::ReadySearch { total: 2 };
-    app.home.find.browse.set_rows(vec![
-        BrowseRow { id: 10, meta: None },
-        BrowseRow { id: 20, meta: None },
-    ]);
+    app.home.find.browse.set_rows(
+        vec![
+            BrowseRow { id: 10, meta: None },
+            BrowseRow { id: 20, meta: None },
+        ],
+        &std::collections::HashMap::new(),
+    );
     app.home.find.mark_results_current();
 
     // Edit the query after results loaded: the snapshot no longer matches, so the
@@ -1318,16 +1330,76 @@ fn update_view_button_is_inert_until_a_scan_finds_updates() {
 }
 
 #[test]
+fn update_view_button_rekicks_enrichment_only_when_unfetched() {
+    use crossterm::event::KeyCode;
+    use osu_collect::app::update_source::{MissingBeatmapset, MissingStatus};
+    use osu_collect::app::{EnrichSink, EnrichTarget, GetMapsSource, HomeField};
+
+    let seed = |app: &mut osu_collect::app::App| {
+        app.home.source = GetMapsSource::Update;
+        app.home
+            .update
+            .set_collections(vec![osu_collect::osu_db::LocalCollection {
+                name: "test - 100".to_string(),
+                beatmap_checksums: Vec::new().into(),
+            }]);
+        // Seeds the pager at scan-land: one unfetched diff id, cursor 0.
+        app.home.update.set_missing_beatmaps(
+            vec![MissingBeatmapset {
+                id: 10,
+                status: MissingStatus::NotInstalled,
+                collection_id: 100,
+                collection_name: "test - 100".to_string(),
+                selected: true,
+                previously_deleted: false,
+                enrich_diff_id: Some(1000),
+            }],
+            &std::collections::HashMap::new(),
+        );
+        app.home.focus = HomeField::UpdateBrowse;
+    };
+
+    // Nothing fetched yet (cursor 0) → the descend self-heals a missed prefetch.
+    let mut app = make_app();
+    seed(&mut app);
+    let cmd = app.handle_key(press(KeyCode::Enter));
+    assert!(
+        matches!(
+            cmd,
+            Some(AppCommand::LoadEnrichment {
+                target: EnrichTarget::Update
+            })
+        ),
+        "an unfetched scan re-kicks page 1 on descend, got {cmd:?}"
+    );
+    assert!(app.home.update.is_browsing());
+
+    // A page already pulled (cursor > 0) → descend must NOT eager-fetch page 2.
+    let mut app = make_app();
+    seed(&mut app);
+    let _ = app.home.update.next_enrich_page();
+    let cmd = app.handle_key(press(KeyCode::Enter));
+    assert!(
+        cmd.is_none(),
+        "cursor > 0 means page 1 already ran; descend never eager-fetches, got {cmd:?}"
+    );
+    assert!(app.home.update.is_browsing());
+}
+
+#[test]
 fn collection_pick_download_uses_snapshotted_id_not_late_resolve() {
     use osu_collect::app::{BrowseRow, GetMapsSource};
     let mut app = make_app();
     app.home.source = GetMapsSource::Collection;
     // The browse was opened against collection 111 (its sets are the rows).
     app.home.collection_browse_id = Some(111);
-    app.home.collection_browse.set_rows(vec![
-        BrowseRow { id: 10, meta: None },
-        BrowseRow { id: 20, meta: None },
-    ]);
+    app.home.collection_browse.set_rows(
+        vec![
+            BrowseRow { id: 10, meta: None },
+            BrowseRow { id: 20, meta: None },
+        ],
+        &std::collections::HashMap::new(),
+    );
     app.home.collection_browse.set_all_selected(true);
     // A late resolve then moved `resolved_collection` to a different collection.
     app.home.set_resolved_collection(999, vec![77, 88]);
@@ -1424,12 +1496,15 @@ fn m_in_filter_browse_loads_more_enrichment() {
     app.home.source = GetMapsSource::Find;
     // `m` routes by the backend that produced the results, so mark it nzbasic.
     app.home.find.note_results_backend(FindBackend::Nzbasic);
-    app.home
-        .find
-        .browse
-        .set_rows(vec![BrowseRow { id: 10, meta: None }]);
+    app.home.find.browse.set_rows(
+        vec![BrowseRow { id: 10, meta: None }],
+        &std::collections::HashMap::new(),
+    );
     // 300 diff ids = two enrichment pages; the first auto-fetch pulled one.
-    app.home.find.browse.seed_enrichment((0..300).collect());
+    app.home.find.browse.seed_enrichment(
+        (0..300).map(|d| (d, None)).collect(),
+        &std::collections::HashMap::new(),
+    );
     let _ = app.home.find.browse.next_enrich_page();
     app.home.find.browse.descend();
 
@@ -1456,9 +1531,8 @@ fn m_in_update_browse_loads_more_missing_set_enrichment() {
     use osu_collect::app::{EnrichTarget, GetMapsSource};
     let mut app = make_app();
     app.home.source = GetMapsSource::Update;
-    app.home
-        .update
-        .set_missing_beatmaps(vec![MissingBeatmapset {
+    app.home.update.set_missing_beatmaps(
+        vec![MissingBeatmapset {
             id: 10,
             status: MissingStatus::NotInstalled,
             collection_id: 100,
@@ -1466,9 +1540,11 @@ fn m_in_update_browse_loads_more_missing_set_enrichment() {
             selected: true,
             previously_deleted: false,
             enrich_diff_id: Some(1000),
-        }]);
-    // descend() seeds the pager (one unfetched diff id) but the auto first-page
-    // fetch is the returned command, not applied here, so a page remains.
+        }],
+        &std::collections::HashMap::new(),
+    );
+    // Seeding happens at scan-land (`set_missing_beatmaps`), so a page is already
+    // waiting; descend is a pure descend and `m` loads the next page.
     app.home.update.descend();
 
     let cmd = app.handle_key(press(KeyCode::Char('m')));
@@ -1495,10 +1571,13 @@ fn request_find_download_nzbasic_route_uses_label_tag_and_ids() {
     for _ in 0..3 {
         app.handle_key(press(KeyCode::Char(' ')));
     }
-    app.home.find.browse.set_rows(vec![
-        BrowseRow { id: 10, meta: None },
-        BrowseRow { id: 20, meta: None },
-    ]);
+    app.home.find.browse.set_rows(
+        vec![
+            BrowseRow { id: 10, meta: None },
+            BrowseRow { id: 20, meta: None },
+        ],
+        &std::collections::HashMap::new(),
+    );
     app.home.find.browse.set_all_selected(true);
 
     let (_, request) = app
