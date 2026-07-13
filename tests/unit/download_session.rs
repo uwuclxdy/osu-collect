@@ -5,7 +5,7 @@ use crate::core::collection::{Beatmap, Beatmapset, Collection, CollectionService
 use crate::download::IdsRunSource;
 use crate::download::{DownloadEvent, SelectiveDownloadCollection};
 use crate::utils;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -70,10 +70,17 @@ async fn resolve_selective_dedupes_overlapping_beatmapsets() {
         },
     ];
     let emit = |_event| {};
-    let (selected, resolved, names) =
-        resolve_selective_with(&service, &[1, 2], requested, &[10, 11, 12], 7, &emit)
-            .await
-            .expect("resolve must succeed");
+    let (selected, resolved, names) = resolve_selective_with(
+        &service,
+        &[1, 2],
+        requested,
+        &[10, 11, 12],
+        &HashMap::new(),
+        7,
+        &emit,
+    )
+    .await
+    .expect("resolve must succeed");
 
     let mut bs_ids: Vec<u32> = selected.beatmapsets.iter().map(|b| b.id).collect();
     bs_ids.sort_unstable();
@@ -134,12 +141,91 @@ async fn resolve_selective_progress_is_monotonic() {
         }
     };
 
-    resolve_selective_with(&service, &[1, 2, 3], requested, &[10, 11, 12], 7, &emit)
-        .await
-        .expect("resolve must succeed");
+    resolve_selective_with(
+        &service,
+        &[1, 2, 3],
+        requested,
+        &[10, 11, 12],
+        &HashMap::new(),
+        7,
+        &emit,
+    )
+    .await
+    .expect("resolve must succeed");
 
     let observed = events.lock().unwrap().clone();
     assert_eq!(observed, vec![0, 1, 2, 3]);
+}
+
+/// A prefetched collection (the scan already fetched it) skips the refetch, while
+/// the progress ticks still advance 0..N so the UI gauge is unaffected.
+#[tokio::test]
+async fn resolve_selective_skips_the_fetch_for_a_prefetched_collection() {
+    struct RecordingService {
+        responses: Vec<(u32, Collection)>,
+        fetched: Arc<Mutex<Vec<u32>>>,
+    }
+    impl CollectionService for RecordingService {
+        async fn fetch_collection(&self, id: u32) -> utils::Result<Collection> {
+            self.fetched.lock().unwrap().push(id);
+            self.responses
+                .iter()
+                .find(|(cid, _)| *cid == id)
+                .map(|(_, c)| c.clone())
+                .ok_or_else(|| utils::AppError::other("missing"))
+        }
+    }
+
+    let fetched = Arc::new(Mutex::new(Vec::new()));
+    let service = RecordingService {
+        responses: vec![(2, collection(2, "beta", &[11]))],
+        fetched: Arc::clone(&fetched),
+    };
+    let requested = vec![
+        SelectiveDownloadCollection {
+            id: 1,
+            name: String::new(),
+            beatmapset_ids: vec![10],
+        },
+        SelectiveDownloadCollection {
+            id: 2,
+            name: String::new(),
+            beatmapset_ids: vec![11],
+        },
+    ];
+    let prefetched = HashMap::from([(1, collection(1, "alpha", &[10]))]);
+    let progress = Arc::new(Mutex::new(Vec::<u32>::new()));
+    let progress_inner = Arc::clone(&progress);
+    let emit = move |event: DownloadEvent| {
+        if let DownloadEvent::ResolveProgress { current, .. } = event {
+            progress_inner.lock().unwrap().push(current);
+        }
+    };
+
+    let (selected, resolved, names) = resolve_selective_with(
+        &service,
+        &[1, 2],
+        requested,
+        &[10, 11],
+        &prefetched,
+        7,
+        &emit,
+    )
+    .await
+    .expect("resolve must succeed");
+
+    // Collection 1 came from the cache; only 2 hit the network.
+    assert_eq!(*fetched.lock().unwrap(), vec![2]);
+    // The cached payload is used in full: its name and its beatmapsets.
+    assert_eq!(names, vec!["alpha".to_string(), "beta".to_string()]);
+    let mut bs_ids: Vec<u32> = selected.beatmapsets.iter().map(|b| b.id).collect();
+    bs_ids.sort_unstable();
+    assert_eq!(bs_ids, vec![10, 11]);
+    assert_eq!(resolved.len(), 2);
+    // The gauge still ticks once per collection, cached or not.
+    let mut ticks = progress.lock().unwrap().clone();
+    ticks.sort_unstable();
+    assert_eq!(ticks, vec![0, 1, 2]);
 }
 
 #[test]

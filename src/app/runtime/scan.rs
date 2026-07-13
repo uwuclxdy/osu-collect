@@ -40,6 +40,9 @@ pub enum UpdatesEvent {
         collection_seen: HashMap<u32, Vec<u32>>,
         /// Number of local-snapshot checksums absent from upstream, per collection_id.
         collection_removed_counts: HashMap<u32, usize>,
+        /// The payloads the scan fetched to compute the diff, parked in the session
+        /// collection cache so a selective download reuses them.
+        collections: Vec<Collection>,
         manually_added_count: usize,
         hidden_failed_count: usize,
     },
@@ -121,6 +124,7 @@ pub(super) fn handle_updates_event(
             missing,
             collection_seen,
             collection_removed_counts,
+            collections,
             manually_added_count,
             hidden_failed_count,
         } => {
@@ -145,6 +149,11 @@ pub(super) fn handle_updates_event(
                 .collect();
             let local_snapshot: Vec<u32> = local_ids.iter().copied().collect();
             let count = missing.len();
+            // The selective download of these results resolves the very same
+            // collections; keeping the scan's payloads spares it a verbatim refetch.
+            for collection in collections {
+                app.home.collection_cache.insert(collection.id, collection);
+            }
             // Seeds the missing-set enrichment pager against the session cache; the
             // follow-up below kicks its first page so titles load before the browse
             // opens (disjoint field paths — `update` vs `meta_cache`).
@@ -504,6 +513,7 @@ fn spawn_fetch_task(
                     missing: res.missing,
                     collection_seen: res.collection_seen,
                     collection_removed_counts: res.collection_removed_counts,
+                    collections: res.collections,
                     manually_added_count: added_count,
                     hidden_failed_count,
                 });
@@ -573,6 +583,9 @@ pub struct FetchMissingResult {
     pub collection_seen: HashMap<u32, Vec<u32>>,
     /// Per-collection count of local checksums absent from the upstream collection.
     pub collection_removed_counts: HashMap<u32, usize>,
+    /// The fetched upstream payloads, in fetch order. The TUI parks them in its
+    /// session collection cache; the headless CLI ignores them.
+    pub collections: Vec<Collection>,
 }
 
 pub async fn fetch_missing_beatmapsets(
@@ -588,6 +601,7 @@ pub async fn fetch_missing_beatmapsets(
     let mut candidates_to_check: Vec<(CollectionBeatmapset, u32, String)> = Vec::new();
     let mut collection_seen: HashMap<u32, Vec<u32>> = HashMap::new();
     let mut collection_removed_counts: HashMap<u32, usize> = HashMap::new();
+    let mut fetched_collections: Vec<Collection> = Vec::new();
 
     debug!(
         local_beatmapset_count = local_set_ids.len(),
@@ -722,6 +736,8 @@ pub async fn fetch_missing_beatmapsets(
                 collection.name.to_string(),
             ));
         }
+
+        fetched_collections.push(collection);
     }
 
     debug!(
@@ -764,5 +780,6 @@ pub async fn fetch_missing_beatmapsets(
         missing: all_missing,
         collection_seen,
         collection_removed_counts,
+        collections: fetched_collections,
     })
 }

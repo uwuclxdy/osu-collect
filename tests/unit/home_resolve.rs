@@ -5,6 +5,7 @@ use crate::{
         home::{HomeField, ResolveState},
     },
     config::Config,
+    core::collection::{Beatmap, Beatmapset, Collection, Uploader},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -14,6 +15,33 @@ fn key(code: KeyCode) -> KeyEvent {
 
 fn char_key(ch: char) -> KeyEvent {
     KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)
+}
+
+/// `(set_id, diff_ids)` pairs → a collection payload the resolve task would send.
+fn collection(id: u32, name: &str, sets: &[(u32, &[u32])]) -> Collection {
+    Collection {
+        id,
+        name: name.to_string(),
+        description: None,
+        uploader: Uploader {
+            id: 0,
+            username: "u".to_string(),
+        },
+        beatmapsets: sets
+            .iter()
+            .map(|&(set_id, diffs)| Beatmapset {
+                id: set_id,
+                beatmaps: diffs
+                    .iter()
+                    .map(|&diff_id| Beatmap {
+                        id: diff_id,
+                        checksum: "abc".to_string(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+        favourites: 0,
+    }
 }
 
 /// Typing into the collection field emits ResolveCollectionUrl with the new value.
@@ -99,12 +127,8 @@ fn resolve_success_event_sets_success_state() {
 
     handle_home_resolve_event(
         HomeResolveEvent::Resolved {
-            name: "Top 100 of 2024".to_string(),
-            map_count: 100,
             collection_id: 1,
-            beatmapset_ids: Vec::new(),
-            enrich_pairs: vec![(11, 101), (22, 202)],
-            folder_name: "top 100 of 2024-1".to_string(),
+            collection: collection(1, "Top 100 of 2024", &[(11, &[101, 102]), (22, &[202])]),
         },
         &mut home,
     );
@@ -114,15 +138,64 @@ fn resolve_success_event_sets_success_state() {
     };
     assert_eq!(state, ResolveState::Success);
     assert!(text.contains("Top 100 of 2024"), "text = {text}");
-    assert!(text.contains("100"), "text = {text}");
-    assert!(text.contains("maps"), "text = {text}");
-    // The per-collection folder is stored for the directory tooltip.
+    assert!(text.contains("2 mapsets"), "text = {text}");
+    // The per-collection folder is derived for the directory tooltip.
     assert_eq!(
         home.resolved_folder_name.as_deref(),
-        Some("top 100 of 2024-1")
+        Some("Top 100 of 2024-1")
     );
-    // The (set, diff) pairs for browse&pick enrichment are stored alongside.
+    assert_eq!(home.resolved_collection, Some((1, vec![11, 22])));
+    // One (set, diff) pair per set for browse&pick enrichment — the first diff.
     assert_eq!(home.resolved_enrich_pairs, vec![(11, 101), (22, 202)]);
+}
+
+/// The resolve's payload is parked in the session cache, so the download press
+/// reuses it instead of refetching the identical collection.
+#[test]
+fn resolve_success_event_caches_the_payload() {
+    let config = Config::default();
+    let mut home = crate::app::HomeTab::new(&config);
+
+    handle_home_resolve_event(
+        HomeResolveEvent::Resolved {
+            collection_id: 1,
+            collection: collection(1, "cached", &[(11, &[101])]),
+        },
+        &mut home,
+    );
+
+    let cached = home
+        .collection_cache
+        .get_fresh(1)
+        .expect("a fresh resolve is cached for the download");
+    assert_eq!(cached.name, "cached");
+    assert_eq!(cached.beatmapsets.len(), 1);
+    // A different collection was never resolved, so it stays a miss.
+    assert!(home.collection_cache.get_fresh(2).is_none());
+}
+
+/// Enrichment seeds carry one diff per UNIQUE set; a set with no diffs has no
+/// pair to seed and is left id-only.
+#[test]
+fn resolve_enrich_pairs_dedupe_sets_and_skip_diffless() {
+    let config = Config::default();
+    let mut home = crate::app::HomeTab::new(&config);
+
+    handle_home_resolve_event(
+        HomeResolveEvent::Resolved {
+            collection_id: 3,
+            collection: collection(
+                3,
+                "dupes",
+                &[(11, &[101]), (11, &[999]), (22, &[]), (33, &[303])],
+            ),
+        },
+        &mut home,
+    );
+
+    assert_eq!(home.resolved_enrich_pairs, vec![(11, 101), (33, 303)]);
+    // The id list keeps every row (the duplicate included) — only the seeds dedupe.
+    assert_eq!(home.resolved_collection, Some((3, vec![11, 11, 22, 33])));
 }
 
 /// handle_home_resolve_event with Failed sets Error state.
@@ -165,12 +238,8 @@ fn resolve_single_map_uses_singular() {
 
     handle_home_resolve_event(
         HomeResolveEvent::Resolved {
-            name: "Solo".to_string(),
-            map_count: 1,
             collection_id: 2,
-            beatmapset_ids: Vec::new(),
-            enrich_pairs: Vec::new(),
-            folder_name: "solo-2".to_string(),
+            collection: collection(2, "Solo", &[(11, &[101])]),
         },
         &mut home,
     );

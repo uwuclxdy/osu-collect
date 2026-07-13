@@ -25,6 +25,7 @@ use crate::{
         },
         save_config,
     },
+    core::collection::Collection,
     core::search::SearchQuery,
     download::{
         DownloadConfig, DownloadEvent, DownloadId, DownloadRequest, DownloadStage,
@@ -37,7 +38,7 @@ use fs2::available_space;
 use osu_downloader::filter::FilterQuery;
 use std::borrow::Cow;
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing::debug;
@@ -988,6 +989,10 @@ impl App {
         self.persist_recent_inputs();
 
         let collection_id = utils::parse_collection_id(request.collection_input.trim()).ok();
+        // The auto-resolve already fetched this exact payload to render the
+        // "collection X · N mapsets" line; hand it over so `prepare` doesn't refetch.
+        request.prefetched =
+            collection_id.and_then(|id| self.home.collection_cache.get_fresh(id).cloned());
         let failed_count = collection_id
             .map(|id| self.previously_failed_count(id))
             .unwrap_or(0);
@@ -1194,6 +1199,10 @@ impl App {
             page.download_config = Some(config.clone());
         }
 
+        // The scan behind these results fetched every one of these collections;
+        // reuse those payloads rather than refetching them at press time.
+        let prefetched = self.prefetched_collections(&collection_ids);
+
         let request = SelectiveDownloadRequest {
             collection_ids,
             beatmapset_ids,
@@ -1201,9 +1210,24 @@ impl App {
             config,
             snapshot_dir: snapshots::snapshots_dir(),
             snapshots,
+            prefetched,
         };
 
         Some((id, request))
+    }
+
+    /// The still-fresh session-cached payloads for `collection_ids`. A miss is
+    /// simply absent — the pipeline fetches that collection itself.
+    fn prefetched_collections(&self, collection_ids: &[u32]) -> HashMap<u32, Collection> {
+        collection_ids
+            .iter()
+            .filter_map(|&id| {
+                self.home
+                    .collection_cache
+                    .get_fresh(id)
+                    .map(|collection| (id, collection.clone()))
+            })
+            .collect()
     }
 
     // ── search + collection browse&pick ───────────────────────────────────────
@@ -1582,6 +1606,7 @@ impl App {
             config,
             snapshot_dir: None,
             snapshots: Vec::new(),
+            prefetched: self.prefetched_collections(&[collection_id]),
         };
         Some((id, request))
     }
@@ -3002,6 +3027,9 @@ impl App {
             config: retry_config,
             snapshot_dir: None,
             snapshots: vec![],
+            // A retry carries no collection ids to resolve, so there is nothing to
+            // reuse a cached payload for.
+            prefetched: HashMap::new(),
         };
         Some((new_id, request))
     }

@@ -11,7 +11,7 @@ use crate::{
 use futures_util::{StreamExt, stream};
 use osu_downloader::collection::CollectionClient;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{
         Arc,
@@ -135,11 +135,16 @@ pub(crate) struct DownloadSession {
 pub(crate) enum PrepareTarget<'a> {
     Collection {
         collection_input: &'a str,
+        /// A still-fresh payload from the app's session cache; `None` fetches.
+        prefetched: Option<Collection>,
     },
     Selective {
         collection_ids: &'a [u32],
         collections: Vec<SelectiveDownloadCollection>,
         beatmapset_ids: &'a [u32],
+        /// Still-fresh payloads from the app's session cache, keyed by collection
+        /// id. A hit skips that collection's fetch.
+        prefetched: HashMap<u32, Collection>,
     },
     /// Raw beatmapset ids from a search or filter run — no collection fetch.
     /// `label` names the page; `folder_tag` derives the per-run output subdir
@@ -171,8 +176,21 @@ impl DownloadSession {
     pub(crate) async fn prepare(params: PrepareParams<'_>) -> Result<Option<Self>, DownloadError> {
         let directory = params.config.directory.as_str();
         let (target, output, beatmapset_ids) = match params.target {
-            PrepareTarget::Collection { collection_input } => {
-                let collection = resolve_collection(collection_input).await?;
+            PrepareTarget::Collection {
+                collection_input,
+                prefetched,
+            } => {
+                let collection = match prefetched {
+                    Some(collection) => collection,
+                    None => resolve_collection(collection_input).await?,
+                };
+                if collection.beatmapsets.is_empty() {
+                    warn!(
+                        collection_id = collection.id,
+                        "collection contained no beatmaps"
+                    );
+                    return Err(DownloadError::EmptyCollection);
+                }
                 let mut beatmapset_ids: Vec<u32> =
                     collection.beatmapsets.iter().map(|b| b.id).collect();
                 beatmapset_ids.sort_unstable();
@@ -188,6 +206,7 @@ impl DownloadSession {
                 collection_ids,
                 collections,
                 beatmapset_ids,
+                prefetched,
             } => {
                 let service = HttpCollectionService::new(CollectionClient::new());
                 let (collection, collections, collection_names) = resolve_selective_with(
@@ -195,6 +214,7 @@ impl DownloadSession {
                     collection_ids,
                     collections,
                     beatmapset_ids,
+                    &prefetched,
                     params.id,
                     params.emit,
                 )
@@ -450,11 +470,6 @@ async fn resolve_collection(collection_input: &str) -> Result<Collection, Downlo
         "fetched collection metadata"
     );
 
-    if collection.beatmapsets.is_empty() {
-        warn!(collection_id, "collection contained no beatmaps");
-        return Err(DownloadError::EmptyCollection);
-    }
-
     Ok(collection)
 }
 
@@ -465,6 +480,7 @@ pub(crate) async fn resolve_selective_with<S>(
     collection_ids: &[u32],
     requested_collections: Vec<SelectiveDownloadCollection>,
     beatmapset_ids: &[u32],
+    prefetched: &HashMap<u32, Collection>,
     id: DownloadId,
     emit: super::Emit<'_>,
 ) -> Result<(Collection, Vec<SelectiveDownloadCollection>, Vec<String>), DownloadError>
@@ -484,7 +500,13 @@ where
         .map(|collection_id| {
             let progress = Arc::clone(&progress);
             async move {
-                let result = service.fetch_collection(collection_id).await;
+                // The id set being downloaded came out of the same scan/resolve that
+                // cached this payload, so reusing it is more consistent than pairing
+                // a stale id set with freshly fetched checksums.
+                let result = match prefetched.get(&collection_id) {
+                    Some(collection) => Ok(collection.clone()),
+                    None => service.fetch_collection(collection_id).await,
+                };
                 let done = progress.fetch_add(1, Ordering::Relaxed) + 1;
                 emit(DownloadEvent::ResolveProgress {
                     id,

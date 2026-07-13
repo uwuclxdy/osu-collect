@@ -165,6 +165,7 @@ async fn run_collection(
         skip_already_imported,
         osu_client,
         osu_path,
+        prefetched,
     } = request;
 
     emit_resolving(id, emit.as_ref());
@@ -182,6 +183,7 @@ async fn run_collection(
         emit: emit.as_ref(),
         target: PrepareTarget::Collection {
             collection_input: &collection_input,
+            prefetched,
         },
         overwrite: auto_overwrite,
         owned_ids,
@@ -286,6 +288,7 @@ async fn run_selective(
         config,
         snapshot_dir,
         snapshots: snapshot_files,
+        prefetched,
     } = request;
 
     if beatmapset_ids.is_empty() {
@@ -304,6 +307,7 @@ async fn run_selective(
             collection_ids: &collection_ids,
             collections,
             beatmapset_ids: &beatmapset_ids,
+            prefetched,
         },
         overwrite: false,
         // The selective/retry path never pre-skips owned maps — it must not

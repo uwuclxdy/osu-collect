@@ -2,6 +2,7 @@ use std::{fs, io::Write, path::Path};
 
 pub mod banner;
 pub mod collection;
+pub mod collection_cache;
 pub mod collection_state;
 pub mod config;
 pub mod custom_mirrors;
@@ -24,6 +25,7 @@ pub mod update_source;
 
 pub use banner::{Banner, BannerRecency, system_banners};
 pub use collection::{ActiveDownloadLine, CollectionPage};
+pub use collection_cache::CollectionCache;
 pub use config::{AuthLoginState, ConfigField, ConfigTab};
 pub use custom_mirrors::CustomMirrorList;
 pub use download_history::{DownloadHistory, HistoryRecord, HistoryStage};

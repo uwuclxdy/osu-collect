@@ -1,4 +1,5 @@
 use super::{
+    collection_cache::CollectionCache,
     custom_mirrors::CustomMirrorList,
     find_source::{FindSource, FindStatusMsg, SetBrowse},
     first_field, last_field,
@@ -506,6 +507,11 @@ pub struct HomeTab {
     /// id-only browse hydrates + prunes against it — so a reopen, rescan, or
     /// re-resolve never refetches a title the app already fetched. Never evicted.
     pub(crate) meta_cache: HashMap<u32, BeatmapSetMeta>,
+    /// Session-lived osu!collector payload cache, keyed by COLLECTION id. Written
+    /// by the collection resolve + the update scan (both fetch a full collection
+    /// for display); read at download-request build so the pipeline reuses the
+    /// payload instead of refetching it verbatim.
+    pub(crate) collection_cache: CollectionCache,
 }
 
 impl HomeTab {
@@ -586,6 +592,7 @@ impl HomeTab {
             collection_browse_id: None,
             collection_browse_pending: None,
             meta_cache: HashMap::new(),
+            collection_cache: CollectionCache::default(),
         }
     }
 
@@ -1078,10 +1085,12 @@ impl HomeTab {
             // modal under `Ask` before the download is dispatched).
             include_previously_failed: false,
             // Placeholders; `App::request_download` fills these from the live
-            // config + `App.library` client/path before the request is dispatched.
+            // config + `App.library` client/path + the session collection cache
+            // before the request is dispatched.
             skip_already_imported: false,
             osu_client: OsuClient::default(),
             osu_path: String::new(),
+            prefetched: None,
         })
     }
 

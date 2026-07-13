@@ -18,10 +18,12 @@ pub use crate::config::constants::status;
 pub use osu_downloader::ArchiveValidation;
 
 use crate::app::collection::FailureReason;
+use crate::core::collection::Collection;
 use crate::mirrors::Mirror;
 use crate::osu_db::OsuClient;
 use fs2::available_space;
 use osu_downloader::size::SizeFetcher;
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
 use tokio::{sync::watch, task::JoinHandle};
@@ -111,6 +113,9 @@ pub struct DownloadRequest {
     pub skip_already_imported: bool,
     pub osu_client: OsuClient,
     pub osu_path: String,
+    /// The collection payload the resolve already fetched for display, when it is
+    /// still fresh. `None` makes the pipeline fetch it itself.
+    pub prefetched: Option<Collection>,
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +133,10 @@ pub struct SelectiveDownloadRequest {
     pub config: DownloadConfig,
     pub snapshot_dir: Option<std::path::PathBuf>,
     pub snapshots: Vec<crate::app::snapshots::CollectionSnapshotFile>,
+    /// Collection payloads an update scan / collection resolve already fetched,
+    /// keyed by collection id. A hit short-circuits that collection's fetch during
+    /// resolve; a miss fetches as before.
+    pub prefetched: HashMap<u32, Collection>,
 }
 
 /// Which Get Maps source produced a raw-ids run. Decides the run's uploader

@@ -1,4 +1,8 @@
-use crate::{app::home::ResolveState, core::collection::CollectionService, utils};
+use crate::{
+    app::home::ResolveState,
+    core::collection::{Collection, CollectionService},
+    utils,
+};
 use osu_downloader::collection::CollectionClient;
 use std::collections::HashSet;
 use tokio::{sync::mpsc, sync::watch, time};
@@ -10,19 +14,12 @@ const DEBOUNCE_MS: u64 = 300;
 pub enum HomeResolveEvent {
     /// Resolve started; show a loading indicator.
     Loading,
-    /// Metadata fetched successfully.
+    /// Metadata fetched successfully. The whole payload rides along: the handler
+    /// derives the display fields from it and parks it in the session collection
+    /// cache, so a download press reuses it instead of refetching it verbatim.
     Resolved {
-        name: String,
-        map_count: usize,
         collection_id: u32,
-        beatmapset_ids: Vec<u32>,
-        /// One `(set_id, diff_id)` pair per unique set — the batch-enrichment
-        /// endpoint keys on diff ids, so browse&pick previews page these to
-        /// backfill set metadata; the set id lets a seed prune against the cache.
-        enrich_pairs: Vec<(u32, u32)>,
-        /// The per-collection subfolder this collection downloads into
-        /// (`Collection::folder_name`), shown in the directory tooltip.
-        folder_name: String,
+        collection: Collection,
     },
     /// Fetch failed; `reason` is a short user-facing message.
     Failed { reason: String },
@@ -85,31 +82,10 @@ async fn run_resolve(
     tokio::select! {
         result = service.fetch_collection(collection_id) => {
             let event = match result {
-                Ok(collection) => {
-                    let beatmapset_ids: Vec<u32> =
-                        collection.beatmapsets.iter().map(|set| set.id).collect();
-                    // One diff id per unique set feeds the batch-enrichment pager
-                    // (the endpoint takes diff ids; the set metadata rides nested
-                    // in each row). Sets with no diffs stay id-only in the preview.
-                    let mut seen = HashSet::with_capacity(beatmapset_ids.len());
-                    let enrich_pairs: Vec<(u32, u32)> = collection
-                        .beatmapsets
-                        .iter()
-                        .filter(|set| seen.insert(set.id))
-                        .filter_map(|set| set.beatmaps.first().map(|diff| (set.id, diff.id)))
-                        .collect();
-                    // Built from the full collection here (the app side only keeps
-                    // name + id), so the lib stays the single source of folder naming.
-                    let folder_name = collection.folder_name();
-                    HomeResolveEvent::Resolved {
-                        name: collection.name,
-                        map_count: collection.beatmapsets.len(),
-                        collection_id,
-                        beatmapset_ids,
-                        enrich_pairs,
-                        folder_name,
-                    }
-                }
+                Ok(collection) => HomeResolveEvent::Resolved {
+                    collection_id,
+                    collection,
+                },
                 Err(err) => HomeResolveEvent::Failed {
                     reason: user_facing_error(&err.to_string()),
                 },
@@ -142,21 +118,36 @@ pub fn handle_home_resolve_event(event: HomeResolveEvent, home: &mut crate::app:
             home.set_collection_resolve(ResolveState::Loading, "resolving…");
         }
         HomeResolveEvent::Resolved {
-            name,
-            map_count,
             collection_id,
-            beatmapset_ids,
-            enrich_pairs,
-            folder_name,
+            collection,
         } => {
+            let map_count = collection.beatmapsets.len();
             let maps_word = if map_count == 1 { "mapset" } else { "mapsets" };
             home.set_collection_resolve(
                 ResolveState::Success,
-                format!("\"{}\" · {} {}", name, map_count, maps_word),
+                format!("\"{}\" · {} {}", collection.name, map_count, maps_word),
             );
+
+            let beatmapset_ids: Vec<u32> =
+                collection.beatmapsets.iter().map(|set| set.id).collect();
+            // One diff id per unique set feeds the batch-enrichment pager (the
+            // endpoint takes diff ids; the set metadata rides nested in each row).
+            // Sets with no diffs stay id-only in the preview.
+            let mut seen = HashSet::with_capacity(beatmapset_ids.len());
+            let enrich_pairs: Vec<(u32, u32)> = collection
+                .beatmapsets
+                .iter()
+                .filter(|set| seen.insert(set.id))
+                .filter_map(|set| set.beatmaps.first().map(|diff| (set.id, diff.id)))
+                .collect();
+            // Derived from the full collection (the lib stays the single source of
+            // folder naming) since the app side keeps only name + id.
+            let folder_name = collection.folder_name();
+
             home.set_resolved_collection(collection_id, beatmapset_ids);
             home.resolved_enrich_pairs = enrich_pairs;
             home.resolved_folder_name = Some(folder_name);
+            home.collection_cache.insert(collection_id, collection);
         }
         HomeResolveEvent::Failed { reason } => {
             home.set_collection_resolve(ResolveState::Error, reason);
