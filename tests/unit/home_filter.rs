@@ -57,6 +57,28 @@ fn results_populate_descend_and_request_first_enrich_page() {
     assert!(app.home.find.browse.has_more_enrichment());
 }
 
+/// Part 1 of the size-fetch rework: nzbasic's per-set sizes are free and
+/// exact, so they fold into the shared cache the download-size seed reads —
+/// this is also what gives the nzbasic route its `· ~X` download-button
+/// suffix (rendered off `checked_known_bytes`) for free.
+#[test]
+fn results_fold_nzbasic_sizes_into_size_cache() {
+    let mut app = app();
+    handle_home_filter_event(
+        HomeFilterEvent::Results {
+            results: results(vec![10, 20], vec![1, 2]),
+        },
+        &mut app,
+    );
+    app.home.find.browse.set_all_selected(true);
+    // `results()` seeds 1_000_000 bytes per set.
+    assert_eq!(app.home.find.checked_known_bytes(), 2_000_000);
+    assert_eq!(
+        app.home.find.known_sizes_for(&[10, 20, 30]),
+        HashMap::from([(10, 1_000_000), (20, 1_000_000)])
+    );
+}
+
 #[test]
 fn empty_clears_rows_and_snapshot() {
     let mut app = app();

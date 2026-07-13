@@ -211,7 +211,7 @@ async fn run_collection(
         cancel_rx,
         defer_rx,
         skip_rx,
-        emit.as_ref(),
+        &emit,
     )
     .await?
     else {
@@ -331,14 +331,7 @@ async fn run_selective(
     let target_ids = session.beatmapset_ids.clone();
 
     let Some(tally) = run_pipeline_core(
-        id,
-        &session,
-        &config,
-        false,
-        cancel_rx,
-        defer_rx,
-        skip_rx,
-        emit.as_ref(),
+        id, &session, &config, false, cancel_rx, defer_rx, skip_rx, &emit,
     )
     .await?
     else {
@@ -397,6 +390,7 @@ async fn run_ids(
         skip_already_imported,
         osu_client,
         osu_path,
+        known_sizes,
     } = request;
 
     if beatmapset_ids.is_empty() {
@@ -419,6 +413,7 @@ async fn run_ids(
             label: &label,
             folder_tag: &folder_tag,
             source,
+            known_sizes,
         },
         overwrite: auto_overwrite,
         owned_ids,
@@ -445,7 +440,7 @@ async fn run_ids(
         cancel_rx,
         defer_rx,
         skip_rx,
-        emit.as_ref(),
+        &emit,
     )
     .await?
     else {
@@ -520,14 +515,13 @@ async fn run_pipeline_core(
     cancel_rx: watch::Receiver<bool>,
     defer_rx: watch::Receiver<u64>,
     skip_rx: watch::Receiver<u64>,
-    emit: Emit<'_>,
+    emit: &EmitArc,
 ) -> Result<Option<Tally>, DownloadError> {
     if config.mirrors.is_empty() {
         return Err(DownloadError::NoMirrors);
     }
 
-    fetch_collection_sizes(id, &session.beatmapset_ids, emit).await;
-    warn_low_disk_space(id, &session.output.output_dir, emit);
+    warn_low_disk_space(id, &session.output.output_dir, emit.as_ref());
 
     let mut tally = Tally {
         // Pre-existing on-disk maps plus library-owned maps both count as skipped.
@@ -535,11 +529,27 @@ async fn run_pipeline_core(
         unverified: session.initial_unverified.len() as u32,
         ..Tally::default()
     };
-    super::events::emit_overall_progress(id, &tally, emit);
+    super::events::emit_overall_progress(id, &tally, emit.as_ref());
 
     if session.pending_ids.is_empty() {
         return Ok(Some(tally));
     }
+
+    // Spawned rather than awaited: even a capped sample of still-unknown ids
+    // (0 for a fully-cached find run) shouldn't stall the download start for a
+    // cosmetic estimate. Raced against cancel so a stopped run drops the probe
+    // instead of hammering nekoha; a late CollectionSizeResolved on a finished
+    // run is a no-op (`App::page_mut` returns `None`).
+    let size_emit = Arc::clone(emit);
+    let size_ids = session.beatmapset_ids.clone();
+    let known_sizes = session.known_sizes.clone();
+    let mut size_cancel = cancel_rx.clone();
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = fetch_collection_sizes(id, &size_ids, &known_sizes, size_emit.as_ref()) => {}
+            _ = size_cancel.wait_for(|c| *c) => {}
+        }
+    });
 
     let on_exists = if auto_overwrite {
         OnExists::Overwrite
@@ -586,14 +596,14 @@ async fn run_pipeline_core(
         &mut cancel_signal,
         &mut defer_signal,
         &mut skip_signal,
-        |lib_event| translate_event(id, lib_event, &mut tally, emit),
+        |lib_event| translate_event(id, lib_event, &mut tally, emit.as_ref()),
     )
     .await;
 
     let _ = session_handle.wait().await;
 
     if cancelled {
-        emit(DownloadEvent::Failed {
+        emit.as_ref()(DownloadEvent::Failed {
             id,
             message: ABORTED_FAIL.into(),
         });
@@ -601,7 +611,7 @@ async fn run_pipeline_core(
     }
 
     if !tally.failures.is_empty() {
-        emit(DownloadEvent::FailedMaps {
+        emit.as_ref()(DownloadEvent::FailedMaps {
             id,
             failures: tally.failures.clone(),
         });

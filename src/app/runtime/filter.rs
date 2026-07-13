@@ -93,6 +93,16 @@ pub fn handle_home_filter_event(event: HomeFilterEvent, app: &mut App) -> Option
         HomeFilterEvent::Results { results } => {
             let sets = results.set_ids.len();
             let total_bytes = results.size_map.values().sum();
+            // nzbasic's per-set sizes are free and exact (unlike the osu route's
+            // probed estimate); fold them into the shared cache so a later run
+            // request needs no size probe for these ids at all. A 0 means "no size
+            // on record", not a real zero-byte set — skip it so the run-start
+            // sample still estimates it rather than seeding a Known(0).
+            for (&set_id, &bytes) in &results.size_map {
+                if bytes > 0 {
+                    app.home.find.record_size(set_id, Some(bytes));
+                }
+            }
             let rows: Vec<BrowseRow> = results
                 .set_ids
                 .iter()

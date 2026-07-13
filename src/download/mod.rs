@@ -186,6 +186,10 @@ pub struct IdsDownloadRequest {
     pub skip_already_imported: bool,
     pub osu_client: OsuClient,
     pub osu_path: String,
+    /// Sizes already known for these ids at request time (the osu route's lazy
+    /// nekoha probe cache, the nzbasic route's free per-set `SizeMap`). Seeds
+    /// the run's size estimate so a fully-cached selection needs no probe.
+    pub known_sizes: HashMap<u32, u64>,
 }
 
 /// A beatmapset that failed during a download run. Carried both in the
@@ -350,17 +354,96 @@ pub(crate) fn warn_low_disk_space(id: DownloadId, output_dir: &Path, emit: Emit<
     }
 }
 
-pub(crate) async fn fetch_collection_sizes(id: DownloadId, beatmapset_ids: &[u32], emit: Emit<'_>) {
+/// Cap on how many still-unknown ids get an actual nekoha probe; the rest are
+/// estimated by scaling the sample's mean-per-set, so a huge run (e.g. a
+/// 2000-map collection) never fires one GET per beatmapset at a mirror that
+/// is also in the download pool.
+const SIZE_SAMPLE_CAP: usize = 48;
+
+/// The estimate is a cosmetic total for the `X/Y` bytes line and the ETA, not
+/// a download precondition, so it never blocks the run: ids already known
+/// (`known_sizes`, seeded from the nzbasic fetch or the osu size-probe cache)
+/// cost nothing, and the rest are sampled rather than probed one-for-one.
+pub(crate) async fn fetch_collection_sizes(
+    id: DownloadId,
+    beatmapset_ids: &[u32],
+    known_sizes: &HashMap<u32, u64>,
+    emit: Emit<'_>,
+) {
+    let known_sum: u64 = beatmapset_ids
+        .iter()
+        .filter_map(|bid| known_sizes.get(bid))
+        .sum();
+    let unknown: Vec<u32> = beatmapset_ids
+        .iter()
+        .copied()
+        .filter(|bid| !known_sizes.contains_key(bid))
+        .collect();
+
+    if unknown.is_empty() {
+        emit(DownloadEvent::CollectionSizeResolved {
+            id,
+            total_bytes: known_sum,
+        });
+        return;
+    }
+
+    let sample = sample_unknown(&unknown);
+    let sample_len = sample.len();
     let fetcher = SizeFetcher::new();
-    let result = fetcher.fetch_sizes(beatmapset_ids).await;
-    emit(DownloadEvent::CollectionSizeResolved {
-        id,
-        total_bytes: result.total_bytes,
-    });
+    let result = fetcher.fetch_sizes(&sample).await;
+    let total_bytes =
+        estimate_total_bytes(known_sum, result.total_bytes, sample_len, unknown.len());
+
+    emit(DownloadEvent::CollectionSizeResolved { id, total_bytes });
     if result.missing_count > 0 {
         debug!(
             missing = result.missing_count,
-            "size info unavailable for some beatmapsets"
+            sampled = sample_len,
+            unknown = unknown.len(),
+            "size info unavailable for some sampled beatmapsets"
         );
     }
 }
+
+/// Up to `SIZE_SAMPLE_CAP` ids spread evenly across `unknown` rather than a
+/// low-id prefix: ids sort ascending and newer (higher-id) maps trend larger, so
+/// the first N would bias the scaled estimate downward. `step` of 1 keeps every
+/// id when the set already fits the cap.
+fn sample_unknown(unknown: &[u32]) -> Vec<u32> {
+    let sample_len = unknown.len().min(SIZE_SAMPLE_CAP);
+    let step = (unknown.len() / SIZE_SAMPLE_CAP).max(1);
+    unknown
+        .iter()
+        .copied()
+        .step_by(step)
+        .take(sample_len)
+        .collect()
+}
+
+/// Pure arithmetic behind the estimate. `sample_bytes`/`sample_len` describe a
+/// fetch over a capped sample of the still-unknown ids (already
+/// mirror-extrapolated for any of THOSE the probe itself missed);
+/// `unknown_len` is the full unprobed-id count the sample stands in for. A
+/// sample covering every unknown id is used verbatim; a partial sample is
+/// scaled by its per-set mean. Guards div-by-zero for an empty sample, mirroring
+/// `SizeFetcher::fetch_sizes`' own fail-soft shape.
+fn estimate_total_bytes(
+    known_sum: u64,
+    sample_bytes: u64,
+    sample_len: usize,
+    unknown_len: usize,
+) -> u64 {
+    if unknown_len == 0 || sample_len == 0 {
+        return known_sum;
+    }
+    if sample_len >= unknown_len {
+        return known_sum.saturating_add(sample_bytes);
+    }
+    let mean = sample_bytes / sample_len as u64;
+    known_sum.saturating_add(mean.saturating_mul(unknown_len as u64))
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/download_size.rs"]
+mod tests;

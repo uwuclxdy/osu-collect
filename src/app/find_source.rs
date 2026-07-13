@@ -1174,6 +1174,19 @@ impl FindSource {
             })
             .sum()
     }
+
+    /// The already-known nekoha sizes among `ids`, seeding a run's size
+    /// estimate so a fully-cached selection needs no probe at all. Both routes
+    /// feed this cache: nzbasic folds its free `SizeMap` in at fetch time
+    /// (`record_size`), osu backfills lazily via the probe in `runtime/size.rs`.
+    pub fn known_sizes_for(&self, ids: &[u32]) -> HashMap<u32, u64> {
+        ids.iter()
+            .filter_map(|id| match self.size_cache.get(id) {
+                Some(SizeState::Known(bytes)) => Some((*id, *bytes)),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 impl Default for FindSource {

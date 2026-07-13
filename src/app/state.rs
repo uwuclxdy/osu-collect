@@ -1531,6 +1531,10 @@ impl App {
             )),
         );
 
+        // Both find routes already hold some sizes at request time (osu: the
+        // lazy probe cache; nzbasic: its free per-set `SizeMap`); seeding them
+        // here lets the run skip a probe entirely once every picked id is known.
+        let known_sizes = self.home.find.known_sizes_for(&beatmapset_ids);
         let request = IdsDownloadRequest {
             beatmapset_ids,
             label,
@@ -1541,6 +1545,7 @@ impl App {
             skip_already_imported: self.config.skip_already_imported,
             osu_client: self.library.client_type,
             osu_path: self.library.osu_path(),
+            known_sizes,
         };
         Some((id, request))
     }

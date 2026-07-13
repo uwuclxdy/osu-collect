@@ -128,6 +128,10 @@ pub(crate) struct DownloadSession {
     /// Beatmapsets pre-skipped because they were already in the osu! library
     /// (a subset of `owned_ids` that precheck had not already satisfied).
     pub(crate) skipped_owned: u32,
+    /// Sizes already known for `beatmapset_ids` at request time; seeds the
+    /// size estimate so a fully-cached selection needs no probe. Empty for
+    /// the Collection/Selective targets (no size source).
+    pub(crate) known_sizes: HashMap<u32, u64>,
     pub(crate) output: OutputPreparation,
     pub(crate) _lock_guard: DownloadLockGuard,
 }
@@ -154,6 +158,9 @@ pub(crate) enum PrepareTarget<'a> {
         label: &'a str,
         folder_tag: &'a str,
         source: super::IdsRunSource,
+        /// Sizes already known for these ids (search: the osu probe cache;
+        /// filter: the free nzbasic `SizeMap`); seeds the size estimate.
+        known_sizes: HashMap<u32, u64>,
     },
 }
 
@@ -175,7 +182,7 @@ pub(crate) struct PrepareParams<'a> {
 impl DownloadSession {
     pub(crate) async fn prepare(params: PrepareParams<'_>) -> Result<Option<Self>, DownloadError> {
         let directory = params.config.directory.as_str();
-        let (target, output, beatmapset_ids) = match params.target {
+        let (target, output, beatmapset_ids, known_sizes) = match params.target {
             PrepareTarget::Collection {
                 collection_input,
                 prefetched,
@@ -200,6 +207,7 @@ impl DownloadSession {
                     SessionTarget::Collection(collection),
                     output,
                     beatmapset_ids,
+                    HashMap::new(),
                 )
             }
             PrepareTarget::Selective {
@@ -231,6 +239,7 @@ impl DownloadSession {
                     },
                     output,
                     target_ids,
+                    HashMap::new(),
                 )
             }
             PrepareTarget::Ids {
@@ -238,6 +247,7 @@ impl DownloadSession {
                 label,
                 folder_tag,
                 source,
+                known_sizes,
             } => {
                 let mut ids = beatmapset_ids.to_vec();
                 ids.sort_unstable();
@@ -254,6 +264,7 @@ impl DownloadSession {
                     },
                     output,
                     ids,
+                    known_sizes,
                 )
             }
         };
@@ -266,6 +277,7 @@ impl DownloadSession {
             params.cancel_rx,
             target,
             beatmapset_ids,
+            known_sizes,
             output,
             lock_guard,
             params.config,
@@ -282,6 +294,7 @@ impl DownloadSession {
         cancel_rx: watch::Receiver<bool>,
         target: SessionTarget,
         beatmapset_ids: Vec<u32>,
+        known_sizes: HashMap<u32, u64>,
         output: OutputPreparation,
         lock_guard: DownloadLockGuard,
         config: &DownloadConfig,
@@ -361,6 +374,7 @@ impl DownloadSession {
             initial_satisfied: satisfied,
             skipped_existing: skipped,
             skipped_owned,
+            known_sizes,
             output,
             _lock_guard: lock_guard,
         }))
