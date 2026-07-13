@@ -95,8 +95,8 @@ fn only_osu_api_requires_auth() {
 }
 
 #[test]
-fn nzbasic_is_last_builtin_and_the_only_envelope_mirror() {
-    assert_eq!(MirrorKind::BUILTINS.last(), Some(&MirrorKind::Nzbasic));
+fn osu_api_is_last_builtin_and_nzbasic_is_the_only_envelope_mirror() {
+    assert_eq!(MirrorKind::BUILTINS.last(), Some(&MirrorKind::OsuApi));
     assert_eq!(MirrorKind::Nzbasic.host(), "direct.nzbasic.com");
     for kind in MirrorKind::BUILTINS.iter().copied() {
         assert_eq!(

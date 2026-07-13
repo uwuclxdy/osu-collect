@@ -30,8 +30,8 @@ fn default_mirrors_include_every_builtin_mirror() {
             MirrorKind::Osudl,
             MirrorKind::Catboy,
             MirrorKind::Hinamizawa,
-            MirrorKind::OsuApi,
             MirrorKind::Nzbasic,
+            MirrorKind::OsuApi,
         ]
     );
 }

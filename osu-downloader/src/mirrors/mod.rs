@@ -165,8 +165,8 @@ impl MirrorKind {
         MirrorKind::Osudl,
         MirrorKind::Catboy,
         MirrorKind::Hinamizawa,
-        MirrorKind::OsuApi,
         MirrorKind::Nzbasic,
+        MirrorKind::OsuApi,
     ];
 
     /// Whether this mirror needs a caller-supplied `Authorization` header to
@@ -467,8 +467,8 @@ impl Mirror {
             Mirror::osudl(),
             Mirror::catboy(),
             Mirror::hinamizawa(),
-            Mirror::osu_api(),
             Mirror::nzbasic(),
+            Mirror::osu_api(),
         ]
     }
 
