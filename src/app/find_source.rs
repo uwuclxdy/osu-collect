@@ -15,7 +15,7 @@
 //! [`SetBrowse`] carries.
 
 use super::home::{FindBackend, InputField};
-use super::update_source::{LIST_PAGE, scroll_list};
+use super::update_source::{LIST_PAGE, scroll_list, scroll_list_clamped};
 use osu_downloader::filter::{
     FilterDirection, FilterMode, FilterQuery, FilterRange, FilterSort, FilterSpecial, FilterStatus,
 };
@@ -259,12 +259,20 @@ impl SetBrowse {
         self.scroll_by(1);
     }
 
+    /// Page the list up/down by [`LIST_PAGE`] rows, clamped at the ends (paging
+    /// never wraps — unlike a single [`scroll_up`](Self::scroll_up) step).
     pub fn page_up(&mut self) {
-        self.scroll_by(-LIST_PAGE);
+        if self.preview_focused {
+            return;
+        }
+        scroll_list_clamped(&mut self.list_cursor, self.rows.len(), -LIST_PAGE);
     }
 
     pub fn page_down(&mut self) {
-        self.scroll_by(LIST_PAGE);
+        if self.preview_focused {
+            return;
+        }
+        scroll_list_clamped(&mut self.list_cursor, self.rows.len(), LIST_PAGE);
     }
 
     /// Jump the list cursor to the first (`top`) or last row (`gg` / `G`). The

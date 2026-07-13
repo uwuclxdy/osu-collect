@@ -133,6 +133,28 @@ fn scroll_wraps_within_rows() {
 }
 
 #[test]
+fn paging_clamps_at_the_ends_without_wrapping() {
+    let ids: Vec<u32> = (1..=25).collect();
+    let mut browse = SetBrowse::new();
+    browse.set_rows(rows(&ids));
+    browse.descend();
+
+    // LIST_PAGE is 10 rows; paging steps by a page and stops at the last row.
+    browse.page_down();
+    assert_eq!(browse.list_cursor(), Some(10));
+    browse.page_down();
+    assert_eq!(browse.list_cursor(), Some(20));
+    browse.page_down();
+    assert_eq!(browse.list_cursor(), Some(24), "page clamps to the last row");
+    // A second page at the bottom must NOT wrap to the top (unlike a step).
+    browse.page_down();
+    assert_eq!(browse.list_cursor(), Some(24), "paging never wraps");
+
+    browse.page_up();
+    assert_eq!(browse.list_cursor(), Some(14));
+}
+
+#[test]
 fn ascend_steps_preview_then_list_then_form() {
     let mut browse = SetBrowse::new();
     browse.set_rows(rows(&[1]));

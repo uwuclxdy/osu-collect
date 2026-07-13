@@ -545,13 +545,14 @@ impl UpdateSource {
         self.scroll_by(1);
     }
 
-    /// Page the focused pane up/down by [`LIST_PAGE`] rows (`Ctrl+u` / `Ctrl+d`).
+    /// Page the focused pane up/down by [`LIST_PAGE`] rows (`Ctrl+u` / `Ctrl+d`),
+    /// clamped at the ends (paging never wraps — unlike a single step).
     pub fn page_up(&mut self) {
-        self.scroll_by(-LIST_PAGE);
+        self.page_by(-LIST_PAGE);
     }
 
     pub fn page_down(&mut self) {
-        self.scroll_by(LIST_PAGE);
+        self.page_by(LIST_PAGE);
     }
 
     /// Jump the focused pane's cursor to the first (`top`) or last row (`gg` / `G`).
@@ -583,6 +584,18 @@ impl UpdateSource {
             let len = self.list_nav_len();
             scroll_list(&mut self.selection.collections_cursor, len, delta);
             // A new highlighted collection resets the preview to its top.
+            self.selection.preview_cursor = Some(0);
+        }
+    }
+
+    /// Like [`scroll_by`](Self::scroll_by) but clamps at the ends (paging).
+    fn page_by(&mut self, delta: i64) {
+        if self.selection.preview_focused {
+            let len = self.preview_len();
+            scroll_list_clamped(&mut self.selection.preview_cursor, len, delta);
+        } else {
+            let len = self.list_nav_len();
+            scroll_list_clamped(&mut self.selection.collections_cursor, len, delta);
             self.selection.preview_cursor = Some(0);
         }
     }
@@ -764,6 +777,21 @@ pub(crate) fn scroll_list(state: &mut Option<usize>, len: usize, delta: i64) {
     let len_i = len as i64;
     let i = state.unwrap_or(0) as i64;
     let next = (i + delta).rem_euclid(len_i) as usize;
+    *state = Some(next);
+}
+
+/// Moves the list cursor by `delta`, clamping at both ends (no wrap). Paging is a
+/// "jump toward an end" gesture, so it stops at the first / last row rather than
+/// wrapping like a single [`scroll_list`] step. Shared with [`SetBrowse`] paging.
+///
+/// [`SetBrowse`]: super::find_source::SetBrowse
+pub(crate) fn scroll_list_clamped(state: &mut Option<usize>, len: usize, delta: i64) {
+    if len == 0 {
+        return;
+    }
+    let last = (len - 1) as i64;
+    let i = state.unwrap_or(0) as i64;
+    let next = (i + delta).clamp(0, last) as usize;
     *state = Some(next);
 }
 

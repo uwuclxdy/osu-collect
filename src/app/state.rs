@@ -2101,7 +2101,8 @@ impl App {
                         page.scroll_threads_up();
                     }
                 } else if self.downloads_list_focused() {
-                    self.downloads_tab.select_prev();
+                    let count = self.downloads_row_count();
+                    self.downloads_tab.select_prev(count);
                 } else {
                     self.focus_prev_field();
                 }

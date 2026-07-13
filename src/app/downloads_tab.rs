@@ -34,14 +34,21 @@ pub struct DownloadsTab {
 }
 
 impl DownloadsTab {
-    pub fn select_prev(&mut self) {
-        self.selected = self.selected.saturating_sub(1);
+    /// Step the cursor up one row, wrapping past the top to the last row (the
+    /// selector-list convention shared with the browses / form fields).
+    pub fn select_prev(&mut self, len: usize) {
+        if len == 0 {
+            return;
+        }
+        self.selected = (self.selected.min(len - 1) + len - 1) % len;
     }
 
+    /// Step the cursor down one row, wrapping past the last row back to the top.
     pub fn select_next(&mut self, len: usize) {
-        if self.selected + 1 < len {
-            self.selected += 1;
+        if len == 0 {
+            return;
         }
+        self.selected = (self.selected.min(len - 1) + 1) % len;
     }
 
     /// Page the cursor up/down (`Ctrl+u` / `Ctrl+d`), clamped — matches the
