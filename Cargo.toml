@@ -27,7 +27,7 @@ time = { version = "0.3.53", features = ["formatting"] }
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time", "net"] }
 futures-util = { version = "0.3.32", default-features = false, features = ["alloc"] }
 osu-db = "0.3.0"
-ratatui = { version = "0.30.1", default-features = false, features = ["crossterm"] }
+ratatui = { version = "0.30.1", default-features = false, features = ["crossterm", "layout-cache"] }
 crossterm = "0.29.0"
 md-5 = "0.11.0"
 dashmap = "6.2.1"
