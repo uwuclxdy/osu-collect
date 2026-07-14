@@ -14,7 +14,7 @@ use osu_downloader::search::BeatmapSetMeta;
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Style,
+    style::{Style, Stylize},
     text::{Line, Span},
     widgets::ListItem,
 };
@@ -235,15 +235,9 @@ fn collection_row(selected: bool, name: &str, new: usize, is_cursor: bool) -> Li
 /// (SUCCESS when any, else faint) and `· M removed` (faint) when any were
 /// removed locally.
 fn collection_stats_meta(new: usize, removed: usize) -> Line<'static> {
-    let mut spans = vec![Span::styled(
-        format!("{new} new"),
-        Style::default().fg(if new > 0 { success() } else { text_faint() }),
-    )];
+    let mut spans = vec![format!("{new} new").fg(if new > 0 { success() } else { text_faint() })];
     if removed > 0 {
-        spans.push(Span::styled(
-            format!("  ·  {removed} removed"),
-            Style::default().fg(text_faint()),
-        ));
+        spans.push(format!("  ·  {removed} removed").fg(text_faint()));
     }
     Line::from(spans)
 }
@@ -264,15 +258,9 @@ fn preview_row(
     };
     let mut spans = widgets::browse_row_label(set.id, meta, label_style);
     if marked {
-        spans.push(Span::styled(
-            "  ✓ installed",
-            Style::default().fg(success()),
-        ));
+        spans.push("  ✓ installed".fg(success()));
     } else if set.previously_deleted {
-        spans.push(Span::styled(
-            format!("  {TAG_PREVIOUSLY_DELETED}"),
-            Style::default().fg(text_faint()),
-        ));
+        spans.push(format!("  {TAG_PREVIOUSLY_DELETED}").fg(text_faint()));
     }
     ListItem::new(Line::from(spans))
 }
@@ -280,18 +268,16 @@ fn preview_row(
 /// The "N new across M collections" status line (browse header + form summary).
 fn new_summary_line(new: usize, collections: usize) -> Line<'static> {
     Line::from(vec![
-        Span::styled(new.to_string(), Style::default().fg(accent()).bold()),
-        Span::styled(
-            format!(
-                " new across {collections} {}",
-                if collections == 1 {
-                    "collection"
-                } else {
-                    "collections"
-                }
-            ),
-            Style::default().fg(text_dim()),
-        ),
+        new.to_string().fg(accent()).bold(),
+        format!(
+            " new across {collections} {}",
+            if collections == 1 {
+                "collection"
+            } else {
+                "collections"
+            }
+        )
+        .fg(text_dim()),
     ])
 }
 
@@ -313,14 +299,13 @@ fn osu_path_row(library: &LibraryState, focused: bool, editing: bool) -> ListIte
     };
 
     let value = if field.value.is_empty() {
-        Span::styled(
-            pretty_path(&field.placeholder).into_owned(),
-            Style::default().fg(text_faint()),
-        )
+        pretty_path(&field.placeholder)
+            .into_owned()
+            .fg(text_faint())
     } else if library.is_path_auto_detected() {
-        Span::styled(display_value, Style::default().fg(text_faint()))
+        display_value.fg(text_faint())
     } else {
-        Span::styled(display_value, Style::default().fg(accent()))
+        display_value.fg(accent())
     };
 
     ListItem::new(Line::from(vec![

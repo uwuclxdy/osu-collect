@@ -24,7 +24,7 @@ use osu_downloader::MirrorKind;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Style},
+    style::{Color, Style, Stylize},
     widgets::Block,
 };
 use std::sync::LazyLock;
@@ -239,7 +239,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         return;
     }
 
-    frame.render_widget(Block::default().style(Style::default().bg(bg())), area);
+    frame.render_widget(Block::default().bg(bg()), area);
 
     // Borderless shell: header row, body, footer row — no `─` divider rules
     // between regions; spacing + the body panel border separate them.

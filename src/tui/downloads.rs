@@ -10,7 +10,7 @@ use crate::download::DownloadStage;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::Style,
+    style::{Style, Stylize},
     text::{Line, Span},
     widgets::{ListItem, Paragraph, Wrap},
 };
@@ -64,14 +64,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, tick: u64) {
 
 fn render_empty(frame: &mut Frame, area: Rect) {
     let lines = vec![
-        Line::from(vec![
-            Span::raw("  "),
-            Span::styled(EMPTY_LINE_1, Style::default().fg(text_dim())),
-        ]),
-        Line::from(vec![
-            Span::raw("  "),
-            Span::styled(EMPTY_LINE_2, Style::default().fg(text_faint())),
-        ]),
+        Line::from(vec![Span::raw("  "), EMPTY_LINE_1.fg(text_dim())]),
+        Line::from(vec![Span::raw("  "), EMPTY_LINE_2.fg(text_faint())]),
     ];
     frame.render_widget(
         Paragraph::new(lines)
@@ -116,15 +110,12 @@ fn counts_meta(rows: &[DownloadsRow<'_>]) -> Line<'static> {
         .filter(|row| matches!(row, DownloadsRow::Page(page) if !page.is_settled()))
         .count();
     let active_color = if active > 0 { accent() } else { text_dim() };
-    Line::from(Span::styled(
-        format!("{active} active"),
-        Style::default().fg(active_color),
-    ))
+    Line::from(format!("{active} active").fg(active_color))
 }
 
 fn row_item(row: &DownloadsRow<'_>, is_cursor: bool, list_focused: bool) -> ListItem<'static> {
     let caret = if is_cursor && list_focused {
-        Span::styled(CURSOR_CARET, Style::default().fg(accent()))
+        CURSOR_CARET.fg(accent())
     } else {
         Span::raw(CURSOR_NONE)
     };
@@ -149,7 +140,7 @@ fn row_item(row: &DownloadsRow<'_>, is_cursor: bool, list_focused: bool) -> List
         // A settled record's state rides its `○` glyph color alone — the
         // done/failed/cancelled word is dropped from the row.
         DownloadsRow::Record(record) => (
-            Span::styled(GLYPH_PAST, Style::default().fg(record_color(record.stage))),
+            GLYPH_PAST.fg(record_color(record.stage)),
             record.title.clone(),
             None,
         ),
@@ -170,14 +161,9 @@ fn row_item(row: &DownloadsRow<'_>, is_cursor: bool, list_focused: bool) -> List
 fn page_suffix(page: &crate::app::CollectionPage) -> Option<Span<'static>> {
     let done = page.stats.downloaded as usize + page.stats.skipped as usize;
     Some(match page.stage {
-        DownloadStage::Pending | DownloadStage::Resolving => {
-            Span::styled("resolving…", Style::default().fg(text_faint()))
-        }
-        DownloadStage::Rechecking => Span::styled("rechecking", Style::default().fg(warning())),
-        DownloadStage::Downloading => Span::styled(
-            format!("{done}/{}", page.total_maps),
-            Style::default().fg(text_dim()),
-        ),
+        DownloadStage::Pending | DownloadStage::Resolving => "resolving…".fg(text_faint()),
+        DownloadStage::Rechecking => "rechecking".fg(warning()),
+        DownloadStage::Downloading => format!("{done}/{}", page.total_maps).fg(text_dim()),
         DownloadStage::Completed | DownloadStage::Failed => return None,
     })
 }
@@ -238,36 +224,18 @@ fn render_record_preview(frame: &mut Frame, area: Rect, record: &HistoryRecord) 
         Line::from(status_line),
         kv(
             "downloaded",
-            Span::styled(
-                format!("{}/{}", record.downloaded, record.total_maps),
-                Style::default().fg(text_dim()),
-            ),
+            format!("{}/{}", record.downloaded, record.total_maps).fg(text_dim()),
         ),
-        kv(
-            "skipped",
-            Span::styled(record.skipped.to_string(), Style::default().fg(text_dim())),
-        ),
-        kv(
-            "failed",
-            Span::styled(record.failed.to_string(), Style::default().fg(failed_color)),
-        ),
+        kv("skipped", record.skipped.to_string().fg(text_dim())),
+        kv("failed", record.failed.to_string().fg(failed_color)),
     ];
     if let Some(dir) = record.output_dir.as_deref() {
         lines.push(kv(
             "output",
-            Span::styled(
-                crate::utils::pretty_path(dir).into_owned(),
-                Style::default().fg(text_dim()),
-            ),
+            crate::utils::pretty_path(dir).into_owned().fg(text_dim()),
         ));
     }
-    lines.push(kv(
-        "when",
-        Span::styled(
-            age_label(record.finished_at),
-            Style::default().fg(text_dim()),
-        ),
-    ));
+    lines.push(kv("when", age_label(record.finished_at).fg(text_dim())));
 
     let title = format!(" {} ", record.title.to_uppercase());
     frame.render_widget(

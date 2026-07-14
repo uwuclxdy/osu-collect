@@ -2,7 +2,7 @@ use crate::app::Banner;
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Style,
+    style::{Style, Stylize},
     text::{Line, Span},
     widgets::Paragraph,
 };
@@ -43,10 +43,7 @@ pub fn render_banner(frame: &mut Frame, area: Rect, banner: &Banner) {
             msg_style,
         ));
     }
-    frame.render_widget(
-        Paragraph::new(Line::from(spans)).style(Style::default().bg(wash)),
-        area,
-    );
+    frame.render_widget(Paragraph::new(Line::from(spans)).bg(wash), area);
 }
 
 /// Whether a banner carries the `d change output dir` action hint.

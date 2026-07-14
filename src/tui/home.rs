@@ -2,7 +2,7 @@ use crate::app::{EnrichSink, GetMapsSource, HomeField, HomeTab, LibraryState, Re
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Style,
+    style::{Style, Stylize},
     text::{Line, Span},
     widgets::ListItem,
 };
@@ -382,7 +382,7 @@ fn mirror_summary_item(
     let mut spans = vec![
         widgets::focus_span(focused),
         Span::styled(widgets::label_cell("mirrors", 0), focused_label(focused)),
-        Span::styled(value, Style::default().fg(accent())),
+        value.fg(accent()),
     ];
     // Min–max ping over the enabled built-ins that answered with a number; a
     // single value collapses to one readout, none omits the suffix entirely.
@@ -391,16 +391,10 @@ fn mirror_summary_item(
     if let Some((min, max)) = latency_range {
         let dim = Style::default().fg(text_dim());
         spans.push(Span::styled("  ·  ", dim));
-        spans.push(Span::styled(
-            min.to_string(),
-            Style::default().fg(success()),
-        ));
+        spans.push(min.to_string().fg(success()));
         if min != max {
             spans.push(Span::styled("–", dim));
-            spans.push(Span::styled(
-                max.to_string(),
-                Style::default().fg(warning()),
-            ));
+            spans.push(max.to_string().fg(warning()));
         }
         spans.push(Span::styled("ms", dim));
     }
@@ -455,8 +449,8 @@ fn resolve_row(state: ResolveState, text: &str) -> ListItem<'static> {
         _ => line(),
     };
     ListItem::new(Line::from(vec![
-        Span::styled(RESOLVE_PREFIX, Style::default().fg(leader_color)),
-        Span::styled(RESOLVE_ARROW, Style::default().fg(arrow_color)),
-        Span::styled(text.to_string(), Style::default().fg(text_color)),
+        RESOLVE_PREFIX.fg(leader_color),
+        RESOLVE_ARROW.fg(arrow_color),
+        text.to_string().fg(text_color),
     ]))
 }

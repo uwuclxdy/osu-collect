@@ -9,7 +9,7 @@ use crate::{
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Style,
+    style::{Style, Stylize},
     text::{Line, Span},
     widgets::ListItem,
 };
@@ -143,18 +143,16 @@ pub fn render(
 /// `Some(Some(_))` = a result.
 fn latency_span(latency: Option<Option<ProbeResult>>) -> Option<Span<'static>> {
     match latency? {
-        None => Some(Span::styled("  …", Style::default().fg(text_dim()))),
+        None => Some("  …".fg(text_dim())),
         Some(ProbeResult::Ms(ms)) => {
             let mut s = String::with_capacity(10);
             s.push_str("  ");
             s.push_str(&ms.to_string());
             s.push_str("ms");
-            Some(Span::styled(s, Style::default().fg(success())))
+            Some(s.fg(success()))
         }
-        Some(ProbeResult::Timeout) => {
-            Some(Span::styled("  timeout", Style::default().fg(danger())))
-        }
-        Some(ProbeResult::Error) => Some(Span::styled("  —", Style::default().fg(danger()))),
+        Some(ProbeResult::Timeout) => Some("  timeout".fg(danger())),
+        Some(ProbeResult::Error) => Some("  —".fg(danger())),
     }
 }
 
@@ -515,10 +513,7 @@ fn auth_chip_item(form: &ConfigTab) -> ListItem<'static> {
 /// fill with a trailing pad cell, no bold.
 fn chip_action_span(label: &'static str, focused: bool, chip_bg: Style) -> Span<'static> {
     if focused {
-        Span::styled(
-            format!(" {label} "),
-            Style::default().fg(text()).bg(bg_hover()).bold(),
-        )
+        format!(" {label} ").fg(text()).bg(bg_hover()).bold()
     } else {
         Span::styled(format!("{label} "), chip_bg.fg(text_dim()))
     }

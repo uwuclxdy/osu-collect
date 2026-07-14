@@ -13,7 +13,7 @@ use osu_downloader::search::BeatmapSetMeta;
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Style,
+    style::Stylize,
     text::{Line, Span},
     widgets::ListItem,
 };
@@ -109,20 +109,13 @@ fn preview_rows(row: &BrowseRow, enriching: bool, tick: u64) -> Vec<ListItem<'st
     match &row.meta {
         Some(meta) => meta_preview(meta),
         None => {
-            let id_line = ListItem::new(Line::from(Span::styled(
-                format!("#{}", row.id),
-                Style::default().fg(text()),
-            )));
+            let id_line = ListItem::new(Line::from(format!("#{}", row.id).fg(text())));
             let note = if enriching {
-                ListItem::new(Line::from(Span::styled(
-                    format!("{} loading metadata…", spinner_str(tick).trim()),
-                    Style::default().fg(text_dim()),
-                )))
+                ListItem::new(Line::from(
+                    format!("{} loading metadata…", spinner_str(tick).trim()).fg(text_dim()),
+                ))
             } else {
-                ListItem::new(Line::from(Span::styled(
-                    "no metadata available",
-                    Style::default().fg(text_faint()),
-                )))
+                ListItem::new(Line::from("no metadata available".fg(text_faint())))
             };
             vec![id_line, note]
         }
@@ -131,14 +124,8 @@ fn preview_rows(row: &BrowseRow, enriching: bool, tick: u64) -> Vec<ListItem<'st
 
 fn meta_preview(meta: &BeatmapSetMeta) -> Vec<ListItem<'static>> {
     let mut rows = vec![
-        ListItem::new(Line::from(Span::styled(
-            meta.title.clone(),
-            Style::default().fg(accent()).bold(),
-        ))),
-        ListItem::new(Line::from(Span::styled(
-            meta.artist.clone(),
-            Style::default().fg(text()),
-        ))),
+        ListItem::new(Line::from(meta.title.clone().fg(accent()).bold())),
+        ListItem::new(Line::from(meta.artist.clone().fg(text()))),
         kv_row("mapper", meta.creator.clone()),
         kv_row("status", meta.status.clone()),
         kv_row("favourites", group_thousands(meta.favourite_count as u64)),
@@ -147,13 +134,13 @@ fn meta_preview(meta: &BeatmapSetMeta) -> Vec<ListItem<'static>> {
     if meta.video || meta.nsfw {
         let mut flags: Vec<Span<'static>> = Vec::new();
         if meta.video {
-            flags.push(Span::styled("video", Style::default().fg(text_dim())));
+            flags.push("video".fg(text_dim()));
         }
         if meta.nsfw {
             if !flags.is_empty() {
-                flags.push(Span::styled("  ·  ", Style::default().fg(text_faint())));
+                flags.push("  ·  ".fg(text_faint()));
             }
-            flags.push(Span::styled("nsfw", Style::default().fg(warning())));
+            flags.push("nsfw".fg(warning()));
         }
         rows.push(ListItem::new(Line::from(flags)));
     }
@@ -164,11 +151,10 @@ fn meta_preview(meta: &BeatmapSetMeta) -> Vec<ListItem<'static>> {
 /// treatment), column-aligned to [`KV_WIDTH`], value in `TEXT`.
 fn kv_row(key: &str, value: String) -> ListItem<'static> {
     ListItem::new(Line::from(vec![
-        Span::styled(
-            format!("{key:<width$}  ", width = KV_WIDTH),
-            Style::default().fg(text_dim()).bold(),
-        ),
-        Span::styled(value, Style::default().fg(text())),
+        format!("{key:<width$}  ", width = KV_WIDTH)
+            .fg(text_dim())
+            .bold(),
+        value.fg(text()),
     ]))
 }
 

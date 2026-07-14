@@ -7,7 +7,7 @@ use osu_downloader::search::BeatmapSetMeta;
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
+    style::{Color, Style, Stylize},
     text::{Line, Span},
     widgets::{
         Block, BorderType, List, ListItem, ListState, Padding, Scrollbar, ScrollbarOrientation,
@@ -335,7 +335,7 @@ pub fn panel_block(
 
 pub fn focus_span(focused: bool) -> Span<'static> {
     if focused {
-        Span::styled(FOCUS_MARK, Style::default().fg(accent()))
+        FOCUS_MARK.fg(accent())
     } else {
         Span::raw(FOCUS_PAD)
     }
@@ -349,7 +349,7 @@ pub fn focus_span(focused: bool) -> Span<'static> {
 pub fn checkbox_spans(state: bool) -> Vec<Span<'static>> {
     let bracket = Style::default().fg(text_dim());
     let inner = if state {
-        Span::styled("x", Style::default().fg(accent()))
+        "x".fg(accent())
     } else {
         Span::styled(" ", bracket)
     };
@@ -371,30 +371,16 @@ fn toggle_spans(on: bool) -> Vec<Span<'static>> {
     match theme().tier() {
         Tier::Full => {
             if on {
-                vec![
-                    Span::styled("─", Style::default().fg(line())),
-                    Span::styled("●", Style::default().fg(accent())),
-                ]
+                vec!["─".fg(line()), "●".fg(accent())]
             } else {
-                vec![
-                    Span::styled("○", Style::default().fg(text_dim())),
-                    Span::styled("─", Style::default().fg(line())),
-                ]
+                vec!["○".fg(text_dim()), "─".fg(line())]
             }
         }
         Tier::Compatible => {
             if on {
-                vec![
-                    Span::styled("[", Style::default().fg(text_dim())),
-                    Span::styled("on", Style::default().fg(accent())),
-                    Span::styled("]", Style::default().fg(text_dim())),
-                ]
+                vec!["[".fg(text_dim()), "on".fg(accent()), "]".fg(text_dim())]
             } else {
-                vec![
-                    Span::styled("[", Style::default().fg(text_dim())),
-                    Span::styled("off", Style::default().fg(text_dim())),
-                    Span::styled("]", Style::default().fg(text_dim())),
-                ]
+                vec!["[".fg(text_dim()), "off".fg(text_dim()), "]".fg(text_dim())]
             }
         }
     }
@@ -404,9 +390,9 @@ fn toggle_spans(on: bool) -> Vec<Span<'static>> {
 /// when selected-not-editing, two-space pad when blurred.
 pub fn input_focus_span(focused: bool, editing: bool) -> Span<'static> {
     if focused && editing {
-        Span::styled(EDIT_MARK, Style::default().fg(accent()))
+        EDIT_MARK.fg(accent())
     } else if focused {
-        Span::styled(FOCUS_MARK, Style::default().fg(accent()))
+        FOCUS_MARK.fg(accent())
     } else {
         Span::raw(FOCUS_PAD)
     }
@@ -434,9 +420,9 @@ pub fn input_item(
     label_width: usize,
 ) -> ListItem<'static> {
     let value = if field.value.is_empty() {
-        Span::styled(field.placeholder.clone(), Style::default().fg(text_faint()))
+        field.placeholder.clone().fg(text_faint())
     } else {
-        Span::styled(field.value.clone(), Style::default().fg(accent()))
+        field.value.clone().fg(accent())
     };
 
     let spans = vec![
@@ -463,12 +449,9 @@ pub fn password_input_item(
     label_width: usize,
 ) -> ListItem<'static> {
     let value = if field.value.is_empty() {
-        Span::styled(field.placeholder.clone(), Style::default().fg(text_faint()))
+        field.placeholder.clone().fg(text_faint())
     } else {
-        Span::styled(
-            "•".repeat(field.value.chars().count()),
-            Style::default().fg(accent()),
-        )
+        "•".repeat(field.value.chars().count()).fg(accent())
     };
 
     let spans = vec![
@@ -495,7 +478,7 @@ pub fn stepper_item(
 ) -> ListItem<'static> {
     let mut s = String::with_capacity(3);
     s.push_str(&value.to_string());
-    let value_span = Span::styled(s, Style::default().fg(accent()));
+    let value_span = s.fg(accent());
 
     let mut spans = vec![
         focus_span(focused),
@@ -507,7 +490,7 @@ pub fn stepper_item(
         let mut chip = String::with_capacity(16);
         chip.push_str("  recommended ");
         chip.push_str(&recommended.to_string());
-        spans.push(Span::styled(chip, Style::default().fg(text_faint())));
+        spans.push(chip.fg(text_faint()));
     }
 
     ListItem::new(Line::from(spans))
@@ -531,21 +514,12 @@ pub fn cycle_item(
         if option == selected {
             // [brackets] only while the row is focused; ACCENT, no bold.
             if focused {
-                spans.push(Span::styled(
-                    format!("[{option}]"),
-                    Style::default().fg(accent()),
-                ));
+                spans.push(format!("[{option}]").fg(accent()));
             } else {
-                spans.push(Span::styled(
-                    option.to_string(),
-                    Style::default().fg(accent()),
-                ));
+                spans.push(option.to_string().fg(accent()));
             }
         } else {
-            spans.push(Span::styled(
-                option.to_string(),
-                Style::default().fg(text_faint()),
-            ));
+            spans.push(option.to_string().fg(text_faint()));
         }
     }
     ListItem::new(Line::from(spans))
@@ -567,8 +541,8 @@ pub fn section_header(label: &str, active: bool) -> ListItem<'static> {
 
 pub fn help_item(text: impl Into<String>) -> ListItem<'static> {
     ListItem::new(Line::from(vec![
-        Span::styled("  └ ", Style::default().fg(line())),
-        Span::styled(text.into(), Style::default().fg(text_faint())),
+        "  └ ".fg(line()),
+        text.into().fg(text_faint()),
     ]))
 }
 
@@ -601,7 +575,7 @@ pub fn keyed_spans(text: &str, key_style: Style, rest_style: Style) -> Vec<Span<
 /// example values): each `[token]` renders in the footer-hint key style
 /// (`ACCENT + bold`) inside the faint tooltip text.
 pub fn help_item_keyed(text: &str) -> ListItem<'static> {
-    let mut spans = vec![Span::styled("  └ ", Style::default().fg(line()))];
+    let mut spans = vec!["  └ ".fg(line())];
     spans.extend(keyed_spans(
         text,
         Style::default().fg(accent()).bold(),
@@ -632,7 +606,7 @@ fn icon_label_row(
     let label_text = format!(" {}", label_cell(label, label_width));
     let mut spans = vec![focus, icon, Span::styled(label_text, label_style)];
     if let Some(detail) = detail {
-        spans.push(Span::styled(detail, Style::default().fg(text_faint())));
+        spans.push(detail.fg(text_faint()));
     }
     if let Some(suffix) = suffix {
         spans.push(suffix);
@@ -668,7 +642,7 @@ pub fn disclosure_row(
     };
     icon_label_row(
         focus_span(focused && !expanded),
-        Span::styled(marker, Style::default().fg(glyph_color)),
+        marker.fg(glyph_color),
         label,
         label_style,
         Some(detail.into()),
@@ -711,10 +685,7 @@ pub fn row_item_with_suffix(
         label_style,
     ));
     if let Some(d) = detail {
-        spans.push(Span::styled(
-            d.to_string(),
-            Style::default().fg(text_faint()),
-        ));
+        spans.push(d.to_string().fg(text_faint()));
     }
     if let Some(s) = suffix {
         spans.push(s);
@@ -904,10 +875,7 @@ pub fn browse_row_label(
 /// [`meta_with_loading_cue`] so every surface waiting on the same osu-batch
 /// backfill reads identically.
 fn loading_titles_span(tick: u64) -> Span<'static> {
-    Span::styled(
-        format!("{} loading titles", spinner_str(tick).trim()),
-        Style::default().fg(text_dim()),
-    )
+    format!("{} loading titles", spinner_str(tick).trim()).fg(text_dim())
 }
 
 /// Appends the [`loading_titles_span`] cue to a panel's title-right meta line
@@ -920,7 +888,7 @@ pub fn meta_with_loading_cue(base: Line<'static>, enriching: bool, tick: u64) ->
         return base;
     }
     let mut spans = base.spans;
-    spans.push(Span::styled(SEPARATOR, Style::default().fg(line())));
+    spans.push(SEPARATOR.fg(line()));
     spans.push(loading_titles_span(tick));
     Line::from(spans)
 }
@@ -934,12 +902,9 @@ pub fn summary_line(metrics: &[Metric<'_>]) -> Line<'static> {
     let mut spans = vec![Span::raw("  ")];
     for (index, metric) in metrics.iter().enumerate() {
         if index > 0 {
-            spans.push(Span::styled(SEPARATOR, Style::default().fg(line())));
+            spans.push(SEPARATOR.fg(line()));
         }
-        spans.push(Span::styled(
-            metric.label.to_owned(),
-            Style::default().fg(text_faint()),
-        ));
+        spans.push(metric.label.to_owned().fg(text_faint()));
         spans.push(Span::raw(" "));
         spans.push(Span::styled(metric.value.clone(), metric.style));
     }
@@ -951,9 +916,9 @@ pub fn summary_line(metrics: &[Metric<'_>]) -> Line<'static> {
 pub fn ratio_line(selected: usize, total: usize) -> Line<'static> {
     let selected_color = if selected > 0 { accent() } else { text_dim() };
     Line::from(vec![
-        Span::styled(selected.to_string(), Style::default().fg(selected_color)),
-        Span::styled("/", Style::default().fg(text_faint())),
-        Span::styled(total.to_string(), Style::default().fg(text_dim())),
+        selected.to_string().fg(selected_color),
+        "/".fg(text_faint()),
+        total.to_string().fg(text_dim()),
     ])
 }
 
@@ -969,9 +934,9 @@ pub fn summary_item(metrics: &[Metric<'_>]) -> ListItem<'static> {
 /// Label is always bold.
 pub fn status_pill(label: impl Into<String>, color: Color) -> Line<'static> {
     Line::from(vec![
-        Span::styled("[ ", Style::default().fg(text_dim())),
-        Span::styled(label.into(), Style::default().fg(color).bold()),
-        Span::styled(" ]", Style::default().fg(text_dim())),
+        "[ ".fg(text_dim()),
+        label.into().fg(color).bold(),
+        " ]".fg(text_dim()),
     ])
 }
 
@@ -1031,7 +996,7 @@ pub fn active_download_item_msg(
     let (message, message_w) = truncate_to_width(message_text, message_budget);
 
     let mut spans = vec![
-        Span::styled(prefix, Style::default().fg(text_faint())),
+        prefix.fg(text_faint()),
         Span::styled(message, message_style(dl.stage, rate_limited)),
     ];
 
@@ -1045,30 +1010,30 @@ pub fn active_download_item_msg(
         Some(ratio) => {
             let filled = ((ratio * BAR_WIDTH as f32).round() as u16).min(BAR_WIDTH);
             let empty = BAR_WIDTH - filled;
-            spans.push(Span::styled(
-                glyph_fill(&FILL_BLOCK, GLYPH_BLOCK, filled as usize).into_owned(),
-                Style::default().fg(bar_color),
-            ));
-            spans.push(Span::styled(
-                glyph_fill(&FILL_SHADE, GLYPH_SHADE, empty as usize).into_owned(),
-                Style::default().fg(line()),
-            ));
+            spans.push(
+                glyph_fill(&FILL_BLOCK, GLYPH_BLOCK, filled as usize)
+                    .into_owned()
+                    .fg(bar_color),
+            );
+            spans.push(
+                glyph_fill(&FILL_SHADE, GLYPH_SHADE, empty as usize)
+                    .into_owned()
+                    .fg(line()),
+            );
             let pct = (ratio * 100.0).round() as u16;
-            spans.push(Span::styled(
-                pct_label(pct),
-                Style::default().fg(text_faint()),
-            ));
+            spans.push(pct_label(pct).fg(text_faint()));
         }
         None if matches!(dl.stage, crate::download::BeatmapStage::Downloading) => {
             spans.extend(indeterminate_bar_spans(BAR_WIDTH, bar_color));
-            spans.push(Span::styled("  …", Style::default().fg(text_faint())));
+            spans.push("  …".fg(text_faint()));
         }
         None => {
-            spans.push(Span::styled(
-                glyph_fill(&FILL_SHADE, GLYPH_SHADE, BAR_WIDTH as usize).into_owned(),
-                Style::default().fg(line()),
-            ));
-            spans.push(Span::styled("     ", Style::default().fg(text_faint())));
+            spans.push(
+                glyph_fill(&FILL_SHADE, GLYPH_SHADE, BAR_WIDTH as usize)
+                    .into_owned()
+                    .fg(line()),
+            );
+            spans.push("     ".fg(text_faint()));
         }
     }
 
@@ -1104,10 +1069,11 @@ pub(super) fn indeterminate_bar_spans(width: u16, bar_color: Color) -> Vec<Span<
             frame_style,
         ));
     }
-    spans.push(Span::styled(
-        glyph_fill(&FILL_BLOCK, GLYPH_BLOCK, segment).into_owned(),
-        Style::default().fg(bar_color),
-    ));
+    spans.push(
+        glyph_fill(&FILL_BLOCK, GLYPH_BLOCK, segment)
+            .into_owned()
+            .fg(bar_color),
+    );
     let right = inner.saturating_sub(offset).saturating_sub(segment);
     if right > 0 {
         spans.push(Span::styled(

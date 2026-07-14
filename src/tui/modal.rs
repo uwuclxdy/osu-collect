@@ -14,7 +14,7 @@
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Flex, Layout, Rect},
-    style::Style,
+    style::{Style, Stylize},
     text::{Line, Span},
     widgets::{Block, BorderType, Clear, List, ListItem, ListState, Padding, Paragraph, Wrap},
 };
@@ -73,11 +73,8 @@ fn modal_block(title: &'static str) -> Block<'static> {
     Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(accent_alt()))
-        .style(Style::default().bg(bg()))
-        .title(Span::styled(
-            title,
-            Style::default().fg(text_dim()).italic(),
-        ))
+        .bg(bg())
+        .title(title.fg(text_dim()).italic())
         .padding(modal_padding())
 }
 
@@ -226,8 +223,8 @@ pub(crate) fn render_retry_on_start_modal(
         " failed mapsets from a previous run. Retry them?"
     };
     let body = vec![Line::from(vec![
-        Span::styled(count.to_string(), Style::default().fg(accent()).bold()),
-        Span::styled(rest, Style::default().fg(text_dim())),
+        count.to_string().fg(accent()).bold(),
+        rest.fg(text_dim()),
     ])];
     render_button_modal(
         frame,
@@ -255,9 +252,9 @@ pub(crate) fn render_confirm_retry_modal(
         " failed mapsets?"
     };
     let body = vec![Line::from(vec![
-        Span::styled("Retry ", Style::default().fg(text_dim())),
-        Span::styled(count.to_string(), Style::default().fg(accent()).bold()),
-        Span::styled(noun, Style::default().fg(text_dim())),
+        "Retry ".fg(text_dim()),
+        count.to_string().fg(accent()).bold(),
+        noun.fg(text_dim()),
     ])];
     render_button_modal(
         frame,
@@ -417,10 +414,7 @@ fn push_section(lines: &mut Vec<Line<'static>>, heading: &'static str, rows: &[H
 
 fn section_heading(label: &'static str) -> Line<'static> {
     // Help-modal section header: eyebrow — TEXT_DIM, UPPERCASE TRACKED, no bold.
-    Line::from(vec![Span::styled(
-        label.to_uppercase(),
-        Style::default().fg(text_dim()),
-    )])
+    Line::from(vec![label.to_uppercase().fg(text_dim())])
 }
 
 fn help_row(key: &'static str, action: &'static str) -> Line<'static> {
@@ -433,10 +427,10 @@ fn help_row(key: &'static str, action: &'static str) -> Line<'static> {
         key_cell.push(' ');
     }
     Line::from(vec![
-        Span::styled(key_cell, Style::default().fg(accent()).bold()),
+        key_cell.fg(accent()).bold(),
         // Help modal: hotkey in ACCENT, action in TEXT (the action column is
         // primary text, not the dim secondary tier).
-        Span::styled(action, Style::default().fg(text())),
+        action.fg(text()),
     ])
 }
 
@@ -456,17 +450,11 @@ pub(crate) fn render_update_modal(
     let title = " UPDATE AVAILABLE ";
 
     let mut body: Vec<Line<'static>> = Vec::new();
-    body.push(Line::from(Span::styled(
-        format!("v{version}"),
-        Style::default().fg(accent()).bold(),
-    )));
+    body.push(Line::from(format!("v{version}").fg(accent()).bold()));
     body.push(Line::from(""));
     let entries = changelog_body(changelog);
     if entries.is_empty() {
-        body.push(Line::from(Span::styled(
-            "no changelog provided",
-            Style::default().fg(text_dim()).italic(),
-        )));
+        body.push(Line::from("no changelog provided".fg(text_dim()).italic()));
     } else {
         body.extend(entries);
     }
@@ -593,7 +581,7 @@ fn changelog_line(raw: &str) -> Line<'static> {
         .strip_prefix("- ")
         .or_else(|| trimmed.strip_prefix("* "))
     {
-        let mut spans = vec![Span::styled("• ", Style::default().fg(accent()))];
+        let mut spans = vec!["• ".fg(accent())];
         spans.extend(inline_spans(rest, Style::default().fg(text_dim())));
         Line::from(spans)
     } else {

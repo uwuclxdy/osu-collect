@@ -6,7 +6,7 @@ use crate::{
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Margin, Rect},
-    style::{Color, Style},
+    style::{Color, Style, Stylize},
     text::{Line, Span},
     widgets::{Block, Gauge, List, ListItem, ListState, Paragraph, Wrap},
 };
@@ -136,7 +136,7 @@ fn render_compact(frame: &mut Frame, area: Rect, page: &CollectionPage, tick: u6
     let key_style = Style::default().fg(text_faint());
     let line = Line::from(vec![
         Span::styled(COMPACT_ACTIVE, key_style),
-        Span::styled(active_count.to_string(), Style::default().fg(text_dim())),
+        active_count.to_string().fg(text_dim()),
         Span::styled(COMPACT_FAILED, key_style),
         Span::styled(
             failed.to_string(),
@@ -190,23 +190,23 @@ fn overview_lines(page: &CollectionPage) -> Vec<Line<'_>> {
     status_spans.extend(widgets::status_pill(status, status_color(page.stage, rate_limited)).spans);
     if let Some(speed) = speed {
         status_spans.push(Span::styled(KEY_SPEED, sub_key_style));
-        status_spans.push(Span::styled(speed, Style::default().fg(success())));
+        status_spans.push(speed.fg(success()));
         // ETA sits next to speed (both derived from cumulative_speed) so the
         // gauge can drop the duplicate — every figure lives in exactly one place.
         if let Some(eta) = session_eta(page) {
             status_spans.push(Span::styled(KEY_ETA, sub_key_style));
-            status_spans.push(Span::styled(eta, Style::default().fg(accent())));
+            status_spans.push(eta.fg(accent()));
         }
     }
     if let Some(bytes) = bytes {
         status_spans.push(Span::styled(KEY_SIZE, sub_key_style));
-        status_spans.push(Span::styled(bytes, Style::default().fg(warning())));
+        status_spans.push(bytes.fg(warning()));
     }
 
     let mut lines = vec![
         Line::from(vec![
             Span::styled(widgets::label_cell(KEY_COLLECTION, label_width), key_style),
-            Span::styled(page.title.as_str(), Style::default().fg(accent())),
+            page.title.as_str().fg(accent()),
         ]),
         Line::from(vec![
             Span::styled(widgets::label_cell(KEY_UPLOADER, label_width), key_style),
@@ -239,25 +239,16 @@ fn tally_line(page: &CollectionPage) -> Line<'static> {
     let queued = page.download_target;
     let skipped = page.stats.skipped as usize;
     let failed = page.stats.failed as usize;
-    let sep = || Span::styled(SEPARATOR, Style::default().fg(line()));
+    let sep = || SEPARATOR.fg(line());
     let failed_color = if failed > 0 { danger() } else { text_dim() };
     Line::from(vec![
-        Span::styled(
-            format!("{downloaded} downloaded"),
-            Style::default().fg(success()),
-        ),
+        format!("{downloaded} downloaded").fg(success()),
         sep(),
-        Span::styled(format!("{queued} queued"), Style::default().fg(text_dim())),
+        format!("{queued} queued").fg(text_dim()),
         sep(),
-        Span::styled(
-            format!("{skipped} skipped"),
-            Style::default().fg(text_dim()),
-        ),
+        format!("{skipped} skipped").fg(text_dim()),
         sep(),
-        Span::styled(
-            format!("{failed} failed"),
-            Style::default().fg(failed_color),
-        ),
+        format!("{failed} failed").fg(failed_color),
     ])
 }
 
@@ -385,13 +376,7 @@ fn render_gauge(frame: &mut Frame, area: Rect, page: &CollectionPage, tick: u64)
 
     let mut block = Block::default().title_bottom(tally.left_aligned());
     if fits_both {
-        block = block.title_bottom(
-            Line::from(Span::styled(
-                verified_title,
-                Style::default().fg(text_faint()),
-            ))
-            .right_aligned(),
-        );
+        block = block.title_bottom(Line::from(verified_title.fg(text_faint())).right_aligned());
     }
     if is_rechecking {
         let style = Style::default().fg(warning()).bold();
@@ -430,18 +415,15 @@ fn render_gauge(frame: &mut Frame, area: Rect, page: &CollectionPage, tick: u64)
     let empty_cells = bar_width.saturating_sub(verified_cells + failed_cells);
 
     let bar = Line::from(vec![
-        Span::styled(
-            glyph_fill(&FILL_BLOCK, GLYPH_BLOCK, verified_cells).into_owned(),
-            Style::default().fg(fill_color),
-        ),
-        Span::styled(
-            glyph_fill(&FILL_BLOCK, GLYPH_BLOCK, failed_cells).into_owned(),
-            Style::default().fg(danger()),
-        ),
-        Span::styled(
-            glyph_fill(&FILL_SHADE, GLYPH_SHADE, empty_cells).into_owned(),
-            Style::default().fg(bg_raised()),
-        ),
+        glyph_fill(&FILL_BLOCK, GLYPH_BLOCK, verified_cells)
+            .into_owned()
+            .fg(fill_color),
+        glyph_fill(&FILL_BLOCK, GLYPH_BLOCK, failed_cells)
+            .into_owned()
+            .fg(danger()),
+        glyph_fill(&FILL_SHADE, GLYPH_SHADE, empty_cells)
+            .into_owned()
+            .fg(bg_raised()),
     ]);
     frame.render_widget(Paragraph::new(bar), inner);
 }
@@ -565,7 +547,7 @@ fn render_threads(frame: &mut Frame, area: Rect, page: &CollectionPage) {
         };
         items.push(ListItem::new(Line::from(vec![
             Span::raw("  "),
-            Span::styled(text, Style::default().fg(color)),
+            text.fg(color),
         ])));
     }
 
@@ -646,10 +628,10 @@ fn push_failed_rows(items: &mut Vec<ListItem<'static>>, page: &CollectionPage) {
                 .unwrap_or_default();
             items.push(ListItem::new(Line::from(vec![
                 Span::raw("    "),
-                Span::styled(id_str, Style::default().fg(text_faint())),
-                Span::styled(title_part, Style::default().fg(text_faint())),
+                id_str.fg(text_faint()),
+                title_part.fg(text_faint()),
                 Span::raw("  "),
-                Span::styled(reason_label, Style::default().fg(reason_color)),
+                reason_label.fg(reason_color),
             ])));
         }
     }
@@ -677,15 +659,9 @@ fn render_results_block(frame: &mut Frame, area: Rect, summary: &DownloadSummary
     let lines = vec![
         widgets::summary_line(&metrics),
         Line::from(""),
-        Line::from(vec![
-            Span::raw("  "),
-            Span::styled(RESULTS_OUTRO_1, Style::default().fg(text_dim())),
-        ]),
+        Line::from(vec![Span::raw("  "), RESULTS_OUTRO_1.fg(text_dim())]),
         Line::from(""),
-        Line::from(vec![
-            Span::raw("  "),
-            Span::styled(RESULTS_OUTRO_2, Style::default().fg(text_faint())),
-        ]),
+        Line::from(vec![Span::raw("  "), RESULTS_OUTRO_2.fg(text_faint())]),
     ];
 
     frame.render_widget(

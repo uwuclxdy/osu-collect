@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout, Rect},
-    style::{Color, Style},
+    style::{Color, Style, Stylize},
     text::{Line, Span},
     widgets::Paragraph,
 };
@@ -80,7 +80,7 @@ pub fn render(frame: &mut Frame, params: RenderParams<'_, '_>) {
 
     let mut spans: Vec<Span<'_>> = Vec::with_capacity(tabs.len() * 3);
     // bullet separator between brand and first tab
-    spans.push(Span::styled("  •  ", Style::default().fg(text_dim())));
+    spans.push("  •  ".fg(text_dim()));
     for (index, title) in tabs.iter().enumerate() {
         if index > 0 {
             spans.push(Span::raw("   "));
@@ -130,7 +130,7 @@ fn client_indicator(client: OsuClient, tick: u64) -> (Line<'static>, u16) {
     let bracket = Style::default().fg(text_dim());
     let spans = vec![
         Span::styled(" [ ", bracket),
-        Span::styled(name, Style::default().fg(label).bold()),
+        name.fg(label).bold(),
         Span::styled(" ] ", bracket),
     ];
     let width = (" [ ".len() + name.len() + " ] ".len()) as u16;
@@ -154,10 +154,7 @@ fn client_pink(client: OsuClient) -> Color {
 fn version_indicator(phase: Option<UpdateIndicator>, tick: u64) -> (Vec<Span<'static>>, u16) {
     let width = |s: &str| s.chars().count() as u16;
     match phase {
-        None => (
-            vec![Span::styled(VERSION, Style::default().fg(text_dim()))],
-            width(VERSION),
-        ),
+        None => (vec![VERSION.fg(text_dim())], width(VERSION)),
         Some(UpdateIndicator::Available) => {
             // A white pulse sweeps across the cue, then it rests at plain accent
             // for `UPDATE_REST_TICKS` before the next one — a periodic nudge, not
@@ -189,19 +186,13 @@ fn version_indicator(phase: Option<UpdateIndicator>, tick: u64) -> (Vec<Span<'st
             // Spinner replaces the arrow; the spin is the motion, so no shimmer.
             let text = format!(" v{CUR_VERSION} {} ", spinner_str(tick).trim());
             let w = width(&text);
-            (
-                vec![Span::styled(text, Style::default().fg(accent()).bold())],
-                w,
-            )
+            (vec![text.fg(accent()).bold()], w)
         }
         Some(UpdateIndicator::RestartPending) => {
             // Static reload glyph in warning-amber, nudging the restart.
             let text = format!(" v{CUR_VERSION} ↻ ");
             let w = width(&text);
-            (
-                vec![Span::styled(text, Style::default().fg(warning()).bold())],
-                w,
-            )
+            (vec![text.fg(warning()).bold()], w)
         }
     }
 }
@@ -218,7 +209,7 @@ fn brand_spans(tick: u64, downloading: bool, ramp: f32) -> Vec<Span<'static>> {
     let base = accent_alt();
     let ramp = ramp.clamp(0.0, 1.0);
     if !downloading && ramp <= 0.0 {
-        return vec![Span::styled(BRAND, Style::default().fg(base).bold())];
+        return vec![BRAND.fg(base).bold()];
     }
 
     // `WAVE_PERIOD` is the tick count for one full left-to-right sweep; `MAX_MIX`
@@ -282,7 +273,7 @@ fn wave_spans(
             let lit = blend(crest, base, crest_factor * depth);
             let glint_amt = crest_factor.powi(6) * glint_max;
             let fg = blend(glint, lit, glint_amt);
-            Span::styled(ch.to_string(), Style::default().fg(fg).bold())
+            ch.to_string().fg(fg).bold()
         })
         .collect()
 }

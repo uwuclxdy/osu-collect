@@ -6,7 +6,7 @@ use crate::download::DownloadStage;
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Style,
+    style::{Style, Stylize},
     text::{Line, Span},
     widgets::Paragraph,
 };
@@ -148,10 +148,7 @@ fn render_vim_chip(frame: &mut Frame, area: Rect) -> Rect {
         height: 1,
     };
     frame.render_widget(
-        Paragraph::new(Span::styled(
-            VIM_CHIP,
-            Style::default().fg(text_dim()).bg(bg_raised()),
-        )),
+        Paragraph::new(VIM_CHIP.fg(text_dim()).bg(bg_raised())),
         chip_area,
     );
     Rect {
@@ -544,7 +541,7 @@ fn quit_prompt_paragraph(has_downloads: bool) -> Paragraph<'static> {
     } else {
         QUIT_PROMPT_TEXT
     };
-    let mut spans = vec![Span::styled(ALERT_WARN, Style::default().fg(warning()))];
+    let mut spans = vec![ALERT_WARN.fg(warning())];
     spans.extend(widgets::keyed_spans(
         text,
         Style::default().fg(accent()).bold(),
@@ -557,11 +554,8 @@ fn quit_prompt_paragraph(has_downloads: bool) -> Paragraph<'static> {
 /// Results and errors no longer appear here — they surface as toasts.
 fn message_line(msg: &AppMessage, tick: u64) -> Line<'static> {
     Line::from(vec![
-        Span::styled(spinner_str(tick), Style::default().fg(accent()).bold()),
-        Span::styled(
-            msg.text.trim_start().to_string(),
-            Style::default().fg(text_dim()),
-        ),
+        spinner_str(tick).fg(accent()).bold(),
+        msg.text.trim_start().to_string().fg(text_dim()),
     ])
 }
 

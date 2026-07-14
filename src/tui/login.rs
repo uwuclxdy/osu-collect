@@ -2,7 +2,7 @@ use crate::app::{AuthLoginState, LoginField, LoginPhase, LoginTab};
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
+    style::{Color, Style, Stylize},
     text::{Line, Span},
     widgets::ListItem,
 };
@@ -184,8 +184,8 @@ fn submit_label(phase: LoginPhase, in_flight: bool) -> &'static str {
 fn status_line() -> ListItem<'static> {
     ListItem::new(Line::from(vec![
         Span::raw("  "),
-        Span::styled("● ", Style::default().fg(success())),
-        Span::styled("logged in", Style::default().fg(text())),
+        "● ".fg(success()),
+        "logged in".fg(text()),
     ]))
 }
 
@@ -201,7 +201,7 @@ fn push_wrapped(
     for line in wrap(text, width) {
         items.push(ListItem::new(Line::from(vec![
             Span::raw("  "),
-            Span::styled(line, Style::default().fg(color)),
+            line.fg(color),
         ])));
     }
 }

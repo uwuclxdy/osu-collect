@@ -13,7 +13,7 @@ use crate::app::{
 };
 use crate::utils::format_bytes;
 use ratatui::{
-    style::Style,
+    style::Stylize,
     text::{Line, Span},
     widgets::ListItem,
 };
@@ -189,10 +189,9 @@ pub fn push_form_rows(
     // shows only when the criteria actually resolve there.
     if matches!(route, FindRoute::Nzbasic) {
         items.push(widgets::spacer());
-        items.push(ListItem::new(Line::from(Span::styled(
-            format!("  {CREDIT}"),
-            Style::default().fg(text_faint()),
-        ))));
+        items.push(ListItem::new(Line::from(
+            format!("  {CREDIT}").fg(text_faint()),
+        )));
     }
 }
 
@@ -254,10 +253,7 @@ fn push_hint(
 /// A danger-tinted `└ <reason>` tooltip — the one render of a live parse error,
 /// shared by the numeric ranges and the fields with their own grammar.
 fn error_hint_item(reason: String) -> ListItem<'static> {
-    ListItem::new(Line::from(vec![
-        Span::styled("  └ ", Style::default().fg(line())),
-        Span::styled(reason, Style::default().fg(danger())),
-    ]))
+    ListItem::new(Line::from(vec!["  └ ".fg(line()), reason.fg(danger())]))
 }
 
 /// The nine numeric range fields that parse the operator grammar (`7+`, `5..7`,
@@ -312,11 +308,8 @@ fn route_trailing_spans(route: &FindRoute) -> Vec<Span<'static>> {
         FindRoute::Osu => via_trailing("osu! api"),
         FindRoute::Nzbasic => via_trailing("nzbasic"),
         FindRoute::Conflict { nzbasic, osu } => vec![
-            Span::styled("  ! ", Style::default().fg(warning())),
-            Span::styled(
-                format!("{nzbasic} needs nzbasic · {osu} needs osu! api"),
-                Style::default().fg(warning()),
-            ),
+            "  ! ".fg(warning()),
+            format!("{nzbasic} needs nzbasic · {osu} needs osu! api").fg(warning()),
         ],
     }
 }
@@ -324,10 +317,7 @@ fn route_trailing_spans(route: &FindRoute) -> Vec<Span<'static>> {
 /// `→ via <backend>`: the arrow in `LINE`, the copy in `TEXT_DIM` (a recessive
 /// read-only cue, never a chip).
 fn via_trailing(backend: &str) -> Vec<Span<'static>> {
-    vec![
-        Span::styled(" → ", Style::default().fg(line())),
-        Span::styled(format!("via {backend}"), Style::default().fg(text_dim())),
-    ]
+    vec![" → ".fg(line()), format!("via {backend}").fg(text_dim())]
 }
 
 /// The inline outcome line beneath the buttons: the nzbasic pre-download size
@@ -352,6 +342,6 @@ fn status_row(msg: &FindStatusMsg) -> Option<ListItem<'static>> {
     };
     Some(ListItem::new(Line::from(vec![
         Span::raw("  "),
-        Span::styled(label, Style::default().fg(color)),
+        label.fg(color),
     ])))
 }
