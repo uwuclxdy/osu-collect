@@ -100,17 +100,17 @@ pub fn render(frame: &mut Frame, area: Rect, page: &CollectionPage, tick: u64) {
     } else {
         gauge_section_height(page.stage)
     };
-    let sections = Layout::vertical([
+    let [overview_area, gauge_area, threads_area] = Layout::vertical([
         Constraint::Length(info_height),
         Constraint::Length(gauge_height),
         Constraint::Min(0),
     ])
-    .split(area);
-    render_overview(frame, sections[0], info_lines);
+    .areas(area);
+    render_overview(frame, overview_area, info_lines);
     if gauge_height > 0 {
-        render_gauge(frame, sections[1], page, tick);
+        render_gauge(frame, gauge_area, page, tick);
     }
-    render_threads(frame, sections[2], page);
+    render_threads(frame, threads_area, page);
 }
 
 /// Compact render: overall gauge + active-download count + failed count.
@@ -118,12 +118,12 @@ pub fn render(frame: &mut Frame, area: Rect, page: &CollectionPage, tick: u64) {
 /// Per-row breakdown, failed-maps collapsible, and session ETA are hidden.
 /// The gauge alone tells the user "is it making progress."
 fn render_compact(frame: &mut Frame, area: Rect, page: &CollectionPage, tick: u64) {
-    let sections = Layout::vertical([
+    let [gauge_area, summary_area] = Layout::vertical([
         Constraint::Length(gauge_section_height(page.stage)),
         Constraint::Min(0),
     ])
-    .split(area);
-    render_gauge(frame, sections[0], page, tick);
+    .areas(area);
+    render_gauge(frame, gauge_area, page, tick);
 
     let active_count = page
         .active_downloads
@@ -148,7 +148,7 @@ fn render_compact(frame: &mut Frame, area: Rect, page: &CollectionPage, tick: u6
         ),
     ]);
 
-    frame.render_widget(Paragraph::new(line), sections[1]);
+    frame.render_widget(Paragraph::new(line), summary_area);
 }
 
 /// Build the OVERVIEW panel's content lines. The panel height is derived from

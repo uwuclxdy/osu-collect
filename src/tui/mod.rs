@@ -27,7 +27,6 @@ use ratatui::{
     style::{Color, Style},
     widgets::Block,
 };
-use std::rc::Rc;
 use std::sync::LazyLock;
 
 /// App-side display label for a mirror. Distinct from `MirrorKind::label()`
@@ -218,13 +217,13 @@ fn login_split(area: Rect, open: bool) -> (Option<Rect>, Option<Rect>) {
     }
     // Divide before multiply so the intermediate never overflows u16.
     let login_w = (area.width / 5 * 2).clamp(34, 52);
-    let cols = Layout::horizontal([
-        Constraint::Min(0),
+    let [config_area, _gutter, login_area] = Layout::horizontal([
+        Constraint::Fill(1),
         Constraint::Length(1),
         Constraint::Length(login_w),
     ])
-    .split(area);
-    (Some(cols[0]), Some(cols[2]))
+    .areas(area);
+    (Some(config_area), Some(login_area))
 }
 
 /// Render one full frame.
@@ -244,14 +243,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     // Borderless shell: header row, body, footer row — no `─` divider rules
     // between regions; spacing + the body panel border separate them.
-    let chunks: Rc<[_]> = Layout::vertical([
+    let [header_area, content_area, footer_area] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(0),
         Constraint::Length(1),
     ])
-    .split(area);
-
-    let (header_area, content_area, footer_area) = (chunks[0], chunks[1], chunks[2]);
+    .areas(area);
 
     let tabs = app.tab_titles();
     header::render(

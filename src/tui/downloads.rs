@@ -51,10 +51,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, tick: u64) {
         // Divide before multiply (matches `master_detail`) so the intermediate
         // never overflows u16.
         let list_width = (area.width / 5 * 2).clamp(LIST_WIDTH_MIN, LIST_WIDTH_MAX);
-        let cols =
-            Layout::horizontal([Constraint::Length(list_width), Constraint::Min(0)]).split(area);
-        render_run_list(frame, cols[0], &rows, selected, view);
-        render_preview(frame, cols[1], &rows[selected], tick);
+        let [list_area, preview_area] =
+            Layout::horizontal([Constraint::Length(list_width), Constraint::Min(0)]).areas(area);
+        render_run_list(frame, list_area, &rows, selected, view);
+        render_preview(frame, preview_area, &rows[selected], tick);
     } else if view.preview_focused {
         render_preview(frame, area, &rows[selected], tick);
     } else {

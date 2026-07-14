@@ -78,8 +78,9 @@ fn split_area(area: Rect, has_status: bool) -> (Option<Rect>, Rect) {
     if !has_status {
         return (None, area);
     }
-    let chunks = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(area);
-    (Some(chunks[0]), chunks[1])
+    let [status_area, middle_area] =
+        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+    (Some(status_area), middle_area)
 }
 
 /// Splits the middle area into list+preview when there's room for both,
@@ -90,10 +91,10 @@ fn render_panes(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
         // Divide before multiply (matches `login_split`) so the intermediate
         // never overflows `u16` on an extreme-width terminal.
         let list_width = (area.width / 5 * 2).clamp(LIST_WIDTH_MIN, LIST_WIDTH_MAX);
-        let cols =
-            Layout::horizontal([Constraint::Length(list_width), Constraint::Min(0)]).split(area);
-        render_list_pane(frame, cols[0], view);
-        render_preview_pane(frame, cols[1], view);
+        let [list_area, preview_area] =
+            Layout::horizontal([Constraint::Length(list_width), Constraint::Min(0)]).areas(area);
+        render_list_pane(frame, list_area, view);
+        render_preview_pane(frame, preview_area, view);
     } else {
         match view.focused {
             Pane::List => render_list_pane(frame, area, view),

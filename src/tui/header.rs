@@ -65,17 +65,17 @@ pub fn render(frame: &mut Frame, params: RenderParams<'_, '_>) {
     let (client_line, client_width) = client_indicator(client, tick);
     let brand_width = BRAND.chars().count() as u16;
 
-    let layout = Layout::horizontal([
+    let [brand_area, tabs_area, version_area, client_area] = Layout::horizontal([
         Constraint::Length(brand_width),
         Constraint::Min(0),
         Constraint::Length(version_width),
         Constraint::Length(client_width),
     ])
-    .split(area);
+    .areas(area);
 
     frame.render_widget(
         Paragraph::new(Line::from(brand_spans(tick, downloading, brand_ramp))),
-        layout[0],
+        brand_area,
     );
 
     let mut spans: Vec<Span<'_>> = Vec::with_capacity(tabs.len() * 3);
@@ -94,17 +94,17 @@ pub fn render(frame: &mut Frame, params: RenderParams<'_, '_>) {
     }
     frame.render_widget(
         Paragraph::new(Line::from(spans)).alignment(Alignment::Left),
-        layout[1],
+        tabs_area,
     );
 
     frame.render_widget(
         Paragraph::new(Line::from(version_line)).alignment(Alignment::Right),
-        layout[2],
+        version_area,
     );
 
     frame.render_widget(
         Paragraph::new(client_line).alignment(Alignment::Right),
-        layout[3],
+        client_area,
     );
 }
 
