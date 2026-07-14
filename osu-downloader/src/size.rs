@@ -2,14 +2,14 @@
 //!
 //! Behind the `size-fetch` feature.
 
-use crate::{Mirror, http};
+use crate::{Error, Mirror, Result, http};
 use futures_util::{StreamExt, TryStreamExt, stream, stream::FuturesUnordered};
 use reqwest::Client;
 use serde::Deserialize;
 use std::{collections::HashSet, time::Duration};
 use tracing::{debug, trace, warn};
 
-const NEKOHA_API_BASE: &str = "https://mirror.nekoha.moe/api4";
+const NEKOHA_API_BASE: &str = "https://mirror.nekoha.moe/api";
 const DEFAULT_CONCURRENT_REQUESTS: usize = 50;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const PROBE_REDIRECT_LIMIT: usize = 3;
@@ -67,50 +67,47 @@ impl SizeFetcher {
         self
     }
 
+    /// Fetch one beatmapset's archive size from the Nekoha mirror.
+    ///
+    /// Separates the two failures [`fetch_sizes`](Self::fetch_sizes) folds
+    /// together, so a caller can cache a real answer and retry a transient one:
+    ///
+    /// - `Ok(Some(bytes))` — the mirror has a size record.
+    /// - `Ok(None)` — the mirror answered, and this set has no size: either it
+    ///   knows no such set (HTTP 404) or its record carries a null `file_size`.
+    ///   A stable answer; re-asking gets the same one.
+    /// - `Err(_)` — the mirror could not be reached or did not answer usefully
+    ///   (network, timeout, 5xx, unparseable body). Says nothing about the set.
+    ///
+    /// Performs a single request — retry on the caller side if needed.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Network`] / [`Error::Timeout`] on transport failure,
+    /// [`Error::HttpStatus`] on a non-404 unsuccessful status, [`Error::Parse`]
+    /// on a body that is not the expected JSON.
+    pub async fn fetch_size(&self, beatmapset_id: u32) -> Result<Option<u64>> {
+        fetch_single_size(&self.client, beatmapset_id).await
+    }
+
     /// Fetch sizes for `beatmapset_ids` from the Nekoha mirror.
+    ///
+    /// Aggregate-only: a set the mirror has no record for and a set whose probe
+    /// failed both land in `missing_count`. Use [`fetch_size`](Self::fetch_size)
+    /// when that difference matters.
     pub async fn fetch_sizes(&self, beatmapset_ids: &[u32]) -> SizeFetchResult {
         let results: Vec<Option<u64>> = stream::iter(beatmapset_ids.iter().copied())
             .map(|id| {
                 let client = self.client.clone();
-                async move { fetch_single_size(&client, id).await }
+                // A failed probe counts as missing here — same aggregate estimate
+                // this returned before the per-id path split the two apart.
+                async move { fetch_single_size(&client, id).await.ok().flatten() }
             })
             .buffer_unordered(self.concurrency)
             .collect()
             .await;
 
-        let mut known_bytes: u64 = 0;
-        let mut fetched_count: usize = 0;
-        let mut missing_count: u32 = 0;
-
-        for size_opt in results {
-            match size_opt {
-                Some(size) => {
-                    known_bytes = known_bytes.saturating_add(size);
-                    fetched_count += 1;
-                }
-                None => missing_count += 1,
-            }
-        }
-
-        let total_bytes = if missing_count > 0 && fetched_count > 0 {
-            let average = known_bytes / fetched_count as u64;
-            known_bytes.saturating_add(average.saturating_mul(missing_count as u64))
-        } else {
-            known_bytes
-        };
-
-        debug!(
-            total_bytes,
-            known_bytes,
-            fetched = fetched_count,
-            missing = missing_count,
-            "fetched beatmapset sizes from nekoha"
-        );
-
-        SizeFetchResult {
-            total_bytes,
-            missing_count,
-        }
+        estimate_from_probes(&results)
     }
 
     /// Probe each beatmapset against every supplied mirror.
@@ -159,7 +156,9 @@ struct BeatmapsetResponse {
     file_size: Option<u64>,
 }
 
-fn deserialize_string_or_number<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+fn deserialize_string_or_number<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<u64>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -183,28 +182,70 @@ where
     }
 }
 
-async fn fetch_single_size(client: &Client, beatmapset_id: u32) -> Option<u64> {
-    let url = format!("{NEKOHA_API_BASE}/beatmapset/{beatmapset_id}");
+/// Total the landed probes and bill each unknown at the average of what landed,
+/// so a partial sample still yields a whole-batch estimate. With nothing known,
+/// there is no average to bill at and the total is just the known bytes (0).
+fn estimate_from_probes(results: &[Option<u64>]) -> SizeFetchResult {
+    let mut known_bytes: u64 = 0;
+    let mut fetched_count: usize = 0;
+    let mut missing_count: u32 = 0;
 
-    let response = match client.get(&url).send().await {
-        Ok(resp) => resp,
-        Err(err) => {
-            warn!(beatmapset_id, error = %err, "failed to fetch beatmapset size");
-            return None;
+    for size_opt in results {
+        match size_opt {
+            Some(size) => {
+                known_bytes = known_bytes.saturating_add(*size);
+                fetched_count += 1;
+            }
+            None => missing_count += 1,
         }
+    }
+
+    let total_bytes = if missing_count > 0 && fetched_count > 0 {
+        let average = known_bytes / fetched_count as u64;
+        known_bytes.saturating_add(average.saturating_mul(u64::from(missing_count)))
+    } else {
+        known_bytes
     };
 
-    if !response.status().is_success() {
-        return None;
+    debug!(
+        total_bytes,
+        known_bytes,
+        fetched = fetched_count,
+        missing = missing_count,
+        "fetched beatmapset sizes from nekoha"
+    );
+
+    SizeFetchResult {
+        total_bytes,
+        missing_count,
+    }
+}
+
+/// One size lookup. `Ok(None)` is the mirror's own answer that the set has no
+/// size — a 404 (no such set) or a null `file_size`; every other failure is an
+/// `Err`, so a caller can tell a stable answer from an unreachable mirror.
+async fn fetch_single_size(client: &Client, beatmapset_id: u32) -> Result<Option<u64>> {
+    let url = format!("{NEKOHA_API_BASE}/beatmapset/{beatmapset_id}");
+
+    let response = client.get(&url).send().await.inspect_err(|err| {
+        warn!(beatmapset_id, error = %err, "failed to fetch beatmapset size");
+    })?;
+
+    let status = response.status();
+    if status == reqwest::StatusCode::NOT_FOUND {
+        trace!(beatmapset_id, "mirror has no record for beatmapset");
+        return Ok(None);
+    }
+    if !status.is_success() {
+        warn!(beatmapset_id, %status, "beatmapset size lookup failed");
+        return Err(Error::HttpStatus(status.as_u16()));
     }
 
-    match response.json::<BeatmapsetResponse>().await {
-        Ok(data) => data.file_size,
-        Err(err) => {
-            warn!(beatmapset_id, error = %err, "failed to parse beatmapset response");
-            None
-        }
-    }
+    let bytes = response.bytes().await?;
+    let data: BeatmapsetResponse = serde_json::from_slice(&bytes).inspect_err(|err| {
+        warn!(beatmapset_id, error = %err, "failed to parse beatmapset response");
+    })?;
+    Ok(data.file_size)
 }
 
 async fn check_on_any_mirror(client: &Client, beatmapset_id: u32, templates: &[&str]) -> bool {
@@ -315,7 +356,7 @@ async fn probe_once(client: &Client, beatmapset_id: u32, url: &str) -> ProbeOutc
     }
 }
 
-async fn read_probe_prefix(resp: reqwest::Response) -> Result<Vec<u8>, reqwest::Error> {
+async fn read_probe_prefix(resp: reqwest::Response) -> Result<Vec<u8>> {
     let mut bytes = Vec::with_capacity(ZIP_MAGIC.len());
     let mut stream = resp.bytes_stream();
 
@@ -329,3 +370,7 @@ async fn read_probe_prefix(resp: reqwest::Response) -> Result<Vec<u8>, reqwest::
 
     Ok(bytes)
 }
+
+#[cfg(test)]
+#[path = "../tests/size.rs"]
+mod tests;

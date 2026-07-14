@@ -16,7 +16,7 @@ fn mirror_templates() {
     );
     assert_eq!(
         Mirror::nekoha().url_for(1),
-        "https://mirror.nekoha.moe/api4/download/1"
+        "https://mirror.nekoha.moe/api/download/1"
     );
     assert_eq!(
         Mirror::beatconnect().url_for(320118),

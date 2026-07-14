@@ -1,8 +1,11 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use super::{
-    BeatmapDetails, FilterClient, FilterDirection, FilterMode, FilterQuery, FilterRange,
-    FilterResults, FilterSort, FilterSpecial, FilterStatus, build_request,
+    BeatmapDetails, BeatmapStatus, FilterClient, FilterDirection, FilterMode, FilterQuery,
+    FilterRange, FilterResults, FilterSort, FilterSpecial, FilterStatus, build_request,
 };
 use serde_json::json;
+use std::collections::HashMap;
 
 #[test]
 fn empty_query_builds_bare_envelope() {
@@ -218,12 +221,145 @@ fn deserializes_beatmap_details_row() {
     assert_eq!(row.cs, 4.0);
     assert_eq!(row.od, 8.0);
     assert_eq!(row.hp, 8.0);
-    assert_eq!(row.approved, "ranked");
-    assert_eq!(row.mode, "osu");
+    assert_eq!(row.status, Some(BeatmapStatus::Ranked));
+    assert_eq!(row.mode, Some(FilterMode::Osu));
     assert_eq!(row.total_length, 148);
     assert_eq!(row.favourite_count, 234);
     assert_eq!(row.play_count, 1_040_818);
     assert_eq!(row.size, 7_980_194);
+    assert_eq!(row.approved_date, 1_277_585_173_000);
+}
+
+#[test]
+fn deserializes_every_field_of_a_live_fixture_row_exactly() {
+    // Full 30-column row captured live 2026-07-14 (osu-downloader/tests/fixtures/beatmap_details.json).
+    // This is the drift alarm: a server column rename/retype must fail here.
+    let raw = include_str!("fixtures/beatmap_details.json");
+    let rows: Vec<BeatmapDetails> = serde_json::from_str(raw).expect("parse fixture");
+    assert_eq!(rows.len(), 13, "fixture row count changed");
+
+    let row = rows
+        .iter()
+        .find(|row| row.id == 24_722)
+        .expect("fixture row 24722 present");
+    assert_eq!(row.set_id, 4_651);
+    assert_eq!(row.title, "BARUSA of MIKOSU");
+    assert_eq!(row.artist, "Nico Nico Douga");
+    assert_eq!(row.creator, "DJPop");
+    assert_eq!(row.version, "TAG4");
+    assert_eq!(row.stars, 9.36);
+    assert_eq!(row.bpm, 180.0);
+    assert_eq!(row.ar, 8.0);
+    assert_eq!(row.cs, 5.0);
+    assert_eq!(row.od, 8.0);
+    assert_eq!(row.hp, 3.0);
+    assert_eq!(row.status, Some(BeatmapStatus::Approved));
+    assert_eq!(row.mode, Some(FilterMode::Osu));
+    assert_eq!(row.total_length, 181);
+    assert_eq!(row.favourite_count, 1_627);
+    assert_eq!(row.play_count, 1_088_174);
+    assert_eq!(row.size, 20_282_348);
+    assert_eq!(row.hash, "15f8cc75cee3f3752c562ef069fe1270");
+    assert_eq!(
+        row.tags,
+        "barusa of mikosu nico douga lucky star hiiragi tsukasa mad night of nights beatmario"
+    );
+    assert_eq!(row.source, "Lucky Star");
+    assert_eq!(row.genre, "novelty");
+    assert_eq!(row.language, "Japanese");
+    assert_eq!(row.max_combo, 1_246);
+    assert_eq!(row.hit_length, 171);
+    assert_eq!(row.pass_count, 191_891);
+    // ApprovedDate is epoch MILLIseconds; LastUpdate is epoch SECONDS (a
+    // 10-digit value here, not 13) — confirmed against every fixture row.
+    assert_eq!(row.approved_date, 1_234_105_108_000);
+    assert_eq!(row.last_update, 1_234_107_731);
+}
+
+#[test]
+fn all_eight_live_mode_spellings_map_to_the_right_filter_mode() {
+    let raw = include_str!("fixtures/beatmap_details.json");
+    let rows: Vec<BeatmapDetails> = serde_json::from_str(raw).expect("parse fixture");
+
+    // One exemplar id per distinct wire spelling in the fixture.
+    let expected: HashMap<u32, FilterMode> = HashMap::from([
+        (24_722, FilterMode::Osu),    // "osu"
+        (107_434, FilterMode::Osu),   // "osu!"
+        (51_025, FilterMode::Taiko),  // "taiko"
+        (108_914, FilterMode::Taiko), // "Taiko"
+        (74_845, FilterMode::Catch),  // "fruits"
+        (449_201, FilterMode::Catch), // "Catch the Beat"
+        (210_180, FilterMode::Mania), // "mania"
+        (703_125, FilterMode::Mania), // "osu!mania"
+    ]);
+    assert_eq!(expected.len(), 8, "test must cover all 8 live spellings");
+
+    for (id, want) in &expected {
+        let row = rows
+            .iter()
+            .find(|row| row.id == *id)
+            .unwrap_or_else(|| panic!("fixture missing id {id}"));
+        assert_eq!(row.mode, Some(*want), "id {id} mode mismatch");
+    }
+}
+
+#[test]
+fn all_six_live_status_values_map_to_the_right_beatmap_status() {
+    let raw = include_str!("fixtures/beatmap_details.json");
+    let rows: Vec<BeatmapDetails> = serde_json::from_str(raw).expect("parse fixture");
+
+    // One exemplar id per distinct `Approved` value in the fixture.
+    let expected: HashMap<u32, BeatmapStatus> = HashMap::from([
+        (24_722, BeatmapStatus::Approved),
+        (29_757, BeatmapStatus::Graveyard),
+        (39_076, BeatmapStatus::Ranked),
+        (47_359, BeatmapStatus::Loved),
+        (188_836, BeatmapStatus::Pending),
+        (694_305, BeatmapStatus::Wip),
+    ]);
+    assert_eq!(expected.len(), 6, "test must cover all 6 live statuses");
+
+    for (id, want) in &expected {
+        let row = rows
+            .iter()
+            .find(|row| row.id == *id)
+            .unwrap_or_else(|| panic!("fixture missing id {id}"));
+        assert_eq!(row.status, Some(*want), "id {id} status mismatch");
+    }
+}
+
+#[test]
+fn unrecognized_mode_and_status_spellings_deserialize_to_none_without_erroring() {
+    // A hard enum here would let one unfamiliar row poison the whole batch
+    // parse — verify the row still parses with `None` in both fields.
+    let json = r#"[{
+        "Id": 1, "SetId": 2, "Title": "t", "Artist": "a", "Creator": "c",
+        "Version": "v", "Stars": 1.0, "Bpm": 1.0, "Ar": 1.0, "Cs": 1.0,
+        "Od": 1.0, "Hp": 1.0, "Approved": "onion", "Mode": "quaver",
+        "TotalLength": 1, "FavouriteCount": 0, "PlayCount": 0, "Size": 0
+    }]"#;
+    let rows: Vec<BeatmapDetails> =
+        serde_json::from_str(json).expect("unrecognized spellings must not error the whole row");
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    assert_eq!(row.mode, None);
+    assert_eq!(row.status, None);
+    // The rest of the row still lands despite the unrecognized enum values.
+    assert_eq!(row.id, 1);
+    assert_eq!(row.title, "t");
+    assert_eq!(row.total_length, 1);
+}
+
+#[tokio::test]
+async fn details_with_empty_slice_returns_empty_without_a_request() {
+    // No network call happens here: the empty-slice guard returns before
+    // `post_json` is reached, so this is safe to run unignored.
+    let client = FilterClient::new();
+    let details = client
+        .details(&[])
+        .await
+        .expect("empty slice must not error");
+    assert!(details.is_empty());
 }
 
 #[tokio::test]

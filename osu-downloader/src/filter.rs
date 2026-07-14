@@ -53,6 +53,28 @@ impl FilterMode {
     }
 }
 
+/// Deserialize a `/beatmapDetails` row's `Mode` column into a [`FilterMode`].
+///
+/// The endpoint is not consistent about spelling: live rows carry both a
+/// lowercase form (`"osu"`, `"taiko"`, `"fruits"`, `"mania"`) and the
+/// display-label form [`FilterMode::as_value`] sends on requests (`"osu!"`,
+/// `"Taiko"`, `"Catch the Beat"`, `"osu!mania"`) — verified live 2026-07-14.
+/// A spelling this version does not recognize deserializes to `None` rather
+/// than erroring, so one unfamiliar row can't poison the whole batch parse.
+fn deserialize_mode<'de, D>(deserializer: D) -> std::result::Result<Option<FilterMode>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    Ok(match raw.as_str() {
+        "osu" | "osu!" => Some(FilterMode::Osu),
+        "taiko" | "Taiko" => Some(FilterMode::Taiko),
+        "fruits" | "Catch the Beat" => Some(FilterMode::Catch),
+        "mania" | "osu!mania" => Some(FilterMode::Mania),
+        _ => None,
+    })
+}
+
 /// Rank-status filter (the `Approved` column). `Leaderboard` and `Unranked`
 /// are server-side macros expanding to multiple statuses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +111,53 @@ impl FilterStatus {
             Self::Unranked => "unranked",
         }
     }
+}
+
+/// Rank status carried on a `/beatmapDetails` row.
+///
+/// Deliberately a smaller domain than [`FilterStatus`]: `Leaderboard` and
+/// `Unranked` there are query-side server macros (`HasLeaderboard` /
+/// `unranked`) that each expand to several statuses on the request side —
+/// no row can ever carry one of those two as its own value, so reusing
+/// `FilterStatus` here would let an impossible status be constructed from a
+/// real row. This enum models exactly the six statuses observed live
+/// (2026-07-14): `ranked`, `loved`, `approved`, `pending`, `wip`,
+/// `graveyard`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BeatmapStatus {
+    /// Ranked.
+    Ranked,
+    /// Loved.
+    Loved,
+    /// Approved (but not ranked/loved).
+    Approved,
+    /// Pending.
+    Pending,
+    /// Work-in-progress.
+    Wip,
+    /// Graveyard.
+    Graveyard,
+}
+
+/// Deserialize a `/beatmapDetails` row's `Approved` column into a
+/// [`BeatmapStatus`]. An unrecognized value deserializes to `None` rather
+/// than erroring, so one unfamiliar row can't poison the whole batch parse.
+fn deserialize_status<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<BeatmapStatus>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    Ok(match raw.as_str() {
+        "ranked" => Some(BeatmapStatus::Ranked),
+        "loved" => Some(BeatmapStatus::Loved),
+        "approved" => Some(BeatmapStatus::Approved),
+        "pending" => Some(BeatmapStatus::Pending),
+        "wip" => Some(BeatmapStatus::Wip),
+        "graveyard" => Some(BeatmapStatus::Graveyard),
+        _ => None,
+    })
 }
 
 /// BBD-computed special tag. These flags exist only in nzbasic's indexed
@@ -237,9 +306,12 @@ pub struct FilterResults {
     pub hashes: Vec<String>,
 }
 
-/// One `/beatmapDetails` row — per-diff metadata for rich previews. The
-/// response carries more columns than modelled here; unknown fields are
-/// ignored.
+/// One `/beatmapDetails` row — per-diff metadata for rich previews.
+///
+/// The wire response also carries `TimingPoints` and `HitObjects` columns;
+/// both are always the empty string on this endpoint (verified live
+/// 2026-07-14 across a 3000-row sample) and are deliberately not modelled
+/// here — do not re-add them. Any other unmodelled column is ignored.
 #[derive(Debug, Clone, Deserialize)]
 pub struct BeatmapDetails {
     /// Diff-level beatmap id.
@@ -278,12 +350,16 @@ pub struct BeatmapDetails {
     /// HP drain.
     #[serde(rename = "Hp")]
     pub hp: f64,
-    /// Rank status string (`"ranked"`, `"loved"`, ...).
-    #[serde(rename = "Approved")]
-    pub approved: String,
-    /// Game mode string (lowercase in this endpoint, e.g. `"osu"`).
-    #[serde(rename = "Mode")]
-    pub mode: String,
+    /// Rank status. `None` means the row carried a status value this
+    /// version does not recognize — the row still parses; see
+    /// [`BeatmapStatus`].
+    #[serde(rename = "Approved", deserialize_with = "deserialize_status")]
+    pub status: Option<BeatmapStatus>,
+    /// Game mode. `None` means the row carried a mode spelling this version
+    /// does not recognize (the endpoint mixes lowercase and display-label
+    /// forms) — the row still parses.
+    #[serde(rename = "Mode", deserialize_with = "deserialize_mode")]
+    pub mode: Option<FilterMode>,
     /// Total length in seconds.
     #[serde(rename = "TotalLength")]
     pub total_length: u32,
@@ -296,6 +372,44 @@ pub struct BeatmapDetails {
     /// Set archive size in bytes.
     #[serde(rename = "Size", default)]
     pub size: u64,
+    /// Per-diff MD5 checksum — the same value [`FilterResults::hashes`]
+    /// carries for the matching id.
+    #[serde(rename = "Hash", default)]
+    pub hash: String,
+    /// Search tags.
+    #[serde(rename = "Tags", default)]
+    pub tags: String,
+    /// Source (e.g. the game/anime/show the song is from). Often empty.
+    #[serde(rename = "Source", default)]
+    pub source: String,
+    /// Song genre, as classified by BBD.
+    #[serde(rename = "Genre", default)]
+    pub genre: String,
+    /// Song language, as classified by BBD.
+    #[serde(rename = "Language", default)]
+    pub language: String,
+    /// Maximum combo.
+    #[serde(rename = "MaxCombo", default)]
+    pub max_combo: u32,
+    /// Drain time in seconds — distinct from [`Self::total_length`], which
+    /// includes breaks.
+    #[serde(rename = "HitLength", default)]
+    pub hit_length: u32,
+    /// Pass count.
+    #[serde(rename = "PassCount", default)]
+    pub pass_count: u32,
+    /// Rank/approval date, in unix epoch **milliseconds**. A diff never
+    /// approved carries the sentinel `-62135596800000` — the zero `DateTime`
+    /// value (`0001-01-01T00:00:00Z`) — instead of `0` or a null.
+    #[serde(rename = "ApprovedDate", default)]
+    pub approved_date: i64,
+    /// Last-updated date, in unix epoch **seconds** — NOT milliseconds,
+    /// unlike [`Self::approved_date`]. Confirmed against a live sample
+    /// (2026-07-14): every row's `LastUpdate` is a 10-digit value close to
+    /// its `ApprovedDate` once the latter is divided by 1000; treating it
+    /// as milliseconds instead decodes to January 1970.
+    #[serde(rename = "LastUpdate", default)]
+    pub last_update: i64,
 }
 
 /// Serialize a query to BBD's request envelope: the node tree plus
@@ -396,10 +510,38 @@ impl FilterClient {
             .await
     }
 
-    /// Fetch per-diff metadata for a slice of diff ids (from
-    /// [`FilterResults::ids`]). Page the ids caller-side; the endpoint takes
-    /// the whole body as one query.
+    /// Fetch per-diff metadata for a slice of diff ids.
+    ///
+    /// # Stale-id contract
+    ///
+    /// One unrecognized id fails the **entire** batch: the server returns
+    /// HTTP 500 with an empty body if any id in `diff_ids` is unknown to it
+    /// (verified live 2026-07-14 — a single bogus id mixed into an
+    /// otherwise-valid batch 500s all of it, not just the bad row). Only
+    /// pass ids the server itself just returned in a [`FilterResults::ids`]
+    /// from the same session; a list that has since gone stale (a diff
+    /// removed or renumbered upstream) fails every id in it, not only the
+    /// stale one.
+    ///
+    /// # Paging
+    ///
+    /// No server-side cap was observed: a 3000-id batch returned all 3000
+    /// rows in a single ~2 MB response. Paging `diff_ids` caller-side is a
+    /// memory/latency trade-off you choose, not a limit the server imposes.
+    ///
+    /// An empty slice returns `Ok(Vec::new())` immediately without issuing a
+    /// request.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::HttpStatus(500)`](Error::HttpStatus) most likely means one
+    /// of `diff_ids` is unknown to the server (see above), not necessarily
+    /// an outage. A wrong request body shape is not an error case here: it
+    /// returns HTTP 200 with an empty array rather than failing.
     pub async fn details(&self, diff_ids: &[u32]) -> Result<Vec<BeatmapDetails>> {
+        if diff_ids.is_empty() {
+            return Ok(Vec::new());
+        }
         self.post_json(&format!("{NZBASIC_BASE}/beatmapDetails"), &json!(diff_ids))
             .await
     }

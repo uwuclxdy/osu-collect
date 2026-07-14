@@ -6,7 +6,7 @@
 #   - osu.direct download template    https://osu.direct/d/{id}
 #   - osu.direct MIRROR_CHECK_URLS    https://osu.direct/api/d/{id}  (different path!)
 #   - sayobot                         https://dl.sayobot.cn/beatmaps/download/full/{id}
-#   - nekoha                          https://mirror.nekoha.moe/api4/download/{id}
+#   - nekoha                          https://mirror.nekoha.moe/api/download/{id}
 #   - beatconnect (anon)             https://beatconnect.io/b/{id}/
 #   - hinamizawa (cascade)           https://mirror.hinamizawa.ai/api/v1/hinai/d/{id}
 
@@ -73,7 +73,7 @@ echo "--- download templates (used for actual downloads in osu-downloader) ---"
 probe_zip "nerinyan" "https://api.nerinyan.moe/d/$BEATMAPSET_ID"
 probe_zip "osu.direct (download template: /d/)" "https://osu.direct/d/$BEATMAPSET_ID"
 probe_zip "sayobot" "https://dl.sayobot.cn/beatmaps/download/full/$BEATMAPSET_ID"
-probe_zip "nekoha" "https://mirror.nekoha.moe/api4/download/$BEATMAPSET_ID"
+probe_zip "nekoha" "https://mirror.nekoha.moe/api/download/$BEATMAPSET_ID"
 probe_zip "beatconnect (anon /b/)" "https://beatconnect.io/b/$BEATMAPSET_ID/"
 probe_zip "hinamizawa (cascade /api/v1/hinai/d/)" "https://mirror.hinamizawa.ai/api/v1/hinai/d/$BEATMAPSET_ID"
 

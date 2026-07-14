@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests: Nekoha API - GET /api4/beatmapset/{id}
+# tests: Nekoha API - GET /api/beatmapset/{id}
 # rust source: src/download/size_fetcher.rs
 # used to fetch file_size for download progress estimation
 # model: BeatmapsetResponse { file_size: Option<u64> } (may be string or number per deserializer)
@@ -8,7 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
-BASE="https://mirror.nekoha.moe/api4"
+BASE="https://mirror.nekoha.moe/api"
 URL="$BASE/beatmapset/$BEATMAPSET_ID"
 
 echo "=== Nekoha size API: GET $URL ==="

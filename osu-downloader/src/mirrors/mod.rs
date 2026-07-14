@@ -100,8 +100,8 @@ impl MirrorKind {
             MirrorKind::Nekoha => Some(ProviderMeta {
                 label: "Nekoha",
                 backoff_secs: 45,
-                template: "https://mirror.nekoha.moe/api4/download/{id}",
-                template_no_video: "https://mirror.nekoha.moe/api4/download/{id}",
+                template: "https://mirror.nekoha.moe/api/download/{id}",
+                template_no_video: "https://mirror.nekoha.moe/api/download/{id}",
             }),
             MirrorKind::Beatconnect => Some(ProviderMeta {
                 label: "Beatconnect",
