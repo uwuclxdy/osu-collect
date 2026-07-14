@@ -12,6 +12,23 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// A reqwest client with connection pooling disabled. The hand-rolled mock
+/// servers below serve one request per accepted connection; with pooling on,
+/// reqwest intermittently reuses a same-host connection for a redirect hop or a
+/// retry, and the server then closes that socket with the reused request still
+/// unread — closing a socket that has unread receive data makes the kernel send
+/// RST rather than FIN, which discards the response the client was waiting on
+/// (surfaces as `IncompleteMessage`/`ConnectionReset`, ~33% of full-suite runs).
+/// Forcing a fresh connection per request keeps the client's transport in step
+/// with the servers' one-accept-per-request model. Pooling is orthogonal to what
+/// these tests assert (redirect following, size extraction, rate-limit dedup).
+fn test_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .pool_max_idle_per_host(0)
+        .build()
+        .unwrap()
+}
+
 fn default_params<'a>(
     beatmapset_id: u32,
     output_dir: &'a Path,
@@ -193,7 +210,7 @@ async fn range_probe_discovers_redirected_download_size() {
         }
     });
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let mirror = Mirror::custom(format!("http://{addr}/mirror/{{id}}")).unwrap();
     let mirror_pool = MirrorPool::new(vec![mirror.clone()]);
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
@@ -249,7 +266,7 @@ async fn probe_preserves_range_across_multiple_redirects() {
         }
     });
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let mirror = Mirror::custom(format!("http://{addr}/api/{{id}}")).unwrap();
     let mirror_pool = MirrorPool::new(vec![mirror.clone()]);
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
@@ -289,7 +306,7 @@ async fn completion_uses_probed_size_when_download_is_chunked() {
         }
     });
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let mirror = Mirror::custom(format!("http://{addr}/download/{{id}}")).unwrap();
     let mirror_pool = MirrorPool::new(vec![mirror]);
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
@@ -339,7 +356,7 @@ async fn skip_existing_file_does_not_emit_downloading() {
             .unwrap();
     });
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let mirror = Mirror::custom(format!("http://{addr}/download/{{id}}")).unwrap();
     let mirror_pool = MirrorPool::new(vec![mirror]);
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
@@ -432,7 +449,7 @@ async fn rate_limit_status_suppressed_when_other_mirror_succeeds() {
         Mirror::with_kind_and_template(MirrorKind::OsuDirect, format!("http://{addr}/ok/{{id}}"));
     let mirror_pool = MirrorPool::new(vec![rate_limited, healthy]);
     let dir = tempfile::tempdir().unwrap();
-    let client = reqwest::Client::new();
+    let client = test_client();
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
 
     let statuses: Arc<Mutex<Vec<Status>>> = Arc::new(Mutex::new(Vec::new()));
@@ -506,7 +523,7 @@ async fn rate_limit_status_emitted_once_when_all_mirrors_throttled() {
         Mirror::with_kind_and_template(MirrorKind::OsuDirect, format!("http://{addr}/b/{{id}}"));
     let mirror_pool = MirrorPool::new(vec![mirror_a, mirror_b]);
     let dir = tempfile::tempdir().unwrap();
-    let client = reqwest::Client::new();
+    let client = test_client();
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
 
     let statuses: Arc<Mutex<Vec<Status>>> = Arc::new(Mutex::new(Vec::new()));
@@ -549,7 +566,7 @@ async fn auto_defer_fires_once_cumulative_inline_budget_is_reached() {
     // the budget crosses first and defers the map long before the cooldown ends.
     mirror_pool.mark_rate_limited(0, Some(Duration::from_millis(500)));
     let dir = tempfile::tempdir().unwrap();
-    let client = reqwest::Client::new();
+    let client = test_client();
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
 
     let start = Instant::now();
@@ -598,7 +615,7 @@ async fn spacing_waits_never_count_toward_the_auto_defer_budget() {
     // cannot swallow it under parallel test load.
     let _ = mirror_pool.acquire_at(&[0], Instant::now() + Duration::from_secs(1));
     let dir = tempfile::tempdir().unwrap();
-    let client = reqwest::Client::new();
+    let client = test_client();
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
 
     let start = Instant::now();
@@ -642,7 +659,7 @@ async fn spacing_wait_is_immune_to_defer_and_drop_signals() {
     // A healthy map waiting out a ~300 ms send-token spacing (no cooldown).
     let _ = mirror_pool.acquire_at(&[0], Instant::now() + Duration::from_millis(300));
     let dir = tempfile::tempdir().unwrap();
-    let client = reqwest::Client::new();
+    let client = test_client();
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
     let params = DownloadParams {
         inline_wait_max: Duration::from_secs(2),
@@ -719,7 +736,7 @@ async fn rate_limited_mirror_is_retried_after_other_mirrors_fail() {
     );
     let mirror_pool = MirrorPool::new(vec![rate_limited_then_ok, missing]);
     let dir = tempfile::tempdir().unwrap();
-    let client = reqwest::Client::new();
+    let client = test_client();
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
 
     let (outcome, _) = download_beatmapset(default_params(
@@ -760,7 +777,7 @@ async fn verify_archive_records_nonzero_duration_when_enabled() {
         stream.write_all(&zip_bytes).unwrap();
     });
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let mirror = Mirror::custom(format!("http://{addr}/dl/{{id}}")).unwrap();
     let mirror_pool = MirrorPool::new(vec![mirror]);
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
@@ -890,7 +907,7 @@ async fn defer_signal_requeues_a_parked_map() {
     let mirror_pool = MirrorPool::new(vec![mirror]);
     mirror_pool.mark_rate_limited(0, Some(Duration::from_secs(1)));
     let dir = tempfile::tempdir().unwrap();
-    let client = reqwest::Client::new();
+    let client = test_client();
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
     let params = default_params(1, dir.path(), &client, &mirror_pool, cancel_rx);
     let defer = params.defer_signal.clone();
@@ -913,7 +930,7 @@ async fn drop_signal_discards_a_parked_map() {
     let mirror_pool = MirrorPool::new(vec![mirror]);
     mirror_pool.mark_rate_limited(0, Some(Duration::from_secs(1)));
     let dir = tempfile::tempdir().unwrap();
-    let client = reqwest::Client::new();
+    let client = test_client();
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
     let params = default_params(1, dir.path(), &client, &mirror_pool, cancel_rx);
     let drop_signal = params.drop_signal.clone();
@@ -939,7 +956,7 @@ async fn long_cooldown_defers_to_the_batch() {
     let mirror_pool = MirrorPool::new(vec![mirror]);
     mirror_pool.mark_rate_limited(0, Some(Duration::from_secs(1)));
     let dir = tempfile::tempdir().unwrap();
-    let client = reqwest::Client::new();
+    let client = test_client();
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
 
     let start = Instant::now();
@@ -972,7 +989,7 @@ async fn long_spacing_wait_defers_without_a_rate_limit_flag() {
     // Spend the send token ~1 s out with no cooldown: a pure spacing wait.
     let _ = mirror_pool.acquire_at(&[0], Instant::now() + Duration::from_secs(1));
     let dir = tempfile::tempdir().unwrap();
-    let client = reqwest::Client::new();
+    let client = test_client();
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
 
     let start = Instant::now();
@@ -1022,7 +1039,7 @@ async fn validation_failure_records_definitive_not_success() {
     let mirror = Mirror::custom(format!("http://{addr}/d/{{id}}")).unwrap();
     let mirror_pool = MirrorPool::new(vec![mirror]);
     let dir = tempfile::tempdir().unwrap();
-    let client = reqwest::Client::new();
+    let client = test_client();
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
 
     let outcomes: Arc<Mutex<Vec<AttemptOutcome>>> = Arc::new(Mutex::new(Vec::new()));
