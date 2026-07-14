@@ -137,6 +137,29 @@ match classify_output_entry(&entry.file_name()) {
 }
 ```
 
+## Size lookups
+
+The `size-fetch` feature asks the Nekoha mirror how large a beatmapset's archive is. Pick the call by whether you need to tell a real answer from a failure:
+
+```rust
+use osu_downloader::size::SizeFetcher;
+
+let fetcher = SizeFetcher::new();
+
+// Per-id: separates the two, so a caller can cache an answer and retry a failure.
+match fetcher.fetch_size(1091132).await {
+    Ok(Some(bytes)) => /* the mirror's size record */,
+    Ok(None)        => /* the mirror has no size for this set — a stable answer */,
+    Err(err)        => /* the mirror was unreachable; says nothing about the set */,
+}
+
+// Aggregate: folds "no record" and "probe failed" together into `missing_count`,
+// then bills each unknown at the average of what landed.
+let estimate = fetcher.fetch_sizes(&[1091132, 1234567]).await;
+```
+
+`fetch_size` performs a single request and never retries — retry on the caller side if you want one.
+
 ## Availability checks
 
 The `size-fetch` feature exposes `SizeFetcher::check_availability` for cheap "is this id reachable on any mirror" probes. It accepts `Mirror` objects directly, so the typical call is:
