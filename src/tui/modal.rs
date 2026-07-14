@@ -321,19 +321,15 @@ fn render_button_modal(
         return;
     }
 
-    let body_area = Rect {
-        height: body_rows.min(inner.height),
-        ..inner
-    };
+    // The body pane fills everything above the last row; the wrapped `Paragraph`
+    // draws only its `body_rows` lines regardless, leaving the blank separator
+    // row (folded into this fill) untouched, same as the old explicit split.
+    let [body_area, button_area] =
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(inner);
     frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: true }), body_area);
 
     // Right-aligned button group on the last inner row: 3-space gap,
     // no separator glyph; the focused button is the only inverse block.
-    let button_area = Rect {
-        y: inner.y + inner.height - 1,
-        height: 1,
-        ..inner
-    };
     frame.render_widget(
         Paragraph::new(Line::from(button_spans(buttons, focus))).alignment(Alignment::Right),
         button_area,
@@ -508,11 +504,13 @@ pub(crate) fn render_update_modal(
     }
 
     // Split inner rows: changelog list (scrolls) · blank separator · button row.
-    let list_h = inner.height.saturating_sub(2);
-    let list_area = Rect {
-        height: list_h,
-        ..inner
-    };
+    let [list_area, _separator_area, button_area] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+    let list_h = list_area.height;
 
     let total = body.len();
     let visible = list_h as usize;
@@ -524,11 +522,6 @@ pub(crate) fn render_update_modal(
     frame.render_stateful_widget(List::new(items), list_area, &mut state);
     widgets::render_scrollbar(frame, list_area, start, total);
 
-    let button_area = Rect {
-        y: inner.y + inner.height - 1,
-        height: 1,
-        ..inner
-    };
     frame.render_widget(
         Paragraph::new(Line::from(button_spans(&UPDATE_MODAL_BUTTONS, focus)))
             .alignment(Alignment::Right),

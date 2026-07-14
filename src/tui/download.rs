@@ -5,7 +5,7 @@ use crate::{
 };
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Layout, Margin, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Gauge, List, ListItem, ListState, Paragraph, Wrap},
@@ -348,12 +348,7 @@ pub(crate) fn format_eta(secs: u64) -> String {
 
 fn render_gauge(frame: &mut Frame, area: Rect, page: &CollectionPage, tick: u64) {
     // Inset the bar by GAUGE_H_MARGIN on each side; titles stay at the outer edge.
-    let bar_area = Rect {
-        x: area.x.saturating_add(GAUGE_H_MARGIN),
-        y: area.y,
-        width: area.width.saturating_sub(GAUGE_H_MARGIN * 2),
-        height: area.height,
-    };
+    let bar_area = area.inner(Margin::new(GAUGE_H_MARGIN, 0));
 
     if matches!(
         page.stage,
