@@ -1,0 +1,3 @@
+# Non-workspace path-dep libs cargo.sh should also test (mirrors the CI
+# `test osu-downloader lib` leg). One manifest path per line, relative to repo root.
+osu-downloader/Cargo.toml
