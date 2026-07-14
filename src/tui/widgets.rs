@@ -110,8 +110,9 @@ impl<T: Copy + PartialEq> FormItems<T> {
 /// highlight: when `highlight` is `false` (the focused row styles itself — the
 /// CTA button, the auth chip) the row is still scrolled into view but the
 /// `bg_hover` bar is suppressed so the row's own styling shows through.
-/// `List::scroll_padding(1)` keeps one row of context above/below while it
-/// scrolls.
+/// `List::scroll_padding(3)` keeps three rows of context above/below while it
+/// scrolls (spacer/hint rows count as context, so a single padded row can read
+/// as blank; three keeps real rows visible past the cursor).
 ///
 /// Returns the resolved top offset (`ListState::offset`) so the caller can map
 /// the focused row to a screen position for the text caret.
@@ -148,7 +149,7 @@ pub(crate) fn render_list(
         Style::default()
     };
     let list = List::new(items)
-        .scroll_padding(1)
+        .scroll_padding(3)
         .highlight_symbol("")
         .highlight_style(row_style);
     frame.render_stateful_widget(list, inner, &mut state);
