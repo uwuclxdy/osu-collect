@@ -293,6 +293,35 @@ fn osu_only_new_criteria_force_osu_and_serialize() {
 }
 
 #[test]
+fn degenerate_range_text_forces_a_route_without_emitting_a_term() {
+    use crate::app::FindRoute;
+    // A bare `-` (or `..`) is a range with neither bound: no `keys` term reaches
+    // the query, yet the raw text still reads as "set" to the router. Known quirk,
+    // pinned so a fix has to flip both halves of this test deliberately.
+    let mut source = FindSource::new();
+    source.keys.set_value("-");
+    assert_eq!(osu(&source).keys, None);
+    assert_eq!(source.resolved_route(), FindRoute::Osu);
+
+    let mut source = FindSource::new();
+    source.keys.set_value("..");
+    assert_eq!(osu(&source).keys, None);
+
+    // The sharp edge: paired with a nzbasic-forcer it conflicts, blocking the run
+    // over a field that contributes nothing to either query.
+    let mut source = FindSource::new();
+    source.keys.set_value("-");
+    set_special(&mut source, "farm");
+    assert_eq!(
+        source.resolved_route(),
+        FindRoute::Conflict {
+            nzbasic: "farm".to_string(),
+            osu: "keys".to_string(),
+        }
+    );
+}
+
+#[test]
 fn ranked_date_range_uses_dotdot_separator() {
     // A single token stays an exact term (server tolerance is n/a for dates).
     let mut source = FindSource::new();
