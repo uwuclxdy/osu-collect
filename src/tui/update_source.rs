@@ -50,6 +50,7 @@ pub fn push_form_rows(
     focus: HomeField,
     editing: bool,
     tick: u64,
+    primary: HomeField,
 ) {
     let path_focused = focus == HomeField::UpdateOsuPath;
     items.push_focusable(
@@ -89,7 +90,12 @@ pub fn push_form_rows(
     };
     items.push_focusable(
         HomeField::UpdateScan,
-        widgets::button_item(&cta_label, focus == HomeField::UpdateScan, !busy),
+        widgets::button_item(
+            &cta_label,
+            focus == HomeField::UpdateScan,
+            !busy,
+            widgets::ButtonProminence::primary_if(HomeField::UpdateScan == primary),
+        ),
     );
 
     // `view N maps` opens the two-pane browse over the scan's missing sets;
@@ -104,6 +110,7 @@ pub fn push_form_rows(
             new_count > 0,
             form.is_enriching(),
             tick,
+            widgets::ButtonProminence::primary_if(HomeField::UpdateBrowse == primary),
         ),
     );
     // The shared download button + run settings render AFTER this, in the Home

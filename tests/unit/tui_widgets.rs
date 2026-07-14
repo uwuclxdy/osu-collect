@@ -1,6 +1,7 @@
 use super::{
-    download_button_label_with_size, input_cursor_col, input_item, message_style, render_list,
-    render_scrollbar, set_panel_cursor, truncate_to_width,
+    ButtonProminence, button_item, button_item_with_loading_cue, download_button_label_with_size,
+    input_cursor_col, input_item, message_style, render_list, render_scrollbar, set_panel_cursor,
+    truncate_to_width,
 };
 use crate::app::InputField;
 use crate::download::BeatmapStage;
@@ -8,7 +9,7 @@ use crate::tui::{
     FILL_BLOCK, FILL_SHADE, FILL_SPACE, GLYPH_BLOCK, GLYPH_SHADE, GLYPH_SPACE, accent, bg_hover,
     danger, glyph_fill, success, text, text_dim, text_faint, warning,
 };
-use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Modifier, widgets::ListItem};
 
 /// Drives [`set_panel_cursor`] through a real frame and reads back the terminal
 /// caret. Returns `None` when the frame left the cursor hidden, or `Some((x, y))`
@@ -295,6 +296,97 @@ fn focused_row_promotes_only_label_keeps_value_color_and_full_bg() {
     assert!(
         !buf[(2, 1)].modifier.contains(Modifier::BOLD),
         "blurred row label is not bold"
+    );
+}
+
+/// Cloudy-tui contract: the focus caret `❯` is `ACCENT + bold`, and action
+/// buttons split by prominence at rest — the primary CTA (`download`) stays
+/// `ACCENT + bold`, while a secondary action (`view maps` / `scan`) drops to a
+/// quieter `TEXT_DIM` so it doesn't shout as loud as the primary beside it. The
+/// primary is the form's last enabled action button; a disabled pill is faint
+/// regardless of prominence.
+#[test]
+fn action_button_prominence_and_caret_weight() {
+    let render = |item: ListItem<'static>| {
+        let mut terminal = Terminal::new(TestBackend::new(30, 1)).expect("test backend");
+        terminal
+            .draw(|frame| {
+                let _ = render_list(
+                    frame,
+                    Rect::new(0, 0, 30, 1),
+                    vec![item],
+                    None,
+                    false,
+                    &std::cell::Cell::new(0),
+                );
+            })
+            .expect("frame renders");
+        terminal.backend().buffer().clone()
+    };
+
+    // Blurred (button focused = false): cols 0..2 are the blank caret pad, col 2
+    // the pill's leading space, col 3 the label's first char carrying the at-rest
+    // pill style.
+    let primary = render(button_item(
+        "download",
+        false,
+        true,
+        ButtonProminence::Primary,
+    ));
+    assert_eq!(primary[(3, 0)].symbol(), "d");
+    assert_eq!(
+        primary[(3, 0)].fg,
+        accent(),
+        "primary CTA fill stays ACCENT at rest"
+    );
+    assert!(
+        primary[(3, 0)].modifier.contains(Modifier::BOLD),
+        "primary CTA stays bold at rest"
+    );
+
+    let view = render(button_item_with_loading_cue(
+        "view maps",
+        false,
+        true,
+        false,
+        0,
+        ButtonProminence::Secondary,
+    ));
+    assert_eq!(view[(3, 0)].symbol(), "v");
+    assert_eq!(
+        view[(3, 0)].fg,
+        text_dim(),
+        "secondary view button drops to TEXT_DIM at rest"
+    );
+    assert!(
+        !view[(3, 0)].modifier.contains(Modifier::BOLD),
+        "secondary button is not bold at rest"
+    );
+
+    let scan = render(button_item(
+        "scan",
+        false,
+        true,
+        ButtonProminence::Secondary,
+    ));
+    assert_eq!(
+        scan[(3, 0)].fg,
+        text_dim(),
+        "secondary scan button drops to TEXT_DIM at rest"
+    );
+
+    // Focused (button focused = true): the caret glyph at col 0 is ACCENT + bold.
+    let focused = render(button_item(
+        "download",
+        true,
+        true,
+        ButtonProminence::Primary,
+    ));
+    assert_eq!(focused[(0, 0)].symbol(), "❯");
+    assert_eq!(focused[(0, 0)].fg, accent(), "focus caret is ACCENT");
+    assert!(
+        focused[(0, 0)].modifier.contains(Modifier::BOLD),
+        "focus caret is bold (cloudy-tui hierarchy)"
     );
 }
 

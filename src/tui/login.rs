@@ -102,6 +102,7 @@ fn build_login_items(
                     submit_label(login.phase, in_flight),
                     focus == LoginField::Submit,
                     true,
+                    widgets::ButtonProminence::Primary,
                 ),
             );
             items.push(widgets::spacer());
@@ -126,11 +127,17 @@ fn build_login_items(
                     submit_label(login.phase, in_flight),
                     focus == LoginField::Submit,
                     true,
+                    widgets::ButtonProminence::Primary,
                 ),
             );
             items.push_focusable(
                 LoginField::Resend,
-                widgets::button_item("resend code", focus == LoginField::Resend, !in_flight),
+                widgets::button_item(
+                    "resend code",
+                    focus == LoginField::Resend,
+                    !in_flight,
+                    widgets::ButtonProminence::Primary,
+                ),
             );
         }
         LoginPhase::LoggedIn => {
@@ -160,7 +167,12 @@ fn build_login_items(
             items.push(widgets::spacer());
             items.push_focusable(
                 LoginField::Submit,
-                widgets::button_item("log out", focus == LoginField::Submit, true),
+                widgets::button_item(
+                    "log out",
+                    focus == LoginField::Submit,
+                    true,
+                    widgets::ButtonProminence::Primary,
+                ),
             );
         }
     }

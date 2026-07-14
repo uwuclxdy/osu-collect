@@ -181,6 +181,7 @@ fn render_form(
     chrome: bool,
 ) {
     let focus = form.focus;
+    let primary = form.primary_action_field();
     let active_section = home_section(focus);
     let mut items = widgets::FormItems::new(focus);
 
@@ -229,14 +230,21 @@ fn render_form(
                     form.button_enabled(HomeField::CollectionBrowse),
                     form.collection_browse.is_enriching(),
                     tick,
+                    widgets::ButtonProminence::primary_if(HomeField::CollectionBrowse == primary),
                 ),
             );
         }
-        GetMapsSource::Update => {
-            update_source::push_form_rows(&mut items, &form.update, library, focus, editing, tick)
-        }
+        GetMapsSource::Update => update_source::push_form_rows(
+            &mut items,
+            &form.update,
+            library,
+            focus,
+            editing,
+            tick,
+            primary,
+        ),
         GetMapsSource::Find => {
-            find_source::push_form_rows(&mut items, &form.find, focus, editing, tick)
+            find_source::push_form_rows(&mut items, &form.find, focus, editing, tick, primary)
         }
     }
 
@@ -247,7 +255,7 @@ fn render_form(
     if chrome {
         items.push(widgets::spacer());
     }
-    push_action_buttons(&mut items, form, focus);
+    push_action_buttons(&mut items, form, focus, primary);
 
     let cursor_col = home_cursor_col(form, library, editing);
     let (items, focused_index) = items.into_parts();
@@ -325,6 +333,7 @@ fn push_action_buttons(
     items: &mut widgets::FormItems<HomeField>,
     form: &HomeTab,
     focus: HomeField,
+    primary: HomeField,
 ) {
     let (download_label, download_enabled) = match form.source {
         GetMapsSource::Collection => collection_download_button(form),
@@ -343,6 +352,7 @@ fn push_action_buttons(
             &download_label,
             focus == HomeField::Download,
             download_enabled,
+            widgets::ButtonProminence::primary_if(HomeField::Download == primary),
         ),
     );
 }

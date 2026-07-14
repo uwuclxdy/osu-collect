@@ -747,6 +747,23 @@ impl HomeTab {
         }
     }
 
+    /// The active source's primary CTA — the furthest-along *enabled* action
+    /// button in field order (`find`/`scan` → `view N maps` → `download`), so
+    /// the eye is drawn to the next actionable step rather than always to the
+    /// terminal `download`. Falls back to [`HomeField::Download`] when none are
+    /// enabled (every action button is faint then anyway, so the pinned primary
+    /// doesn't shout). This is the `None`-focus arm of
+    /// [`cycle_enabled_button`](Self::cycle_enabled_button); the render reads it
+    /// to pick each button's `ButtonProminence`.
+    pub fn primary_action_field(&self) -> HomeField {
+        self.active_fields()
+            .iter()
+            .copied()
+            .filter(|&field| field.is_button() && self.button_enabled(field))
+            .last()
+            .unwrap_or(HomeField::Download)
+    }
+
     /// Focus target for a press of `s`, over the active source's enabled
     /// ("clickable") buttons in field order. When focus is **not** already on one,
     /// the *last* enabled button — the furthest-along CTA

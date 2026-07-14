@@ -48,6 +48,7 @@ pub fn push_form_rows(
     focus: HomeField,
     editing: bool,
     tick: u64,
+    primary: HomeField,
 ) {
     let route = find.resolved_route();
 
@@ -162,6 +163,7 @@ pub fn push_form_rows(
             focus == HomeField::FindRun,
             !loading,
             route_trailing_spans(&route),
+            widgets::ButtonProminence::primary_if(HomeField::FindRun == primary),
         ),
     );
 
@@ -177,6 +179,7 @@ pub fn push_form_rows(
             view_current,
             find.browse.is_enriching(),
             tick,
+            widgets::ButtonProminence::primary_if(HomeField::FindBrowse == primary),
         ),
     );
     if let Some(row) = status_row(&find.status_msg) {

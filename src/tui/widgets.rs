@@ -335,7 +335,8 @@ pub fn panel_block(
 
 pub fn focus_span(focused: bool) -> Span<'static> {
     if focused {
-        FOCUS_MARK.fg(accent())
+        // Contract: the selection caret is ACCENT + bold (cloudy-tui hierarchy).
+        FOCUS_MARK.fg(accent()).bold()
     } else {
         Span::raw(FOCUS_PAD)
     }
@@ -389,10 +390,11 @@ fn toggle_spans(on: bool) -> Vec<Span<'static>> {
 /// Leading glyph for a text-input row: `✎` when the row is being edited, `❯`
 /// when selected-not-editing, two-space pad when blurred.
 pub fn input_focus_span(focused: bool, editing: bool) -> Span<'static> {
+    // Contract: the caret `❯` and edit glyph `✎` are both ACCENT + bold.
     if focused && editing {
-        EDIT_MARK.fg(accent())
+        EDIT_MARK.fg(accent()).bold()
     } else if focused {
-        FOCUS_MARK.fg(accent())
+        FOCUS_MARK.fg(accent()).bold()
     } else {
         Span::raw(FOCUS_PAD)
     }
@@ -727,55 +729,97 @@ pub fn disabled_toggle_row(
     ListItem::new(Line::from(spans))
 }
 
-/// A prominent-CTA action button (`▐ label ▌`), activated with `enter`.
+/// An action button (` label `), activated with `enter`.
 ///
-/// Renders the action-only chip's prominent-CTA form: `ACCENT + bold` on a
-/// `BG_RAISED` fill at rest, an inverse `ACCENT` block (`fg = BG`) when focused,
-/// 1-space inset. `enabled == false` is the disabled chip — the whole pill goes
-/// `TEXT_FAINT`, focusable-but-inert (the caret still lands so the row reads as
-/// selected); the caller skips activation and surfaces a reason.
-pub fn button_item(label: &str, focused: bool, enabled: bool) -> ListItem<'static> {
-    ListItem::new(Line::from(button_spans(label, focused, enabled)))
+/// Renders the action-only chip: `ACCENT + bold` on a `BG_RAISED` fill at rest
+/// when `prominence` is [`ButtonProminence::Primary`], `TEXT_DIM` when it's
+/// [`ButtonProminence::Secondary`]; an inverse `ACCENT` block (`fg = BG`) when
+/// focused, 1-space inset. `enabled == false` is the disabled chip — the whole
+/// pill goes `TEXT_FAINT`, focusable-but-inert (the caret still lands so the row
+/// reads as selected); the caller skips activation and surfaces a reason.
+///
+/// `prominence` is the caller's call: the single primary CTA is the form's last
+/// *enabled* action button in field order (`find`/`scan` → `view N maps` →
+/// `download`), so every other action button drops to `Secondary`. A disabled
+/// pill renders faint regardless of prominence, so the primary label can stay
+/// pinned on the terminal button without shouting when it's inert.
+pub fn button_item(
+    label: &str,
+    focused: bool,
+    enabled: bool,
+    prominence: ButtonProminence,
+) -> ListItem<'static> {
+    ListItem::new(Line::from(button_spans(
+        label, focused, enabled, prominence,
+    )))
 }
 
 /// [`button_item`] with extra pre-styled spans appended after the pill on the
 /// SAME row (the find CTA carries its resolved-backend indicator this way). The
-/// caller owns the trailing spans' leading gap.
+/// caller owns the trailing spans' leading gap and picks the pill's prominence.
 pub fn button_item_with_trailing(
     label: &str,
     focused: bool,
     enabled: bool,
     trailing: Vec<Span<'static>>,
+    prominence: ButtonProminence,
 ) -> ListItem<'static> {
-    let mut spans = button_spans(label, focused, enabled);
+    let mut spans = button_spans(label, focused, enabled, prominence);
     spans.extend(trailing);
     ListItem::new(Line::from(spans))
 }
 
-/// [`button_item`] with a trailing `⠋ loading titles` cue while `enriching` —
-/// a `view N mapsets` button stays pressable mid-fetch, so its loading state
-/// trails the pill rather than swapping the label. Wrapped by
-/// [`view_browse_button`], the single path every source's view button routes
-/// through.
+/// The `view N mapsets` button, with a trailing `⠋ loading titles` cue while
+/// `enriching` — it stays pressable mid-fetch, so its loading state trails the
+/// pill rather than swapping the label. Wrapped by [`view_browse_button`], the
+/// single path every source's view button routes through.
 pub fn button_item_with_loading_cue(
     label: &str,
     focused: bool,
     enabled: bool,
     enriching: bool,
     tick: u64,
+    prominence: ButtonProminence,
 ) -> ListItem<'static> {
-    if !enriching {
-        return button_item(label, focused, enabled);
+    let mut spans = button_spans(label, focused, enabled, prominence);
+    if enriching {
+        spans.push(Span::raw("  "));
+        spans.push(loading_titles_span(tick));
     }
-    button_item_with_trailing(
-        label,
-        focused,
-        enabled,
-        vec![Span::raw("  "), loading_titles_span(tick)],
-    )
+    ListItem::new(Line::from(spans))
 }
 
-fn button_spans(label: &str, focused: bool, enabled: bool) -> Vec<Span<'static>> {
+/// Prominence tier of an action button at rest. Both tiers focus to the same
+/// inverse-`ACCENT` block; they differ only in the blurred fill — a `Primary`
+/// CTA keeps `ACCENT + bold`, a `Secondary` action drops to `TEXT_DIM` so it
+/// doesn't shout as loud as the primary beside it (cloudy-tui action-only chip:
+/// "reserve the prominent form for a genuine primary CTA"). The primary is the
+/// form's last enabled action button — see [`ButtonProminence::primary_if`].
+#[derive(Clone, Copy)]
+pub enum ButtonProminence {
+    Primary,
+    Secondary,
+}
+
+impl ButtonProminence {
+    /// `Primary` when `is_primary`, else `Secondary`. The call-site test is
+    /// `field == primary`, where `primary` is the form's current CTA — the last
+    /// enabled action button, falling back to `Download`.
+    pub fn primary_if(is_primary: bool) -> Self {
+        if is_primary {
+            Self::Primary
+        } else {
+            Self::Secondary
+        }
+    }
+}
+
+fn button_spans(
+    label: &str,
+    focused: bool,
+    enabled: bool,
+    prominence: ButtonProminence,
+) -> Vec<Span<'static>> {
     let pill = format!(" {label} ");
 
     let pill_style = if !enabled {
@@ -783,7 +827,10 @@ fn button_spans(label: &str, focused: bool, enabled: bool) -> Vec<Span<'static>>
     } else if focused {
         Style::default().fg(bg()).bg(accent()).bold()
     } else {
-        Style::default().fg(accent()).bold().bg(bg_raised())
+        match prominence {
+            ButtonProminence::Primary => Style::default().fg(accent()).bold().bg(bg_raised()),
+            ButtonProminence::Secondary => Style::default().fg(text_dim()).bg(bg_raised()),
+        }
     };
 
     vec![focus_span(focused), Span::styled(pill, pill_style)]
@@ -840,13 +887,14 @@ pub fn view_browse_button(
     enabled: bool,
     enriching: bool,
     tick: u64,
+    prominence: ButtonProminence,
 ) -> ListItem<'static> {
     let label = if enabled {
         view_maps_label(count)
     } else {
         "view maps".to_string()
     };
-    button_item_with_loading_cue(&label, focused, enabled, enriching, tick)
+    button_item_with_loading_cue(&label, focused, enabled, enriching, tick, prominence)
 }
 
 /// The main-content spans of a beatmapset browse row, shared by every "view
