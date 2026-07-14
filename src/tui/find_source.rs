@@ -51,7 +51,14 @@ pub fn push_form_rows(
 ) {
     let route = find.resolved_route();
 
-    push_input(items, HomeField::FindQuery, &find.query, focus, editing);
+    push_input(
+        items,
+        HomeField::FindQuery,
+        &find.query,
+        focus,
+        editing,
+        find,
+    );
 
     items.push_focusable(
         HomeField::FindPreset,
@@ -122,11 +129,18 @@ pub fn push_form_rows(
         (HomeField::FindCreator, &find.creator),
         (HomeField::FindTitle, &find.title),
     ] {
-        push_input(items, field, input, focus, editing);
+        push_input(items, field, input, focus, editing, find);
     }
     items.push(widgets::spacer());
 
-    push_input(items, HomeField::FindLimit, &find.limit, focus, editing);
+    push_input(
+        items,
+        HomeField::FindLimit,
+        &find.limit,
+        focus,
+        editing,
+        find,
+    );
     items.push(widgets::spacer());
 
     // A run in flight mirrors the scan CTA: the static `find` label swaps for an
@@ -188,24 +202,40 @@ fn push_input(
     input: &InputField,
     focus: HomeField,
     editing: bool,
+    find: &FindSource,
 ) {
     items.push_focusable(
         field,
         widgets::input_item(input, focus == field, editing, LABEL_WIDTH),
     );
-    push_hint(items, field, input, focus);
+    push_hint(items, field, input, focus, field_error(find, field));
+}
+
+/// The live parse error for a focused field whose grammar [`describe_range`]
+/// can't read — `ranked` runs its own date grammar and `limit` is a plain cap.
+/// The numeric range fields validate off their own value in [`range_hint_item`],
+/// so they never route through here.
+fn field_error(find: &FindSource, field: HomeField) -> Option<String> {
+    match field {
+        HomeField::FindRanked => find.ranked_error(),
+        HomeField::FindLimit => find.limit_error(),
+        _ => None,
+    }
 }
 
 /// A `└ <hint>` tooltip below the row when it holds focus. A numeric range field
 /// gets a LIVE reading of its value ([`range_hint_item`]) ONLY once something is
 /// typed — an empty range field shows no tooltip. The rest get a static hint for
-/// the non-obvious syntax (query q-DSL, ranked date range, limit cap). Rows that
-/// read plainly (preset/special/mode/status/sort/artist/title) get none.
+/// the non-obvious syntax (query q-DSL, ranked date range, limit cap), replaced
+/// by the parse error while the value is invalid (`error`) so a field that can be
+/// typed wrong always says so at the keystroke, not at the run. Rows that read
+/// plainly (preset/special/mode/status/sort/artist/title) get none.
 fn push_hint(
     items: &mut widgets::FormItems<HomeField>,
     field: HomeField,
     input: &InputField,
     focus: HomeField,
+    error: Option<String>,
 ) {
     if focus != field {
         return;
@@ -214,9 +244,20 @@ fn push_hint(
         if let Some(item) = range_hint_item(input) {
             items.push(item);
         }
+    } else if let Some(reason) = error {
+        items.push(error_hint_item(reason));
     } else if let Some(hint) = field_hint(field) {
         items.push(widgets::help_item_keyed(hint));
     }
+}
+
+/// A danger-tinted `└ <reason>` tooltip — the one render of a live parse error,
+/// shared by the numeric ranges and the fields with their own grammar.
+fn error_hint_item(reason: String) -> ListItem<'static> {
+    ListItem::new(Line::from(vec![
+        Span::styled("  └ ", Style::default().fg(line())),
+        Span::styled(reason, Style::default().fg(danger())),
+    ]))
 }
 
 /// The nine numeric range fields that parse the operator grammar (`7+`, `5..7`,
@@ -245,10 +286,7 @@ fn range_hint_item(input: &InputField) -> Option<ListItem<'static>> {
     match describe_range(input.label, &input.value) {
         RangeHint::Empty => None,
         RangeHint::Valid(reading) => Some(widgets::help_item_keyed(&reading)),
-        RangeHint::Invalid(reason) => Some(ListItem::new(Line::from(vec![
-            Span::styled("  └ ", Style::default().fg(line())),
-            Span::styled(reason, Style::default().fg(danger())),
-        ]))),
+        RangeHint::Invalid(reason) => Some(error_hint_item(reason)),
     }
 }
 

@@ -293,24 +293,70 @@ fn osu_only_new_criteria_force_osu_and_serialize() {
 }
 
 #[test]
-fn degenerate_range_text_forces_a_route_without_emitting_a_term() {
+fn degenerate_range_text_emits_no_term_and_forces_no_route() {
     use crate::app::FindRoute;
-    // A bare `-` (or `..`) is a range with neither bound: no `keys` term reaches
-    // the query, yet the raw text still reads as "set" to the router. Known quirk,
-    // pinned so a fix has to flip both halves of this test deliberately.
+    // A bare `-` (or `..`) is a range with neither bound: it emits no `keys` term,
+    // so it must not force the osu route either. Routing reads the PARSED
+    // criterion, not the raw text.
+    for degenerate in ["-", "..", " - ", " .. "] {
+        let mut source = FindSource::new();
+        source.keys.set_value(degenerate);
+        assert_eq!(
+            osu(&source).keys,
+            None,
+            "{degenerate:?} emitted a keys term"
+        );
+
+        // Paired with a nzbasic-forcer it no longer conflicts: a field contributing
+        // nothing to either query can't block the run.
+        set_special(&mut source, "farm");
+        assert_eq!(
+            source.resolved_route(),
+            FindRoute::Nzbasic,
+            "{degenerate:?} still forced osu"
+        );
+    }
+}
+
+#[test]
+fn degenerate_range_text_forces_no_route_for_every_osu_only_field() {
+    use crate::app::FindRoute;
+    // Same rule across all three osu-only forcer fields. `ranked` has its own
+    // date grammar, so `..` is its only degenerate form (`-` is a date separator).
+    type Field = fn(&mut FindSource) -> &mut InputField;
+    let cases: [(Field, &str); 3] = [
+        (|s| &mut s.keys, "-"),
+        (|s| &mut s.favourites, ".."),
+        (|s| &mut s.ranked, ".."),
+    ];
+    for (field, degenerate) in cases {
+        let mut source = FindSource::new();
+        field(&mut source).set_value(degenerate);
+        assert_eq!(source.resolved_route(), FindRoute::Osu, "default route");
+        set_special(&mut source, "farm");
+        assert_eq!(
+            source.resolved_route(),
+            FindRoute::Nzbasic,
+            "{degenerate:?} forced osu"
+        );
+    }
+}
+
+#[test]
+fn unparseable_osu_only_field_still_forces_osu() {
+    use crate::app::FindRoute;
+    // A broken value emits no term either, but the user typed a criterion — it must
+    // never be silently dropped onto a backend that has no column for it. So it
+    // forces its route: alone that surfaces the parse error, and against a
+    // nzbasic-forcer it raises an honest conflict naming the field.
     let mut source = FindSource::new();
-    source.keys.set_value("-");
-    assert_eq!(osu(&source).keys, None);
+    source.keys.set_value("abc");
     assert_eq!(source.resolved_route(), FindRoute::Osu);
+    let err = source
+        .build_plan(None)
+        .expect_err("bad keys must not build");
+    assert!(err.contains("keys"), "error names the field: {err}");
 
-    let mut source = FindSource::new();
-    source.keys.set_value("..");
-    assert_eq!(osu(&source).keys, None);
-
-    // The sharp edge: paired with a nzbasic-forcer it conflicts, blocking the run
-    // over a field that contributes nothing to either query.
-    let mut source = FindSource::new();
-    source.keys.set_value("-");
     set_special(&mut source, "farm");
     assert_eq!(
         source.resolved_route(),
@@ -1046,4 +1092,42 @@ fn partial_coverage_sums_only_what_landed() {
     find.record_size(1, Some(10 * 1024 * 1024));
     // id 2 is still `Pending` → adds 0; the `~` on the label owns the partiality.
     assert_eq!(find.checked_known_bytes(), 10 * 1024 * 1024);
+}
+
+#[test]
+fn a_failed_probe_is_retried_but_a_sizeless_answer_is_not() {
+    let mut find = find_with_results(&[1, 2], &[1, 2]);
+    assert_eq!(find.claim_size_probes(), vec![1, 2]);
+    // Neither id is claimable while its probe is in flight.
+    assert!(find.claim_size_probes().is_empty());
+
+    // The mirror answered "no size for this set" — a stable answer, so id 1 is
+    // settled and never asked again.
+    find.record_size(1, None);
+    // id 2's probe never reached the mirror, which says nothing about the set, so
+    // its claim is released and the next selection change picks it back up.
+    find.release_size_probe(2);
+    assert_eq!(find.claim_size_probes(), vec![2]);
+
+    // The retry lands: id 2 gets a size, id 1 stays sizeless.
+    find.record_size(2, Some(8 * 1024 * 1024));
+    assert_eq!(find.checked_known_bytes(), 8 * 1024 * 1024);
+    assert!(find.claim_size_probes().is_empty());
+}
+
+#[test]
+fn releasing_a_settled_probe_never_reopens_it() {
+    let mut find = find_with_results(&[1, 2], &[1, 2]);
+    find.claim_size_probes();
+    // A late failure for an id whose answer already landed must not discard it:
+    // the mirror's answer outranks a failure, whichever arrives last.
+    find.record_size(1, Some(4 * 1024 * 1024));
+    find.record_size(2, None);
+    find.release_size_probe(1);
+    find.release_size_probe(2);
+    assert!(
+        find.claim_size_probes().is_empty(),
+        "a settled id is never re-claimed"
+    );
+    assert_eq!(find.checked_known_bytes(), 4 * 1024 * 1024);
 }

@@ -390,6 +390,53 @@ fn range_field_hint_reads_the_parsed_value() {
 }
 
 #[test]
+fn ranked_and_limit_hints_swap_to_the_parse_error_when_invalid() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+
+    // `ranked` runs its own date grammar, so `describe_range` can't read it. Blank
+    // or valid, it keeps the static syntax example; broken, the example gives way
+    // to the parse error at the keystroke rather than at the run.
+    app.home.focus = HomeField::FindRanked;
+    let content = render_content(&app, 100, 40);
+    assert!(
+        content.contains("2020..2024"),
+        "a blank ranked field keeps its example: {content}"
+    );
+
+    app.home.find.ranked.set_value("2020..2024");
+    let content = render_content(&app, 100, 40);
+    assert!(
+        content.contains("2020..2024") && !content.contains("is not a"),
+        "a valid date range shows no error: {content}"
+    );
+
+    app.home.find.ranked.set_value("20x0");
+    let content = render_content(&app, 100, 40);
+    assert!(
+        content.contains("is not a yyyy"),
+        "a broken date surfaces its parse error live: {content}"
+    );
+
+    // Same contract for `limit`, whose grammar is a plain 1..=10000 cap.
+    app.home.focus = HomeField::FindLimit;
+    app.home.find.limit.set_value("99999");
+    let content = render_content(&app, 100, 40);
+    assert!(
+        content.contains("between 1 and 10000"),
+        "an out-of-range limit surfaces its parse error live: {content}"
+    );
+
+    app.home.find.limit.set_value("500");
+    let content = render_content(&app, 100, 40);
+    assert!(
+        !content.contains("between 1 and 10000"),
+        "a valid limit drops the error: {content}"
+    );
+}
+
+#[test]
 fn empty_range_field_shows_no_hint() {
     use osu_collect::app::{GetMapsSource, HomeField};
     let mut app = make_app();

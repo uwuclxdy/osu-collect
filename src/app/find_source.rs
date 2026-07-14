@@ -657,14 +657,18 @@ const _: () = assert!(SPECIAL_LABELS.len() == SPECIAL_VALUES.len());
 /// and editable, so there is no hidden query state. `none` is the plain reset.
 const PRESET_LABELS: &[&str] = &["none", "all ranked", "loved", "farm", "stream", "7★+"];
 
-/// Session-lived nekoha size-probe state for one osu-routed result set.
+/// Session-lived download-size state for one result set. Filled by both routes —
+/// the osu route probes nekoha lazily, the nzbasic route folds its response's
+/// free `SizeMap` in — so a state here is never route-specific.
 #[derive(Debug, Clone, Copy)]
 enum SizeState {
-    /// A probe is in flight — dedupes a rapid re-trigger (another toggle).
+    /// A probe is in flight — dedupes a rapid re-trigger (another toggle). A
+    /// probe that fails to reach the mirror clears this rather than settling it,
+    /// so the id is retried; only the mirror's own answer settles a set.
     Pending,
     /// The mirror's download size in bytes.
     Known(u64),
-    /// The mirror has no size record (or the probe failed); never re-probed.
+    /// The mirror answered that it has no size for this set; never re-probed.
     Missing,
 }
 
@@ -705,13 +709,14 @@ pub struct FindSource {
     /// One-shot login-nudge gate: the guest-search nudge toast fires at most once
     /// per logged-out session.
     pub login_nudged: bool,
-    /// Per-set nekoha download-size cache for the OSU route, session-lived (a set
-    /// id's size is stable, so it outlives a re-search). `Pending` dedupes an
-    /// in-flight probe, `Known` feeds the download button's `· ~X` size suffix,
-    /// `Missing` records a set the mirror has no size for so it is probed at most
-    /// once. The nzbasic route sums its own fetch response straight into
-    /// [`FindStatusMsg::ReadyFilter`] (no per-set cache); the collection browse
-    /// never populates this.
+    /// Per-set download-size cache, session-lived (a set id's size is stable, so
+    /// it outlives a re-search). `Known` feeds the download button's `· ~X` size
+    /// suffix and seeds a run so the pipeline re-fetches nothing already here.
+    ///
+    /// ONE cache, both routes: the osu route backfills it by lazy nekoha probe
+    /// (`runtime/size.rs`), the nzbasic route folds in its response's exact
+    /// `SizeMap` for free (`runtime/filter.rs`). Only the probe is osu-only.
+    /// The collection browse never populates this.
     size_cache: HashMap<u32, SizeState>,
     /// Snapshot of the canonical inputs that produced the loaded rows, so the
     /// `view N maps` button can tell fresh results from stale ones.
@@ -939,6 +944,9 @@ impl FindSource {
 
     /// The first criterion forcing the osu route, or `None`. Priority: free text
     /// → sort → status → keys → ranked date → favourites.
+    ///
+    /// The osu-only range fields route off their PARSED criterion, not their raw
+    /// text — see [`emits_criterion`].
     fn osu_forcer(&self) -> Option<String> {
         if !self.query.value.trim().is_empty() {
             Some("free text".to_string())
@@ -946,15 +954,31 @@ impl FindSource {
             Some(format!("sort {}", SORT[self.sort_idx].label))
         } else if STATUS_NZBASIC[self.status_idx].is_none() {
             Some(format!("status {}", STATUS_LABELS[self.status_idx]))
-        } else if !self.keys.value.trim().is_empty() {
+        } else if emits_criterion(osu_int_range(&self.keys)) {
             Some("keys".to_string())
-        } else if !self.ranked.value.trim().is_empty() {
+        } else if emits_criterion(osu_date_range(&self.ranked)) {
             Some("ranked date".to_string())
-        } else if !self.favourites.value.trim().is_empty() {
+        } else if emits_criterion(osu_int_range(&self.favourites)) {
             Some("favourites".to_string())
         } else {
             None
         }
+    }
+
+    // ── live validation ───────────────────────────────────────────────────────
+
+    /// The `ranked` field's parse error, or `None` when it is blank or valid.
+    /// Backs the on-focus hint: the date grammar is the field's own, so
+    /// [`describe_range`] (the numeric-range reader) can't speak for it, and
+    /// without this a bad date stays silent until the run is attempted.
+    pub fn ranked_error(&self) -> Option<String> {
+        osu_date_range(&self.ranked).err()
+    }
+
+    /// The `limit` field's parse error, or `None` when it is blank or valid.
+    /// Same contract as [`ranked_error`](Self::ranked_error).
+    pub fn limit_error(&self) -> Option<String> {
+        parse_limit(&self.limit.value).err()
     }
 
     /// Build the osu! `SearchQuery` from the union fields (osu route).
@@ -1130,15 +1154,18 @@ impl FindSource {
         self.results_backend
     }
 
-    // ── size backfill (osu route) ─────────────────────────────────────────────
+    // ── size backfill ─────────────────────────────────────────────────────────
 
     /// Claim the checked results still needing a nekoha size probe, marking each
     /// `Pending` so a rapid re-trigger (another toggle) never double-fetches. Only
     /// checked sets are claimed, and an already-cached id (pending / known /
-    /// missing) is skipped — a set is probed at most once per session. The runtime
+    /// missing) is skipped — a set is probed at most once per session unless its
+    /// probe fails to reach the mirror ([`release_size_probe`]). The runtime
     /// spawns the concurrency-capped probe for the returned ids; this is only
     /// called on the osu route (the caller gates it), so nzbasic ids never land
     /// here.
+    ///
+    /// [`release_size_probe`]: Self::release_size_probe
     pub fn claim_size_probes(&mut self) -> Vec<u32> {
         use std::collections::hash_map::Entry;
         let mut claimed = Vec::new();
@@ -1152,12 +1179,24 @@ impl FindSource {
     }
 
     /// Fold a landed size probe into the cache: `Some` records the mirror's byte
-    /// count; `None` records the set as sizeless (no record, or a probe that
-    /// couldn't reach the mirror — sizes are progressive enhancement, so it just
-    /// stays absent) so it is not re-probed.
+    /// count, `None` records the set as sizeless. Both are the mirror's own
+    /// answer, so neither is re-probed. A probe that could not reach the mirror
+    /// says nothing about the set — that goes to [`release_size_probe`] instead.
+    ///
+    /// [`release_size_probe`]: Self::release_size_probe
     pub fn record_size(&mut self, id: u32, size: Option<u64>) {
         self.size_cache
             .insert(id, size.map_or(SizeState::Missing, SizeState::Known));
+    }
+
+    /// Drop a `Pending` claim whose probe failed to reach the mirror, so the id
+    /// is claimable again and the next selection change retries it. Only a
+    /// `Pending` entry is released: a `Known` / `Missing` answer that landed
+    /// meanwhile is the mirror's, and outranks a failure.
+    pub fn release_size_probe(&mut self, id: u32) {
+        if matches!(self.size_cache.get(&id), Some(SizeState::Pending)) {
+            self.size_cache.remove(&id);
+        }
     }
 
     /// Sum of the known nekoha sizes among the currently-checked results, for the
@@ -1228,6 +1267,20 @@ fn special_idx_of(label: &str) -> usize {
 fn text_opt(field: &InputField) -> Option<String> {
     let value = field.value.trim();
     (!value.is_empty()).then(|| value.to_string())
+}
+
+/// Whether a range field carries a criterion its backend must honour — the test
+/// [`FindSource::osu_forcer`] routes on, applied to that field's own builder so
+/// the two can't drift.
+///
+/// `Ok(None)` is the only non-forcing case: the field is blank, or degenerate
+/// (`-` / `..`, a range with neither bound), and emits no query term — nothing to
+/// route for. `Err` forces too: the value is broken rather than absent, so the
+/// user typed a criterion, and the route it belongs to is the only one that can
+/// report the parse error. Routing past it would drop the value onto a backend
+/// with no column for it, silently.
+fn emits_criterion<T>(parsed: Result<Option<T>, String>) -> bool {
+    !matches!(parsed, Ok(None))
 }
 
 /// Convert a range input into an osu float criterion (`stars`/`ar`/…). `Exact`
