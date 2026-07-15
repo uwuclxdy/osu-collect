@@ -422,13 +422,20 @@ fn stale_offset_pulls_up_to_fill_viewport() {
         2,
         "offset clamps to the last full page (10 - 8)"
     );
-    let buf = terminal.backend().buffer();
-    assert_eq!(buf[(0, 0)].symbol(), "C", "top row shows item index 2");
-    assert_eq!(
-        buf[(0, 7)].symbol(),
-        "J",
-        "bottom row shows the last item — no blank rows below"
-    );
+    // Items C..J fill all 8 rows, in order, with nothing blank below. A whole-buffer
+    // pin works here only because these `ListItem`s are unstyled and `highlight:
+    // false` leaves the selected row's style untouched — a real surface carries the
+    // palette on every cell and can't be expressed as plain lines.
+    terminal.backend().assert_buffer_lines([
+        "Crow      ",
+        "Drow      ",
+        "Erow      ",
+        "Frow      ",
+        "Grow      ",
+        "Hrow      ",
+        "Irow      ",
+        "Jrow      ",
+    ]);
 }
 
 #[test]
