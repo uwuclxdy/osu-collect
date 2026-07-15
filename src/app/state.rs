@@ -740,15 +740,16 @@ impl App {
             self.toast_err(err.to_string());
             return;
         }
+        // The Config tab is the sole mirror editor; push its settings into the
+        // Get Maps tab so the enabled-count and the download list track the
+        // change without a relaunch. Done before the save so a persistence
+        // failure can't desync the visible count from the Config tab.
+        self.home.sync_mirrors_from_config(&new_config.mirror);
         match save_config(&new_config) {
             Ok(_) => {
                 // Theme is the only setting with a visible-now effect; swap the
                 // live palette so the change shows without a relaunch.
                 crate::tui::apply_theme(new_config.display.theme);
-                // The Config tab is the sole mirror editor; push its saved mirror
-                // settings into the Get Maps tab so the enabled-count and the
-                // download list track the change without a relaunch.
-                self.home.sync_mirrors_from_config(&new_config.mirror);
                 self.config.loaded_config = new_config;
             }
             Err(err) => self.toast_err(err.to_string()),
