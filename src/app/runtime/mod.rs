@@ -1,4 +1,5 @@
 mod auth;
+mod details;
 mod enrich;
 mod filter;
 mod mirror_probe;
@@ -21,7 +22,7 @@ pub use resolve::{HomeResolveEvent, handle_home_resolve_event};
 pub use search::{HomeSearchEvent, handle_home_search_event};
 pub use size::{HomeSizeEvent, handle_home_size_event};
 
-use super::{App, AppCommand, EnrichTarget, Tab};
+use super::{App, AppCommand, EnrichTarget, FindBackend, Tab};
 use crate::{
     config::Config,
     download::{self, DownloadEvent, DownloadHandle, DownloadId},
@@ -37,6 +38,7 @@ use auth::{
     AuthEvent, handle_auth_event, spawn_lazer_login_task, spawn_logout_task, spawn_reissue_task,
     spawn_verification_task,
 };
+use details::{HomeDetailsEvent, handle_home_details_event, schedule_details};
 use enrich::{enrich_sink_mut, schedule_enrichment};
 use filter::schedule_filter;
 use mirror_probe::{handle_mirror_probe_event, schedule_probe};
@@ -90,6 +92,7 @@ pub async fn run(
     let (home_search_tx, mut home_search_rx) = mpsc::unbounded_channel::<HomeSearchEvent>();
     let (home_filter_tx, mut home_filter_rx) = mpsc::unbounded_channel::<HomeFilterEvent>();
     let (home_enrich_tx, mut home_enrich_rx) = mpsc::unbounded_channel::<EnrichEvent>();
+    let (home_details_tx, mut home_details_rx) = mpsc::unbounded_channel::<HomeDetailsEvent>();
     let (home_size_tx, mut home_size_rx) = mpsc::unbounded_channel::<HomeSizeEvent>();
     let (mirror_probe_tx, mut mirror_probe_rx) = mpsc::unbounded_channel::<MirrorProbeEvent>();
     let (update_tx, mut update_rx) = mpsc::unbounded_channel::<UpdateEvent>();
@@ -112,6 +115,7 @@ pub async fn run(
         enrich_collection: None,
         enrich_update: None,
         home_enrich_tx,
+        home_details_tx,
         home_size_tx,
         mirror_probe: None,
         mirror_probe_cancel: None,
@@ -241,6 +245,10 @@ pub async fn run(
             Some(event) = home_enrich_rx.recv() => {
                 trace!(?event, "Received home enrich event");
                 handle_enrich_event(event, &mut app);
+            }
+            Some(event) = home_details_rx.recv() => {
+                trace!(?event, "Received home details event");
+                handle_home_details_event(event, &mut app);
             }
             Some(event) = home_size_rx.recv() => {
                 trace!(?event, "Received home size event");
@@ -503,6 +511,11 @@ fn dispatch_command(
             );
         }
         Some(AppCommand::LoadEnrichment { target }) => {
+            // nzbasic find results also carry per-set extra columns; the details
+            // path pages the same diff ids under the same generation. Captured
+            // before the sink borrow so the read doesn't alias it.
+            let is_nzbasic_find = target == EnrichTarget::Find
+                && app.home.find.results_backend() == Some(FindBackend::Nzbasic);
             let enrich_handle = match target {
                 EnrichTarget::Find => &mut tasks.enrich_find,
                 EnrichTarget::Collection => &mut tasks.enrich_collection,
@@ -529,6 +542,9 @@ fn dispatch_command(
                     // (not a bool) so an older page's late event can't clear
                     // the cue while a newer fetch is still pending.
                     sink.mark_enrichment_dispatched();
+                    // Clone the page for the details fetch before the enrichment
+                    // call consumes it (nzbasic find only).
+                    let details_page = is_nzbasic_find.then(|| page.clone());
                     schedule_enrichment(
                         target,
                         generation,
@@ -537,6 +553,9 @@ fn dispatch_command(
                         enrich_handle,
                         &tasks.home_enrich_tx,
                     );
+                    if let Some(details_page) = details_page {
+                        schedule_details(generation, details_page, &tasks.home_details_tx);
+                    }
                 }
             }
         }
@@ -672,6 +691,10 @@ struct BackgroundTasks {
     enrich_collection: Option<tokio::task::JoinHandle<()>>,
     enrich_update: Option<tokio::task::JoinHandle<()>>,
     home_enrich_tx: mpsc::UnboundedSender<EnrichEvent>,
+    /// nzbasic details channel. Fire-and-forget (no stored handle) — a page left
+    /// running at quit just finds the receiver dropped, and a reseed's stale page
+    /// is dropped by the generation guard, so nothing needs an abort.
+    home_details_tx: mpsc::UnboundedSender<HomeDetailsEvent>,
     /// Nekoha size-probe channel. Fire-and-forget (no stored handle) — a probe
     /// left running at quit just finds the receiver dropped and ends.
     home_size_tx: mpsc::UnboundedSender<HomeSizeEvent>,

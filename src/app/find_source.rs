@@ -17,7 +17,8 @@
 use super::home::{FindBackend, InputField};
 use super::update_source::{LIST_PAGE, scroll_list, scroll_list_clamped};
 use osu_downloader::filter::{
-    FilterDirection, FilterMode, FilterQuery, FilterRange, FilterSort, FilterSpecial, FilterStatus,
+    BeatmapDetails, FilterDirection, FilterMode, FilterQuery, FilterRange, FilterSort,
+    FilterSpecial, FilterStatus,
 };
 use osu_downloader::search::{
     BeatmapSetMeta, QueryRange, RangeBound, SearchMode, SearchQuery, SearchStatus, SortField,
@@ -187,6 +188,12 @@ pub struct SetBrowse {
     /// osu-batch metadata backfill for this browse's id-only rows. Empty (inert)
     /// for a browse whose rows already carry `meta` (osu search results).
     enrich: EnrichPager,
+    /// nzbasic-only per-set extra columns (tags/source/genre/language/dates plus
+    /// one representative diff's combo/drain/passes/hash), keyed by set id. Filled
+    /// by the nzbasic details path (`src/app/runtime/details.rs`), which pages the
+    /// same diff ids as `enrich` under the same generation. Empty and inert for
+    /// osu-routed find results and collection browse&pick; cleared with the rows.
+    details: HashMap<u32, BeatmapDetails>,
 }
 
 impl SetBrowse {
@@ -215,6 +222,24 @@ impl SetBrowse {
         self.rows = rows;
         self.list_cursor = Some(0);
         self.enrich.clear();
+        // New identity → any prior nzbasic details are stale; the details path
+        // reseeds itself off the fresh enrichment pages under the new generation.
+        self.details.clear();
+    }
+
+    /// Fold a landed nzbasic details page: the first diff row seen for a set wins
+    /// (set-level columns are identical across a set's diffs; the per-diff stats
+    /// then reflect that representative diff). A set already recorded is left as-is.
+    pub(crate) fn record_details(&mut self, rows: Vec<BeatmapDetails>) {
+        for row in rows {
+            self.details.entry(row.set_id).or_insert(row);
+        }
+    }
+
+    /// The nzbasic details recorded for a set, if the details path has fetched
+    /// them. Always `None` for osu-routed results and collection browse&pick.
+    pub fn details_for(&self, set_id: u32) -> Option<&BeatmapDetails> {
+        self.details.get(&set_id)
     }
 
     /// Append more rows (search `load more`), dropping ids already present so a

@@ -9,6 +9,7 @@
 
 use crate::app::EnrichSink;
 use crate::app::find_source::{BrowseRow, SetBrowse};
+use osu_downloader::filter::BeatmapDetails;
 use osu_downloader::search::BeatmapSetMeta;
 use ratatui::{
     Frame,
@@ -60,7 +61,7 @@ pub fn render(
 
     let preview_items = browse
         .highlighted_row()
-        .map(|row| preview_rows(row, enriching, tick))
+        .map(|row| preview_rows(row, browse.details_for(row.id), enriching, tick))
         .unwrap_or_default();
 
     let view = MasterDetail {
@@ -105,9 +106,14 @@ fn list_row(row: &BrowseRow, selected: bool, is_cursor: bool) -> ListItem<'stati
 /// The read-only detail of the highlighted set. Rich metadata when present; while
 /// its enrichment is still fetching, an id line plus a `loading metadata…`
 /// spinner; once enrichment is idle and still empty, a genuine "no metadata" note.
-fn preview_rows(row: &BrowseRow, enriching: bool, tick: u64) -> Vec<ListItem<'static>> {
+fn preview_rows(
+    row: &BrowseRow,
+    details: Option<&BeatmapDetails>,
+    enriching: bool,
+    tick: u64,
+) -> Vec<ListItem<'static>> {
     match &row.meta {
-        Some(meta) => meta_preview(meta),
+        Some(meta) => meta_preview(meta, details),
         None => {
             let id_line = ListItem::new(Line::from(format!("#{}", row.id).fg(text())));
             let note = if enriching {
@@ -122,7 +128,7 @@ fn preview_rows(row: &BrowseRow, enriching: bool, tick: u64) -> Vec<ListItem<'st
     }
 }
 
-fn meta_preview(meta: &BeatmapSetMeta) -> Vec<ListItem<'static>> {
+fn meta_preview(meta: &BeatmapSetMeta, details: Option<&BeatmapDetails>) -> Vec<ListItem<'static>> {
     let mut rows = vec![
         ListItem::new(Line::from(meta.title.clone().fg(accent()).bold())),
         ListItem::new(Line::from(meta.artist.clone().fg(text()))),
@@ -144,7 +150,90 @@ fn meta_preview(meta: &BeatmapSetMeta) -> Vec<ListItem<'static>> {
         }
         rows.push(ListItem::new(Line::from(flags)));
     }
+    if let Some(details) = details {
+        append_detail_rows(&mut rows, details);
+    }
     rows
+}
+
+/// Append the nzbasic-only extra columns to the preview: the set-level block
+/// (tags/source/genre/language/ranked/updated, each skipped when the field is
+/// blank) then, behind a faint `(one diff)` divider, the representative diff's
+/// combo/drain/passes/hash (each skipped when zero/empty). Renders nothing when
+/// every field is empty.
+fn append_detail_rows(rows: &mut Vec<ListItem<'static>>, d: &BeatmapDetails) {
+    for (key, value) in [
+        ("tags", d.tags.trim()),
+        ("source", d.source.trim()),
+        ("genre", d.genre.trim()),
+        ("language", d.language.trim()),
+    ] {
+        if !value.is_empty() {
+            rows.push(kv_row(key, value.to_string()));
+        }
+    }
+    // `approved_date` is epoch millis (the never-ranked sentinel is negative);
+    // `last_update` is epoch seconds — separate formatters, both skipping the
+    // non-positive/sentinel case.
+    if let Some(date) = format_epoch_date(d.approved_date / 1000) {
+        rows.push(kv_row("ranked", date));
+    }
+    if let Some(date) = format_epoch_date(d.last_update) {
+        rows.push(kv_row("updated", date));
+    }
+
+    // Per-diff figures reflect one representative diff of the set, so they sit
+    // behind an explicit divider rather than reading as set-wide.
+    let mut diff_rows: Vec<ListItem<'static>> = Vec::new();
+    if d.max_combo > 0 {
+        diff_rows.push(kv_row("max combo", group_thousands(d.max_combo as u64)));
+    }
+    if d.hit_length > 0 {
+        diff_rows.push(kv_row("drain", format_drain(d.hit_length)));
+    }
+    if d.pass_count > 0 {
+        diff_rows.push(kv_row("pass count", group_thousands(d.pass_count as u64)));
+    }
+    if !d.hash.is_empty() {
+        diff_rows.push(kv_row("hash", short_hash(&d.hash)));
+    }
+    if !diff_rows.is_empty() {
+        rows.push(ListItem::new(Line::from("(one diff)".fg(text_faint()))));
+        rows.extend(diff_rows);
+    }
+}
+
+/// A unix epoch (seconds) as `YYYY-MM-DD`, or `None` for a non-positive value —
+/// the never-ranked sentinel and any missing date both land here. Mirrors the
+/// Downloads-tab date formatter.
+fn format_epoch_date(secs: i64) -> Option<String> {
+    if secs <= 0 {
+        return None;
+    }
+    time::OffsetDateTime::from_unix_timestamp(secs)
+        .ok()
+        .map(|dt| {
+            format!(
+                "{:04}-{:02}-{:02}",
+                dt.year(),
+                u8::from(dt.month()),
+                dt.day()
+            )
+        })
+}
+
+/// Drain time in seconds as `m:ss`.
+fn format_drain(secs: u32) -> String {
+    format!("{}:{:02}", secs / 60, secs % 60)
+}
+
+/// The leading 10 chars of an MD5, ellipsised — a full 32-char hash is preview
+/// clutter, but the prefix still identifies the diff at a glance.
+fn short_hash(hash: &str) -> String {
+    match hash.char_indices().nth(10) {
+        Some((idx, _)) => format!("{}…", &hash[..idx]),
+        None => hash.to_string(),
+    }
 }
 
 /// A static key→value preview row: key in `TEXT_DIM + bold` (the cloudy static-kv
@@ -172,3 +261,7 @@ fn group_thousands(n: u64) -> String {
     }
     out
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/tui_set_browse.rs"]
+mod tests;
