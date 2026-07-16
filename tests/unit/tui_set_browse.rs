@@ -89,25 +89,36 @@ fn render_browse(browse: &SetBrowse) -> String {
         .collect::<String>()
 }
 
-/// A vertical-gradient cover so the halfblocks encoder emits colored cells
-/// (adjacent rows differ), letting the render assert a populated cover column.
-/// 300x300 mirrors the real `list@2x` asset: `Resize::Fit` never upscales, so a
-/// smaller fixture would cap the column below its allowance and stop exercising
-/// the flush-right geometry.
-fn gradient_cover() -> image::DynamicImage {
-    let img = image::RgbImage::from_fn(300, 300, |_, y| {
-        let v = (y * 255 / 299) as u8;
+/// A vertical-gradient cover at `w`x`h` so the halfblocks encoder emits colored
+/// cells (adjacent rows differ), letting the render assert a populated cover.
+/// Real asset sizes matter: `Resize::Fit` never upscales, so a fixture smaller
+/// than the layout's allowance would cap the image early and stop exercising the
+/// flush geometry. Square (`list@2x`, 300x300) and wide (`card@2x`, 800x280).
+fn gradient_cover(w: u32, h: u32) -> image::DynamicImage {
+    let span = h.max(1) - 1;
+    let img = image::RgbImage::from_fn(w, h, |_, y| {
+        let v = (y * 255 / span.max(1)) as u8;
         image::Rgb([v, 128, 255 - v])
     });
     image::DynamicImage::ImageRgb8(img)
 }
 
-/// A [`Covers`] whose `set_id` cover is already `Ready`, built with the
-/// test-safe halfblocks picker (no terminal query, no network).
-fn covers_ready(set_id: u32) -> Covers {
+/// A [`Covers`] with only the square variant ready — the wide upgrade never
+/// fires, isolating the square right-hand column geometry.
+fn covers_square_only(set_id: u32) -> Covers {
     let mut covers = Covers::new();
-    let protocol = covers.picker.new_resize_protocol(gradient_cover());
-    covers.record_ready(set_id, protocol);
+    let square = covers.picker.new_resize_protocol(gradient_cover(300, 300));
+    covers.record_ready(set_id, Some(square), None);
+    covers
+}
+
+/// A [`Covers`] with both variants ready, so a wide-enough pane swaps in the
+/// wide (shorter) card.
+fn covers_both_variants(set_id: u32) -> Covers {
+    let mut covers = Covers::new();
+    let square = covers.picker.new_resize_protocol(gradient_cover(300, 300));
+    let wide = covers.picker.new_resize_protocol(gradient_cover(800, 280));
+    covers.record_ready(set_id, Some(square), Some(wide));
     covers
 }
 
@@ -176,6 +187,15 @@ fn preview_text_before(buffer: &ratatui::buffer::Buffer, y: u16, end_x: u16) -> 
     (PREVIEW_X..end_x)
         .map(|x| buffer[(x, y)].symbol())
         .collect()
+}
+
+/// How many rows carry a real background at column `x` — the cover's height,
+/// since only the image paints a cell background in an unfocused preview.
+fn colored_rows_at(buffer: &ratatui::buffer::Buffer, x: u16) -> usize {
+    let area = *buffer.area();
+    (0..area.height)
+        .filter(|&y| buffer[(x, y)].bg != Color::Reset)
+        .count()
 }
 
 /// The whole buffer as one string, for a presence check that ignores geometry.
@@ -282,11 +302,11 @@ fn ready_cover_paints_a_right_column_beside_the_text() {
         id: 42,
         meta: Some(sample_meta(42)),
     }]);
-    let covers = covers_ready(42);
+    let covers = covers_square_only(42);
 
-    // 90 wide: list pane 36, preview inner spans x=38..88 (50 columns). The
-    // cover is offered 20 (50/5*2) and the 300x300 source fills all of them at
-    // the halfblocks picker's fixed 10x20 font, so it lands at 88-20 = 68.
+    // 90 wide: list pane 36, preview inner spans x=38..88 (50 columns). Square-only
+    // (no wide), so the square column is offered 20 (50/5*2), which the 300x300
+    // source fills at the halfblocks 10x20 font, landing flush-right at 88-20 = 68.
     const COVER_X: u16 = 68;
     const LAST_INNER_X: u16 = 87;
 
@@ -333,7 +353,7 @@ fn short_pane_skips_the_cover_even_when_ready() {
     // (not the list pane); its inner height (3 = 5 − 2 borders) is below
     // MIN_IMAGE_INNER_HEIGHT (4), so the cover is skipped, text-only.
     browse.focus_preview();
-    let covers = covers_ready(42);
+    let covers = covers_square_only(42);
 
     let buffer = render_grid(&browse, Some(&covers), 90, 5);
     assert!(
@@ -355,7 +375,7 @@ fn narrow_pane_skips_the_cover_to_keep_the_text_readable() {
     // Single-pane preview 38 wide → 34 inner columns, one short of the
     // COVER_WIDTH_MIN + gap + MIN_TEXT_WIDTH floor, so the text takes all of it.
     browse.focus_preview();
-    let covers = covers_ready(42);
+    let covers = covers_square_only(42);
 
     let buffer = render_grid(&browse, Some(&covers), 38, 20);
     assert!(
@@ -365,5 +385,151 @@ fn narrow_pane_skips_the_cover_to_keep_the_text_readable() {
     assert!(
         buffer_text(&buffer).contains("Song Title"),
         "the preview text still renders when the cover is skipped"
+    );
+}
+
+#[test]
+fn a_wide_pane_swaps_in_the_shorter_wide_variant() {
+    let browse = browse_with(vec![BrowseRow {
+        id: 42,
+        meta: Some(sample_meta(42)),
+    }]);
+    // 90x30: the column is offered 26, at/above WIDE_COVER_WIDTH, so with both
+    // variants loaded the wide card is chosen. It's a wide crop, so at the same
+    // column width it paints fewer rows than the square.
+    const LAST_INNER_X: u16 = 87;
+    let square = render_grid(&browse, Some(&covers_square_only(42)), 90, 30);
+    let both = render_grid(&browse, Some(&covers_both_variants(42)), 90, 30);
+
+    let square_rows = colored_rows_at(&square, LAST_INNER_X);
+    let wide_rows = colored_rows_at(&both, LAST_INNER_X);
+    assert!(
+        square_rows > 0 && wide_rows > 0,
+        "both stores paint a right-anchored cover"
+    );
+    assert!(
+        wide_rows < square_rows,
+        "the wide variant is shorter than the square at the same column width \
+         (wide {wide_rows} rows, square {square_rows} rows)"
+    );
+    // Both are still right-anchored: the last inner column carries the cover.
+    assert!(
+        both[(LAST_INNER_X, 1)].bg != Color::Reset,
+        "the wide variant is flush against the right edge too"
+    );
+}
+
+#[test]
+fn a_narrow_pane_keeps_the_square_even_with_the_wide_loaded() {
+    let browse = browse_with(vec![BrowseRow {
+        id: 42,
+        meta: Some(sample_meta(42)),
+    }]);
+    // Both split (>=60 wide). 90-wide → preview inner 50 → column offered 26 (wide).
+    // 72-wide → preview inner 40 → offered 16 (below WIDE_COVER_WIDTH 26), so the
+    // square stays even with the wide loaded: a taller column than the wide crop.
+    // The cover is right-anchored, so its column is the last inner col (width-3).
+    let wide = render_grid(&browse, Some(&covers_both_variants(42)), 90, 30);
+    let narrow = render_grid(&browse, Some(&covers_both_variants(42)), 72, 30);
+
+    let wide_rows = colored_rows_at(&wide, 90 - 3);
+    let narrow_rows = colored_rows_at(&narrow, 72 - 3);
+    assert!(
+        narrow_rows > wide_rows,
+        "the narrow pane keeps the taller square while the wide pane goes wide \
+         (narrow {narrow_rows} rows, wide {wide_rows} rows)"
+    );
+}
+
+#[test]
+fn a_short_title_keeps_the_cover_on_one_line() {
+    let browse = browse_with(vec![BrowseRow {
+        id: 42,
+        meta: Some(sample_meta(42)),
+    }]);
+    // "Song Title" fits the ~22-col text column beside the cover, so the cover
+    // stays and the title is one line (artist directly below it).
+    let buffer = render_grid(&browse, Some(&covers_both_variants(42)), 90, 30);
+    assert!(
+        cover_start_x(&buffer, 1).is_some(),
+        "a title that fits keeps its cover"
+    );
+    let title = preview_row_of(&buffer, "Song Title").expect("title renders");
+    let artist = preview_row_of(&buffer, "Artist").expect("artist renders");
+    assert_eq!(
+        artist,
+        title + 1,
+        "a one-line title puts artist on the next row"
+    );
+}
+
+#[test]
+fn a_title_too_long_for_the_wide_column_collapses_to_the_square() {
+    // 90x30: the wide text column is ~22, the square (collapsed) one ~28. A 23-col
+    // title doesn't fit beside the wide crop but fits beside the square, so the
+    // cover DOWNGRADES wide→square (still shown) and the title stays one line.
+    let mid_title = BeatmapSetMeta {
+        title: "A Medium Length Beatmap".to_string(), // 23 cols
+        ..sample_meta(42)
+    };
+    let short = browse_with(vec![BrowseRow {
+        id: 42,
+        meta: Some(sample_meta(42)),
+    }]);
+    let mid = browse_with(vec![BrowseRow {
+        id: 42,
+        meta: Some(mid_title),
+    }]);
+
+    const LAST_INNER_X: u16 = 87;
+    let short_buf = render_grid(&short, Some(&covers_both_variants(42)), 90, 30);
+    let mid_buf = render_grid(&mid, Some(&covers_both_variants(42)), 90, 30);
+
+    let short_rows = colored_rows_at(&short_buf, LAST_INNER_X);
+    let mid_rows = colored_rows_at(&mid_buf, LAST_INNER_X);
+    assert!(
+        short_rows > 0 && mid_rows > 0,
+        "the cover is shown in both — collapsing downgrades, never removes it"
+    );
+    assert!(
+        mid_rows > short_rows,
+        "the mid title collapses the short wide crop to the taller square \
+         (short {short_rows} rows, mid {mid_rows} rows)"
+    );
+    // The collapsed square's wider text keeps the title on one line.
+    let title = preview_row_of(&mid_buf, "A Medium Length Beatmap").expect("title renders");
+    let artist = preview_row_of(&mid_buf, "Artist").expect("artist renders");
+    assert_eq!(
+        artist,
+        title + 1,
+        "the collapsed cover keeps the title one line"
+    );
+}
+
+#[test]
+fn a_title_too_long_for_even_the_collapsed_column_wraps_to_two_lines() {
+    // Longer than even the ~28-col square text column, so it wraps to two lines —
+    // but the square cover is STILL shown; wrapping is the last resort after
+    // collapsing, not instead of it.
+    let very_long = BeatmapSetMeta {
+        title: "A Truly Enormous Beatmap Title Overruns".to_string(),
+        ..sample_meta(42)
+    };
+    let browse = browse_with(vec![BrowseRow {
+        id: 42,
+        meta: Some(very_long),
+    }]);
+
+    let buffer = render_grid(&browse, Some(&covers_both_variants(42)), 90, 30);
+    assert!(
+        colored_rows_at(&buffer, 90 - 3) > 0,
+        "the square cover is still shown while the title wraps"
+    );
+    let first = preview_row_of(&buffer, "A Truly Enormous").expect("title line 1 renders");
+    let artist = preview_row_of(&buffer, "Artist").expect("artist renders");
+    assert_eq!(
+        artist,
+        first + 2,
+        "an over-column title wraps to two lines, pushing artist down two rows"
     );
 }

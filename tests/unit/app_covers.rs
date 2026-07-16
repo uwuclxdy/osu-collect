@@ -13,20 +13,53 @@ fn tiny_protocol(covers: &Covers) -> ratatui_image::protocol::StatefulProtocol {
 }
 
 #[test]
-fn protocol_for_returns_a_handle_only_for_ready_covers() {
+fn variant_accessors_return_a_handle_only_for_ready_covers() {
     let mut covers = Covers::new();
-    let protocol = tiny_protocol(&covers);
-    covers.record_ready(1, protocol);
+    covers.record_ready(
+        1,
+        Some(tiny_protocol(&covers)),
+        Some(tiny_protocol(&covers)),
+    );
     covers.record_missing(2);
     covers.mark_pending(3);
 
+    assert!(covers.square_for(1).is_some(), "ready cover has a square");
+    assert!(covers.wide_for(1).is_some(), "ready cover has a wide");
     assert!(
-        covers.protocol_for(1).is_some(),
-        "ready cover has a protocol"
+        covers.square_for(2).is_none(),
+        "missing cover has no square"
     );
-    assert!(covers.protocol_for(2).is_none(), "missing cover has none");
-    assert!(covers.protocol_for(3).is_none(), "pending cover has none");
-    assert!(covers.protocol_for(4).is_none(), "unseen cover has none");
+    assert!(covers.wide_for(3).is_none(), "pending cover has no wide");
+    assert!(covers.square_for(4).is_none(), "unseen cover has no square");
+}
+
+#[test]
+fn record_ready_keeps_variants_independent() {
+    let mut covers = Covers::new();
+    // Only the wide variant decoded; the square 404'd.
+    covers.record_ready(1, None, Some(tiny_protocol(&covers)));
+    assert!(
+        covers.square_for(1).is_none(),
+        "a failed square stays absent"
+    );
+    assert!(
+        covers.wide_for(1).is_some(),
+        "the wide variant is still served"
+    );
+}
+
+#[test]
+fn record_ready_with_no_variants_settles_missing() {
+    let mut covers = Covers::new();
+    covers.record_ready(1, None, None);
+    assert!(
+        matches!(covers.cache.get(&1), Some(CoverState::Missing)),
+        "both variants failing settles Missing, not an empty Ready"
+    );
+    assert!(
+        covers.is_cached(1),
+        "the empty result still counts as cached so it is never re-fetched"
+    );
 }
 
 #[test]

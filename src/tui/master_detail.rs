@@ -10,7 +10,8 @@
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect, Size},
-    text::Line,
+    style::Style,
+    text::{Line, Span},
     widgets::{ListItem, Paragraph},
 };
 use ratatui_image::protocol::StatefulProtocol;
@@ -27,6 +28,27 @@ pub enum Pane {
     Preview,
 }
 
+/// The highlighted row's ready cover protocols, one per aspect. The preview
+/// always seats the cover in a right-hand column, text to its left; it renders
+/// the wide `card@2x` once that column has grown past [`WIDE_COVER_WIDTH`] and
+/// the variant is loaded, otherwise the square `list@2x`. Either field is `None`
+/// when that variant is unfetched or failed.
+#[derive(Clone, Copy)]
+pub struct PreviewCover<'a> {
+    pub square: Option<&'a RefCell<StatefulProtocol>>,
+    pub wide: Option<&'a RefCell<StatefulProtocol>>,
+}
+
+/// The preview's lead line (the set title), rendered above `preview_items`. It
+/// wraps to at most [`MAX_TITLE_LINES`] at the render width, but only ever needs
+/// to when there's no cover: a title that won't fit on one line beside the cover
+/// collapses the cover first (see [`render_preview_pane`]), so it wraps only when
+/// even the full width can't hold it. `None` renders `preview_items` alone.
+pub struct PreviewLead {
+    pub text: String,
+    pub style: Style,
+}
+
 /// Below this width a side-by-side split would crush the list column, so the
 /// view falls back to single-pane (mirrors `login_split`'s threshold).
 const MIN_SPLIT_WIDTH: u16 = 60;
@@ -36,10 +58,14 @@ const COMPACT_HEIGHT: u16 = 14;
 /// crowds out the preview on an ultra-wide terminal.
 const LIST_WIDTH_MIN: u16 = 28;
 const LIST_WIDTH_MAX: u16 = 52;
-/// Cover-column width bounds: below the min the artwork reads as noise, above
-/// the max an ultra-wide pane would hand it more room than the metadata.
+/// Minimum cover-column width; below this the artwork reads as noise, so a
+/// cramped pane drops the cover and keeps the text.
 const COVER_WIDTH_MIN: u16 = 12;
-const COVER_WIDTH_MAX: u16 = 34;
+/// Once the cover column reaches this width the wide `card@2x` reads better than
+/// the square `list@2x`; below it the square wins. The column grows with the
+/// pane (see [`cover_width_allowance`]), so this doubles as the "enough space"
+/// threshold that swaps in the wide variant.
+const WIDE_COVER_WIDTH: u16 = 26;
 /// Blank columns between the metadata text and the cover.
 const COVER_GAP: u16 = 2;
 /// The metadata text's floor: the widest static kv key (`favourites`) plus its
@@ -49,6 +75,9 @@ const MIN_TEXT_WIDTH: u16 = 22;
 /// Minimum preview inner height before a cover is carved: shorter than this the
 /// image is a smear rather than artwork.
 const MIN_IMAGE_INNER_HEIGHT: u16 = 4;
+/// The set title's line budget in the preview: enough that a long title beside
+/// the cover isn't cut to one truncated line, capped so it stays compact.
+const MAX_TITLE_LINES: usize = 2;
 
 /// A prepared two-pane master-detail browse view. See the module docs for the
 /// layout contract.
@@ -73,10 +102,14 @@ pub struct MasterDetail<'a> {
     pub preview_items: Vec<ListItem<'static>>,
     pub preview_selected: Option<usize>,
     pub preview_offset: &'a Cell<usize>,
-    /// The highlighted row's ready cover protocol. `Some` carves a right-hand
-    /// image column beside the preview text (when the pane has room); `None`
+    /// The highlighted row's ready cover protocols. `Some` seats a right-hand
+    /// image column (square or wide, per pane size) when there's room; `None`
     /// (the default for image-less consumers) renders the preview text-only.
-    pub preview_image: Option<&'a RefCell<StatefulProtocol>>,
+    pub preview_image: Option<PreviewCover<'a>>,
+    /// The preview's lead (the set title), drawn above `preview_items`. Kept on
+    /// one line beside a cover; the cover collapses before this wraps. `None`
+    /// renders `preview_items` alone.
+    pub preview_lead: Option<PreviewLead>,
     pub focused: Pane,
 }
 
@@ -152,67 +185,140 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
     let highlight = focused && view.preview_selected.is_some();
     let selected = view.preview_selected.unwrap_or(0);
 
-    // A ready cover for the highlighted row takes a column at the pane's right
-    // edge, the metadata text keeping everything left of it.
-    if let Some(protocol) = view.preview_image {
-        let block = widgets::panel_block(
-            view.preview_title.clone(),
-            view.preview_meta.clone(),
-            focused,
-            false,
-        );
-        let inner = block.inner(area);
-        if let Some((text_area, cover_area)) = cover_split(inner, protocol) {
-            frame.render_widget(block, area);
-            widgets::render_list(
-                frame,
-                text_area,
-                view.preview_items.clone(),
-                Some(selected),
-                highlight,
-                view.preview_offset,
-            );
-            // `resize_encode_render` mutates the cached protocol, hence the
-            // `RefCell` borrow under this immutable-app draw path.
-            frame.render_stateful_widget(
-                StatefulImage::new(),
-                cover_area,
-                &mut *protocol.borrow_mut(),
-            );
-            return;
-        }
-    }
-
-    widgets::render_scrollable_panel(
-        frame,
-        area,
+    let block = widgets::panel_block(
         view.preview_title.clone(),
         view.preview_meta.clone(),
-        view.preview_items.clone(),
-        selected,
-        highlight,
-        None,
         focused,
         false,
+    );
+    let inner = block.inner(area);
+
+    // A ready cover takes a column at the pane's right edge, the metadata text
+    // keeping everything left of it. `cover_layout` prefers the wide variant, then
+    // collapses to the smaller square (still shown) to spare the title before it
+    // ever wraps — the title wraps to two lines only when even the collapsed
+    // column's text can't hold it.
+    if let Some(cover) = view.preview_image
+        && let Some((text_area, cover_area, protocol)) =
+            cover_layout(inner, view.preview_lead.as_ref(), cover.square, cover.wide)
+    {
+        frame.render_widget(block, area);
+        let items = with_lead(
+            view.preview_lead.as_ref(),
+            text_area.width,
+            &view.preview_items,
+        );
+        widgets::render_list(
+            frame,
+            text_area,
+            items,
+            Some(selected),
+            highlight,
+            view.preview_offset,
+        );
+        // `resize_encode_render` mutates the cached protocol, hence the `RefCell`
+        // borrow under this immutable-app draw path.
+        frame.render_stateful_widget(
+            StatefulImage::new(),
+            cover_area,
+            &mut *protocol.borrow_mut(),
+        );
+        return;
+    }
+
+    // Text-only (no cover, or the cover collapsed to spare the title): same block,
+    // the title lead prepended at the full inner width — one line if it fits, two
+    // if not. Mirrors `render_scrollable_panel` (block + `render_list` + scrollbar)
+    // minus the text-cursor pass a read-only preview never needs.
+    frame.render_widget(block, area);
+    let items = with_lead(view.preview_lead.as_ref(), inner.width, &view.preview_items);
+    widgets::render_list(
+        frame,
+        inner,
+        items,
+        Some(selected),
+        highlight,
         view.preview_offset,
     );
 }
 
-/// Carve `inner` into `(text, cover)` — the cover flush against the pane's right
-/// edge, the text taking the rest. `None` leaves the preview text-only: the pane
-/// is too short, too narrow to seat both, or the image rounds away to nothing.
+/// Whether the title lead fits on a single line at `width` (so the cover may
+/// stay). No lead trivially fits — an id-only row keeps its cover.
+fn title_fits_one_line(lead: Option<&PreviewLead>, width: u16) -> bool {
+    lead.is_none_or(|lead| display_width(&lead.text) <= width as usize)
+}
+
+/// Prepend the wrapped title lead (at most [`MAX_TITLE_LINES`] lines at `width`)
+/// above the field rows. `None` lead returns the field rows unchanged.
+fn with_lead(
+    lead: Option<&PreviewLead>,
+    width: u16,
+    items: &[ListItem<'static>],
+) -> Vec<ListItem<'static>> {
+    let mut out = Vec::with_capacity(items.len() + MAX_TITLE_LINES);
+    if let Some(lead) = lead {
+        for line in wrap_to_lines(&lead.text, width as usize, MAX_TITLE_LINES) {
+            out.push(ListItem::new(Line::from(Span::styled(line, lead.style))));
+        }
+    }
+    out.extend(items.iter().cloned());
+    out
+}
+
+/// Resolve the cover layout: `(text, cover, protocol)`, or `None` for text-only
+/// (the pane can't seat any cover beside readable text).
 ///
-/// The cover rect is sized to what the image will *actually* occupy rather than
-/// to the allowance it was offered: [`Resize::Fit`] letterboxes within its area
-/// and anchors top-left, so handing `StatefulImage` a fixed column would float
-/// the artwork mid-pane with dead space against the border. Asking the protocol
-/// for its own fitted size first (it accounts for the terminal's font aspect,
-/// and never upscales past the source) makes the right edge land exactly.
-fn cover_split(inner: Rect, protocol: &RefCell<StatefulProtocol>) -> Option<(Rect, Rect)> {
+/// Priority is **collapse-before-wrap**: prefer the wide `card@2x` in a big
+/// column, but only when the pane has room for it AND the title fits on one line
+/// beside it. Otherwise collapse to the square `list@2x` in a NARROWER column —
+/// the cover is still shown, and the wider text it leaves keeps a longer title on
+/// one line; the title wraps to two only when even that column's text can't hold
+/// it. A still-fetching preferred variant falls through to the other so the cover
+/// never blanks while both are in flight.
+fn cover_layout<'a>(
+    inner: Rect,
+    lead: Option<&PreviewLead>,
+    square: Option<&'a RefCell<StatefulProtocol>>,
+    wide: Option<&'a RefCell<StatefulProtocol>>,
+) -> Option<(Rect, Rect, &'a RefCell<StatefulProtocol>)> {
     if inner.height < MIN_IMAGE_INNER_HEIGHT {
         return None;
     }
-    let allowance = cover_width_allowance(inner.width)?;
+
+    // Wide when the pane has room for it and the title fits on one line beside it.
+    if let Some(w) = wide
+        && let Some(allowance) = wide_cover_width(inner.width)
+        && let Some((text_area, cover_area)) = place_cover(inner, w, allowance)
+        && title_fits_one_line(lead, text_area.width)
+    {
+        return Some((text_area, cover_area, w));
+    }
+
+    // Collapse to the smaller square (still shown). Prefer the square protocol;
+    // fall back to the wide one when only it has loaded.
+    let collapsed = square.or(wide)?;
+    let allowance = square_cover_width(inner.width)?;
+    let (text_area, cover_area) = place_cover(inner, collapsed, allowance)?;
+    Some((text_area, cover_area, collapsed))
+}
+
+/// Fit `protocol` into a right-anchored column of at most `allowance` width,
+/// returning `(text, cover)` — the text taking everything left of the fitted
+/// image. `None` if the image rounds away to nothing.
+///
+/// The cover rect is sized to what the image will *actually* occupy rather than
+/// the allowance it was offered: [`Resize::Fit`] letterboxes within its area and
+/// anchors top-left, so a fixed column would float the artwork mid-pane with dead
+/// space against the border. Asking the protocol for its own fitted size (it
+/// accounts for the terminal's font aspect, and never upscales past the source)
+/// puts the right edge exactly on the border. Since the fitted image can only be
+/// narrower than the allowance, whose formula already reserves [`MIN_TEXT_WIDTH`],
+/// the text width never needs re-checking.
+fn place_cover(
+    inner: Rect,
+    protocol: &RefCell<StatefulProtocol>,
+    allowance: u16,
+) -> Option<(Rect, Rect)> {
     let fitted = protocol
         .borrow()
         .size_for(Resize::Fit(None), Size::new(allowance, inner.height));
@@ -233,20 +339,129 @@ fn cover_split(inner: Rect, protocol: &RefCell<StatefulProtocol>) -> Option<(Rec
     Some((text_area, cover_area))
 }
 
-/// The widest column a cover may be offered: about two fifths of the preview's
-/// inner width, never more than [`COVER_WIDTH_MAX`] and never past what the text
-/// needs. `None` when what's left over can't reach [`COVER_WIDTH_MIN`] — the text
-/// is served first, so a cramped pane loses the cover rather than its metadata.
-///
-/// Capping the offer at `spare` is what keeps the text's floor safe: the fitted
-/// image can only be narrower than its allowance, so `cover_split` never has to
-/// re-check the text width it hands out.
-fn cover_width_allowance(inner_width: u16) -> Option<u16> {
-    let spare = inner_width.checked_sub(COVER_GAP + MIN_TEXT_WIDTH)?;
+/// The wide cover column: up to three fifths of the inner width, floored so the
+/// text keeps [`MIN_TEXT_WIDTH`]. `None` until it reaches [`WIDE_COVER_WIDTH`] —
+/// below that the pane has no room for a wide cover, so the square is used.
+fn wide_cover_width(inner_width: u16) -> Option<u16> {
     // Divide before multiply (matches `render_panes`) so the intermediate never
     // overflows `u16` on an extreme-width terminal.
-    let share = (inner_width / 5 * 2).min(spare).min(COVER_WIDTH_MAX);
-    (share >= COVER_WIDTH_MIN).then_some(share)
+    cover_column(inner_width, 3).filter(|&w| w >= WIDE_COVER_WIDTH)
+}
+
+/// The square (collapsed) cover column: up to two fifths of the inner width,
+/// narrower than the wide column so collapsing to it frees room for the title.
+/// `None` when even this can't reach [`COVER_WIDTH_MIN`] beside readable text.
+fn square_cover_width(inner_width: u16) -> Option<u16> {
+    cover_column(inner_width, 2).filter(|&w| w >= COVER_WIDTH_MIN)
+}
+
+/// `fifths`/5 of the inner width, capped at what leaves the text its
+/// [`MIN_TEXT_WIDTH`] floor. `None` when there's no room for even the text.
+fn cover_column(inner_width: u16, fifths: u16) -> Option<u16> {
+    let spare = inner_width.checked_sub(COVER_GAP + MIN_TEXT_WIDTH)?;
+    Some((inner_width / 5 * fifths).min(spare))
+}
+
+/// Greedy word-wrap `text` to at most `max_lines` lines of display width
+/// `width`, ellipsising the final line when the text overruns the budget. Empty
+/// for a zero `width` or `max_lines`.
+///
+/// ratatui exposes no wrap-point data (`Paragraph::wrap` renders wrapped text
+/// but returns none), so wrapping-as-data stays custom (`ratatui-pro`
+/// `limitations.md`). Widths are display columns via [`Span::width`], so
+/// full-width (CJK) titles wrap by cells, not bytes.
+fn wrap_to_lines(text: &str, width: usize, max_lines: usize) -> Vec<String> {
+    if width == 0 || max_lines == 0 {
+        return Vec::new();
+    }
+    let mut lines = greedy_wrap(text, width);
+    if lines.len() <= max_lines {
+        return lines;
+    }
+    lines.truncate(max_lines);
+    if let Some(last) = lines.last_mut() {
+        *last = truncate_with_ellipsis(last, width);
+    }
+    lines
+}
+
+/// Wrap into as many lines as needed, each within `width`. A single word wider
+/// than `width` is hard-split at a char boundary.
+fn greedy_wrap(text: &str, width: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        for piece in hard_split(word, width) {
+            push_piece(&piece, width, &mut lines, &mut current);
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+/// Append one already-`width`-bounded `piece` to the wrap in progress: extend
+/// the current line when it still fits (with a separating space), else flush the
+/// current line and start a new one with `piece`.
+fn push_piece(piece: &str, width: usize, lines: &mut Vec<String>, current: &mut String) {
+    if current.is_empty() {
+        current.push_str(piece);
+    } else if display_width(current) + 1 + display_width(piece) <= width {
+        current.push(' ');
+        current.push_str(piece);
+    } else {
+        lines.push(std::mem::replace(current, piece.to_string()));
+    }
+}
+
+/// Split `word` into consecutive pieces each within `width` display columns; a
+/// word that already fits returns `[word]`.
+fn hard_split(word: &str, width: usize) -> Vec<String> {
+    if display_width(word) <= width {
+        return vec![word.to_string()];
+    }
+    let mut chunks = Vec::new();
+    let mut chunk = String::new();
+    for ch in word.chars() {
+        if !chunk.is_empty() && display_width(&chunk) + char_width(ch) > width {
+            chunks.push(std::mem::take(&mut chunk));
+        }
+        chunk.push(ch);
+    }
+    if !chunk.is_empty() {
+        chunks.push(chunk);
+    }
+    chunks
+}
+
+/// Trim `s` to `width` display columns and append `…` as a truncation marker
+/// (dropping trailing columns to make room for it). Empty for a zero `width`.
+fn truncate_with_ellipsis(s: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let budget = width - 1;
+    let mut out = String::new();
+    for ch in s.chars() {
+        if display_width(&out) + char_width(ch) > budget {
+            break;
+        }
+        out.push(ch);
+    }
+    out.push('…');
+    out
+}
+
+/// Display width of `s` in terminal columns (unicode-aware), via ratatui's own
+/// span measurement.
+fn display_width(s: &str) -> usize {
+    Span::raw(s).width()
+}
+
+/// Display width of a single char.
+fn char_width(ch: char) -> usize {
+    display_width(ch.encode_utf8(&mut [0u8; 4]))
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 use super::{
-    COVER_GAP, COVER_WIDTH_MAX, COVER_WIDTH_MIN, MIN_TEXT_WIDTH, MasterDetail, Pane,
-    cover_width_allowance, render,
+    COVER_GAP, COVER_WIDTH_MIN, MIN_TEXT_WIDTH, MasterDetail, Pane, render, square_cover_width,
+    wide_cover_width, wrap_to_lines,
 };
 use ratatui::{Terminal, backend::TestBackend, text::Line, widgets::ListItem};
 use std::cell::Cell;
@@ -47,6 +47,7 @@ fn sample_view<'a>(
         preview_selected: Some(0),
         preview_offset,
         preview_image: None,
+        preview_lead: None,
         focused: Pane::List,
     }
 }
@@ -93,6 +94,7 @@ fn empty_list_items_does_not_panic() {
         preview_selected: None,
         preview_offset: &preview_offset,
         preview_image: None,
+        preview_lead: None,
         focused: Pane::List,
     };
 
@@ -116,55 +118,128 @@ fn list_meta_renders_in_top_border() {
 }
 
 #[test]
-fn cover_allowance_yields_nothing_until_both_fit() {
-    let floor = COVER_WIDTH_MIN + COVER_GAP + MIN_TEXT_WIDTH;
-    assert_eq!(
-        cover_width_allowance(floor - 1),
-        None,
-        "one column short of seating a minimum cover, the gap, and readable text \
-         must drop the cover rather than squeeze either"
-    );
-    assert_eq!(
-        cover_width_allowance(floor),
-        Some(COVER_WIDTH_MIN),
-        "at the floor the text keeps its width and the cover takes what's left, \
-         below its two-fifths share"
-    );
-    assert_eq!(cover_width_allowance(0), None, "an empty pane has no cover");
-}
-
-#[test]
-fn cover_allowance_never_eats_into_the_text_floor() {
-    // Every width the split can hand a cover must leave MIN_TEXT_WIDTH intact —
-    // that invariant is why `cover_split` doesn't re-check the text width.
-    for inner_width in 0..=400u16 {
-        let Some(allowance) = cover_width_allowance(inner_width) else {
-            continue;
-        };
-        assert!(
-            inner_width - allowance - COVER_GAP >= MIN_TEXT_WIDTH,
-            "inner {inner_width} offered {allowance} columns, starving the text"
-        );
-        assert!(
-            (COVER_WIDTH_MIN..=COVER_WIDTH_MAX).contains(&allowance),
-            "inner {inner_width} offered {allowance}, outside the cover bounds"
-        );
+fn both_columns_never_eat_into_the_text_floor() {
+    // Every width either column can offer must leave MIN_TEXT_WIDTH intact — that
+    // invariant is why `place_cover` doesn't re-check the text width.
+    for inner_width in 0..=2000u16 {
+        for offer in [
+            wide_cover_width(inner_width),
+            square_cover_width(inner_width),
+        ] {
+            let Some(w) = offer else { continue };
+            assert!(
+                inner_width - w - COVER_GAP >= MIN_TEXT_WIDTH,
+                "inner {inner_width} offered {w} columns, starving the text"
+            );
+        }
     }
 }
 
 #[test]
-fn cover_allowance_tracks_two_fifths_between_its_bounds() {
-    assert_eq!(cover_width_allowance(60), Some(24), "60/5*2");
+fn the_square_column_is_narrower_than_the_wide_so_collapsing_frees_text() {
+    // Wherever both are offered, the square (two fifths) is at most the wide
+    // (three fifths) — collapsing to it never widens the cover.
+    for inner_width in 0..=2000u16 {
+        if let (Some(wide), Some(square)) = (
+            wide_cover_width(inner_width),
+            square_cover_width(inner_width),
+        ) {
+            assert!(
+                square <= wide,
+                "inner {inner_width}: square {square} must not exceed wide {wide}"
+            );
+        }
+    }
+}
+
+#[test]
+fn wide_column_tracks_three_fifths_above_its_threshold() {
+    assert_eq!(wide_cover_width(100), Some(60), "100/5*3");
+    assert_eq!(wide_cover_width(200), Some(120), "200/5*3");
+    // Below WIDE_COVER_WIDTH the wide column bows out (the square is used).
     assert_eq!(
-        cover_width_allowance(100),
-        Some(COVER_WIDTH_MAX),
-        "an ultra-wide pane caps the cover instead of handing it two fifths"
+        wide_cover_width(40),
+        None,
+        "40 → 40/5*3=24, below the wide threshold"
     );
     assert_eq!(
-        cover_width_allowance(u16::MAX),
-        Some(COVER_WIDTH_MAX),
-        "the widest possible pane must clamp, not overflow"
+        wide_cover_width(u16::MAX),
+        Some(u16::MAX / 5 * 3),
+        "the widest possible pane must not overflow"
     );
+}
+
+#[test]
+fn square_column_tracks_two_fifths_down_to_its_minimum() {
+    assert_eq!(square_cover_width(100), Some(40), "100/5*2");
+    // Floor-bound narrow pane: whatever's left after the text keeps MIN_TEXT_WIDTH.
+    assert_eq!(square_cover_width(40), Some(16), "40-2-22, floor-bound");
+    let floor = COVER_WIDTH_MIN + COVER_GAP + MIN_TEXT_WIDTH;
+    assert_eq!(
+        square_cover_width(floor),
+        Some(COVER_WIDTH_MIN),
+        "at the floor the square is exactly its minimum"
+    );
+    assert_eq!(
+        square_cover_width(floor - 1),
+        None,
+        "one column short: no cover, text-only"
+    );
+    assert_eq!(square_cover_width(0), None, "an empty pane has no cover");
+}
+
+#[test]
+fn wrap_to_lines_keeps_a_short_title_on_one_line() {
+    assert_eq!(wrap_to_lines("Short Title", 40, 2), vec!["Short Title"]);
+}
+
+#[test]
+fn wrap_to_lines_wraps_at_word_boundaries_within_the_budget() {
+    // Fits in two lines exactly: clean word-boundary break, no ellipsis. This is
+    // the real case — a long title in the ~22-col text column beside the cover.
+    let lines = wrap_to_lines("one two three", 9, 2);
+    assert_eq!(lines, vec!["one two", "three"]);
+}
+
+#[test]
+fn wrap_to_lines_ellipsises_the_last_line_when_it_overruns() {
+    // The title needs three lines at this width; capping at two marks the cut.
+    let lines = wrap_to_lines("alpha beta gamma delta epsilon", 11, 2);
+    assert_eq!(lines.len(), 2);
+    assert!(
+        lines[1].ends_with('…'),
+        "the final kept line marks the truncation, got {:?}",
+        lines[1]
+    );
+    assert!(
+        lines.iter().all(|l| super::display_width(l) <= 11),
+        "no wrapped line may exceed the width"
+    );
+}
+
+#[test]
+fn wrap_to_lines_hard_splits_a_word_longer_than_the_width() {
+    // A single unbroken word (a URL-like title) still gets chopped to fit.
+    let lines = wrap_to_lines("aaaaaaaaaaaa", 4, 2);
+    assert_eq!(lines.len(), 2);
+    assert!(lines.iter().all(|l| super::display_width(l) <= 4));
+    assert!(lines[1].ends_with('…'), "the overrun is still marked");
+}
+
+#[test]
+fn wrap_to_lines_measures_full_width_glyphs_by_columns() {
+    // Full-width CJK glyphs are two columns each; a common osu title case.
+    let lines = wrap_to_lines("ありがとうございます", 8, 2);
+    assert!(
+        lines.iter().all(|l| super::display_width(l) <= 8),
+        "CJK titles must wrap by display columns, not byte or char count: {lines:?}"
+    );
+}
+
+#[test]
+fn wrap_to_lines_is_empty_for_a_zero_budget() {
+    assert!(wrap_to_lines("anything", 0, 2).is_empty());
+    assert!(wrap_to_lines("anything", 40, 0).is_empty());
 }
 
 #[test]

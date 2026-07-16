@@ -27,12 +27,21 @@ const COVER_DEBOUNCE_TICKS: u32 = 4;
 pub enum CoverState {
     /// A fetch is in flight; do not re-request.
     Pending,
-    /// The cover decoded; the protocol renders it letterboxed into any area.
-    /// Boxed so the large protocol doesn't inflate every `Pending`/`Missing`
-    /// cache slot (`clippy::large_enum_variant`).
-    Ready(Box<RefCell<StatefulProtocol>>),
-    /// The cover 404'd, failed to fetch, or failed to decode; render text-only.
+    /// At least one variant decoded. See [`ReadyCover`].
+    Ready(ReadyCover),
+    /// Both variants 404'd, failed to fetch, or failed to decode; text-only.
     Missing,
+}
+
+/// A settled cover's two render protocols: the square `list@2x` backs the
+/// right-hand column, the wide `card@2x` backs the full-width banner. Each is
+/// independently optional — one variant can fail while the other lands — and
+/// each is boxed so the large protocol doesn't inflate the `Pending`/`Missing`
+/// slots (`clippy::large_enum_variant`). A `Ready` always carries at least one:
+/// both-`None` settles as [`CoverState::Missing`].
+pub struct ReadyCover {
+    square: Option<Box<RefCell<StatefulProtocol>>>,
+    wide: Option<Box<RefCell<StatefulProtocol>>>,
 }
 
 /// Cover-image store held on [`crate::app::App`]. See the module docs.
@@ -64,11 +73,22 @@ impl Covers {
         }
     }
 
-    /// The ready protocol for `set_id`, or `None` when its cover is pending,
-    /// missing, or was never fetched — the render then falls back to text-only.
-    pub fn protocol_for(&self, set_id: u32) -> Option<&RefCell<StatefulProtocol>> {
+    /// The square (`list@2x`) protocol for `set_id`, or `None` when its cover is
+    /// pending, missing, that variant failed, or it was never fetched — the
+    /// column render then falls back to text-only.
+    pub fn square_for(&self, set_id: u32) -> Option<&RefCell<StatefulProtocol>> {
         match self.cache.get(&set_id) {
-            Some(CoverState::Ready(protocol)) => Some(&**protocol),
+            Some(CoverState::Ready(ready)) => ready.square.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// The wide (`card@2x`) protocol for `set_id`, or `None` under the same
+    /// conditions as [`Self::square_for`] — the banner render then has nothing to
+    /// draw and the preview falls back to the column (or text-only).
+    pub fn wide_for(&self, set_id: u32) -> Option<&RefCell<StatefulProtocol>> {
+        match self.cache.get(&set_id) {
+            Some(CoverState::Ready(ready)) => ready.wide.as_deref(),
             _ => None,
         }
     }
@@ -84,10 +104,26 @@ impl Covers {
         self.cache.insert(set_id, CoverState::Pending);
     }
 
-    /// Store a decoded cover's render protocol.
-    pub fn record_ready(&mut self, set_id: u32, protocol: StatefulProtocol) {
-        self.cache
-            .insert(set_id, CoverState::Ready(Box::new(RefCell::new(protocol))));
+    /// Store a settled cover's variant protocols. Both-`None` would render
+    /// identically to `Missing` but must still settle the id so the prefetch
+    /// never re-requests it, so it routes to [`Self::record_missing`].
+    pub fn record_ready(
+        &mut self,
+        set_id: u32,
+        square: Option<StatefulProtocol>,
+        wide: Option<StatefulProtocol>,
+    ) {
+        if square.is_none() && wide.is_none() {
+            self.record_missing(set_id);
+            return;
+        }
+        self.cache.insert(
+            set_id,
+            CoverState::Ready(ReadyCover {
+                square: square.map(|p| Box::new(RefCell::new(p))),
+                wide: wide.map(|p| Box::new(RefCell::new(p))),
+            }),
+        );
     }
 
     /// Record that a cover has no image (404 / fetch / decode failure); settles

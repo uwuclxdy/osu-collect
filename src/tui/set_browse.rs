@@ -15,12 +15,12 @@ use osu_downloader::search::BeatmapSetMeta;
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Stylize,
+    style::{Style, Stylize},
     text::{Line, Span},
     widgets::ListItem,
 };
 
-use super::master_detail::{self, MasterDetail, Pane};
+use super::master_detail::{self, MasterDetail, Pane, PreviewCover, PreviewLead};
 use super::widgets;
 use super::{accent, focused_label, spinner_str, text, text_dim, text_faint, warning};
 
@@ -30,8 +30,8 @@ const KV_WIDTH: usize = "favourites".len();
 
 /// Render a set browse over the whole body area. `list_title` names the left
 /// pane, `list_meta` renders in the list pane's header border. `covers` supplies
-/// the highlighted row's cover image (a top band on the preview) when its cover
-/// has loaded; `None` renders text-only. Pure selector — no download button.
+/// the highlighted row's cover (a right-hand image column, square or wide per
+/// pane size) when it has loaded; `None` renders text-only. Pure selector — no download button.
 pub fn render(
     frame: &mut Frame,
     area: Rect,
@@ -62,15 +62,26 @@ pub fn render(
         })
         .collect();
 
-    let preview_items = browse
-        .highlighted_row()
-        .map(|row| preview_rows(row, browse.details_for(row.id), enriching, tick))
-        .unwrap_or_default();
+    // The title rides as the preview's lead (`master_detail` wraps it to two
+    // lines beside the cover); the fields fill `preview_items`. An id-only or
+    // still-loading row has no lead, its id/loading note filling the items.
+    let (preview_lead, preview_items) = match browse.highlighted_row() {
+        Some(row) => preview_lead_and_items(row, browse.details_for(row.id), enriching, tick),
+        None => (None, Vec::new()),
+    };
 
-    // The highlighted row's cover, once loaded — a top band on the preview pane.
+    // The highlighted row's two cover variants, once loaded: the square column
+    // and the wide upgrade. Only pass a cover when at least one variant is ready,
+    // so an id-only or unfetched row still reaches the text-only fallthrough.
     let preview_image = covers
         .zip(browse.highlighted_row())
-        .and_then(|(covers, row)| covers.protocol_for(row.id));
+        .and_then(|(covers, row)| {
+            let cover = PreviewCover {
+                square: covers.square_for(row.id),
+                wide: covers.wide_for(row.id),
+            };
+            (cover.square.is_some() || cover.wide.is_some()).then_some(cover)
+        });
 
     let view = MasterDetail {
         status: None,
@@ -87,6 +98,7 @@ pub fn render(
         preview_selected: None,
         preview_offset: &browse.preview_offset,
         preview_image,
+        preview_lead,
         focused: if browse.preview_focused() {
             Pane::Preview
         } else {
@@ -112,17 +124,25 @@ fn list_row(row: &BrowseRow, selected: bool, is_cursor: bool) -> ListItem<'stati
     ListItem::new(Line::from(spans))
 }
 
-/// The read-only detail of the highlighted set. Rich metadata when present; while
-/// its enrichment is still fetching, an id line plus a `loading metadata…`
-/// spinner; once enrichment is idle and still empty, a genuine "no metadata" note.
-fn preview_rows(
+/// The read-only preview of the highlighted set, split into `(lead, items)`: the
+/// title lead (wrapped to two lines by `master_detail`) over the one-line field
+/// rows. An id-only or still-enriching row has no lead — its id line plus a
+/// `loading metadata…` spinner, or a genuine "no metadata" note once idle, fills
+/// the items.
+fn preview_lead_and_items(
     row: &BrowseRow,
     details: Option<&BeatmapDetails>,
     enriching: bool,
     tick: u64,
-) -> Vec<ListItem<'static>> {
+) -> (Option<PreviewLead>, Vec<ListItem<'static>>) {
     match &row.meta {
-        Some(meta) => meta_preview(meta, details),
+        Some(meta) => (
+            Some(PreviewLead {
+                text: meta.title.clone(),
+                style: Style::new().fg(accent()).bold(),
+            }),
+            meta_field_rows(meta, details),
+        ),
         None => {
             let id_line = ListItem::new(Line::from(format!("#{}", row.id).fg(text())));
             let note = if enriching {
@@ -132,14 +152,19 @@ fn preview_rows(
             } else {
                 ListItem::new(Line::from("no metadata available".fg(text_faint())))
             };
-            vec![id_line, note]
+            (None, vec![id_line, note])
         }
     }
 }
 
-fn meta_preview(meta: &BeatmapSetMeta, details: Option<&BeatmapDetails>) -> Vec<ListItem<'static>> {
+/// The preview's field rows (no title — that rides as the lead): artist, the
+/// static kv rows, the video/nsfw flags, then the nzbasic detail columns. Each
+/// is one line, so the cover/text budget is a plain row count.
+fn meta_field_rows(
+    meta: &BeatmapSetMeta,
+    details: Option<&BeatmapDetails>,
+) -> Vec<ListItem<'static>> {
     let mut rows = vec![
-        ListItem::new(Line::from(meta.title.clone().fg(accent()).bold())),
         ListItem::new(Line::from(meta.artist.clone().fg(text()))),
         kv_row("mapper", meta.creator.clone()),
         kv_row("status", meta.status.clone()),

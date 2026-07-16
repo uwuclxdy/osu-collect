@@ -6,13 +6,17 @@ use crate::app::App;
 use crate::config::Config;
 
 #[test]
-fn cover_url_builds_the_assets_ppy_square_list_path() {
-    // `list@2x` is the square (300x300) asset; the preview's cover column can
-    // only seat a wide crop by shrinking it to a sliver, so the `@2x` suffix and
-    // the `list` variant are both load-bearing, not cosmetic.
+fn variant_urls_build_the_square_and_wide_asset_paths() {
+    // `list@2x` is square (300x300) for the column; `card@2x` is the wide
+    // (800x280) banner asset. Both the variant name and the `@2x` suffix are
+    // load-bearing — a different variant changes the aspect the layout picks on.
     assert_eq!(
-        cover_url(1234),
+        square_cover_url(1234),
         "https://assets.ppy.sh/beatmaps/1234/covers/list@2x.jpg"
+    );
+    assert_eq!(
+        wide_cover_url(1234),
+        "https://assets.ppy.sh/beatmaps/1234/covers/card@2x.jpg"
     );
 }
 
@@ -22,8 +26,8 @@ fn missing_event_caches_and_blocks_a_refetch() {
     handle_home_cover_event(HomeCoverEvent::Missing { set_id: 42 }, &mut app);
 
     assert!(
-        app.covers.protocol_for(42).is_none(),
-        "a missing cover yields no render protocol"
+        app.covers.square_for(42).is_none() && app.covers.wide_for(42).is_none(),
+        "a missing cover yields no render protocol for either variant"
     );
     // Settled Missing counts as cached, so the debounced prefetch never re-emits
     // a fetch for that row however long it stays highlighted.
