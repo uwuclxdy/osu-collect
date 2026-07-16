@@ -26,7 +26,7 @@ Press <kbd>?</kbd> anywhere in the app for this list as an overlay.
 |---|---|
 | <kbd>1</kbd>-<kbd>3</kbd> | Jump straight to a source (collection / find / update) |
 | <kbd>←</kbd> <kbd>→</kbd> | Focus the list / preview pane inside a browse |
-| <kbd>s</kbd> | Jump to the download button; in a browse, cycle the sort |
+| <kbd>s</kbd> | Jump to the last enabled action button (find / scan / view maps / download); cycle the sort in the update browse |
 | <kbd>a</kbd> / <kbd>A</kbd> | Select all / none (update browse) |
 | <kbd>i</kbd> / <kbd>I</kbd> | Mark a set / whole collection as installed (update preview) |
 | <kbd>u</kbd> / <kbd>U</kbd> | Restore a marked-installed set / whole collection (update preview) |

@@ -6,8 +6,8 @@ Downloads rotate across every enabled mirror.
 
 | Mirror | Host | Default | Notes |
 |---|---|---|---|
-| Nerinyan | `api.nerinyan.moe` | on | |
 | osu!direct | `osu.direct` | on | |
+| Nerinyan | `api.nerinyan.moe` | on | |
 | Sayobot | `dl.sayobot.cn` | on | |
 | Nekoha | `mirror.nekoha.moe` | on | Also serves the size estimates for find results |
 | Beatconnect | `beatconnect.io` | on | |
