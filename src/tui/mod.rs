@@ -291,6 +291,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             body_area,
             &app.home,
             &app.library,
+            &app.covers,
             editing,
             app.tick_count,
         ),

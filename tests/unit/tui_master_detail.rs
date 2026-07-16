@@ -43,6 +43,7 @@ fn sample_view<'a>(
         preview_items: sample_items(2),
         preview_selected: Some(0),
         preview_offset,
+        preview_image: None,
         focused: Pane::List,
     }
 }
@@ -88,6 +89,7 @@ fn empty_list_items_does_not_panic() {
         preview_items: Vec::new(),
         preview_selected: None,
         preview_offset: &preview_offset,
+        preview_image: None,
         focused: Pane::List,
     };
 

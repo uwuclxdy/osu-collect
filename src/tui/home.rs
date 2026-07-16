@@ -1,4 +1,6 @@
-use crate::app::{EnrichSink, GetMapsSource, HomeField, HomeTab, LibraryState, ResolveState};
+use crate::app::{
+    Covers, EnrichSink, GetMapsSource, HomeField, HomeTab, LibraryState, ResolveState,
+};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -49,6 +51,7 @@ pub fn render(
     area: Rect,
     form: &HomeTab,
     library: &LibraryState,
+    covers: &Covers,
     editing: bool,
     tick: u64,
 ) {
@@ -57,7 +60,7 @@ pub fn render(
         update_source::render_browse(frame, area, &form.update, tick);
         return;
     }
-    if maybe_render_set_browse(frame, area, form, tick) {
+    if maybe_render_set_browse(frame, area, form, covers, tick) {
         return;
     }
     // Compact (< COMPACT_HEIGHT) drops the section headers, spacers, and per-row
@@ -89,7 +92,13 @@ fn home_cursor_col(form: &HomeTab, library: &LibraryState, editing: bool) -> Opt
 /// If the active source is in a flat set browse (search results / collection
 /// browse&pick), render it over the whole body and return `true`. The update
 /// source's two-level browse is handled separately by its own render.
-fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab, tick: u64) -> bool {
+fn maybe_render_set_browse(
+    frame: &mut Frame,
+    area: Rect,
+    form: &HomeTab,
+    covers: &Covers,
+    tick: u64,
+) -> bool {
     match form.source {
         // One union browse: both backends' results land in `find.browse`, so the
         // list title is the shared ` RESULTS ` regardless of which form ran.
@@ -105,6 +114,7 @@ fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab, tick: 
                 find_source::BROWSE_LIST_TITLE,
                 status,
                 tick,
+                Some(covers),
             );
             true
         }
@@ -120,6 +130,7 @@ fn maybe_render_set_browse(frame: &mut Frame, area: Rect, form: &HomeTab, tick: 
                 COLLECTION_BROWSE_TITLE,
                 status,
                 tick,
+                Some(covers),
             );
             true
         }

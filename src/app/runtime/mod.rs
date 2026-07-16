@@ -1,4 +1,5 @@
 mod auth;
+mod cover;
 mod details;
 mod enrich;
 mod filter;
@@ -16,6 +17,7 @@ pub use scan::{
     should_hide_failed_beatmapset, snapshot_diffs_for_scan,
 };
 
+pub use cover::{HomeCoverEvent, handle_home_cover_event};
 pub use enrich::{EnrichEvent, handle_enrich_event};
 pub use filter::{HomeFilterEvent, handle_home_filter_event};
 pub use resolve::{HomeResolveEvent, handle_home_resolve_event};
@@ -38,6 +40,7 @@ use auth::{
     AuthEvent, handle_auth_event, spawn_lazer_login_task, spawn_logout_task, spawn_reissue_task,
     spawn_verification_task,
 };
+use cover::schedule_cover_fetch;
 use details::{HomeDetailsEvent, handle_home_details_event, schedule_details};
 use enrich::{enrich_sink_mut, schedule_enrichment};
 use filter::schedule_filter;
@@ -72,10 +75,23 @@ pub async fn run(
     // that would otherwise skip the teardown tail. `DefaultTerminal` has no
     // restoring Drop of its own, so this guard is the single teardown site.
     let _terminal_guard = TerminalGuard;
+    // Query the terminal's graphics protocol + font size AFTER raw mode + the alt
+    // screen are live, and BEFORE the input thread starts. `from_query_stdio`
+    // toggles its own termios and restores it to whatever it found: run before
+    // `setup_terminal` it saves+restores COOKED mode, which then defeats
+    // crossterm's raw-mode enable and leaves all keyboard input echoing/dead;
+    // run here it saves+restores RAW, leaving input intact. It must also precede
+    // `spawn_input_thread` so the query's escape replies aren't eaten off stdin
+    // by the event loop. Falls back to halfblocks (needs no graphics protocol).
+    let cover_picker = ratatui_image::picker::Picker::from_query_stdio()
+        .unwrap_or_else(|_| ratatui_image::picker::Picker::halfblocks());
     let mut app = App::new(config);
     // The disk-backed history store attaches here (not in `App::new`) so tests
     // constructing an `App` never read or write the user's real history file.
     app.history = super::download_history::DownloadHistory::load();
+    // Swap the test-safe halfblocks default for the queried picker (same reason
+    // the history store attaches here: `App::new` must never touch the terminal).
+    app.covers.picker = cover_picker;
     if let Some(msg) = validation_issue {
         warn!(error = %msg, "Configuration validation failed; surfacing to UI");
         app.toast_err(msg);
@@ -94,6 +110,7 @@ pub async fn run(
     let (home_enrich_tx, mut home_enrich_rx) = mpsc::unbounded_channel::<EnrichEvent>();
     let (home_details_tx, mut home_details_rx) = mpsc::unbounded_channel::<HomeDetailsEvent>();
     let (home_size_tx, mut home_size_rx) = mpsc::unbounded_channel::<HomeSizeEvent>();
+    let (home_cover_tx, mut home_cover_rx) = mpsc::unbounded_channel::<HomeCoverEvent>();
     let (mirror_probe_tx, mut mirror_probe_rx) = mpsc::unbounded_channel::<MirrorProbeEvent>();
     let (update_tx, mut update_rx) = mpsc::unbounded_channel::<UpdateEvent>();
     let input_handle = spawn_input_thread(input_tx.clone());
@@ -117,6 +134,7 @@ pub async fn run(
         home_enrich_tx,
         home_details_tx,
         home_size_tx,
+        home_cover_tx,
         mirror_probe: None,
         mirror_probe_cancel: None,
         mirror_probe_tx: mirror_probe_tx.clone(),
@@ -254,6 +272,10 @@ pub async fn run(
                 trace!(?event, "Received home size event");
                 handle_home_size_event(event, &mut app.home.find);
             }
+            Some(event) = home_cover_rx.recv() => {
+                trace!(?event, "Received home cover event");
+                handle_home_cover_event(event, &mut app);
+            }
             Some(event) = mirror_probe_rx.recv() => {
                 trace!(?event, "Received mirror probe event");
                 handle_mirror_probe_event(event, &mut app.home);
@@ -360,7 +382,20 @@ fn handle_input(
         InputEvent::Resize => false,
         InputEvent::Tick => {
             app.on_tick();
-            false
+            // Debounced cover prefetch for the highlighted set-browse row; the
+            // returned command (if any) rides the shared dispatch, which owns
+            // the fetch channel.
+            let cmd = app.poll_cover_prefetch();
+            dispatch_command(
+                cmd,
+                app,
+                download_tx,
+                updates_tx,
+                auth_tx,
+                update_tx,
+                downloads,
+                tasks,
+            )
         }
     }
 }
@@ -572,6 +607,11 @@ fn dispatch_command(
             let ids = app.home.find.claim_size_probes();
             schedule_size_probe(ids, &tasks.home_size_tx);
         }
+        Some(AppCommand::FetchCover { set_id }) => {
+            // The prefetch already marked the id `Pending`, so the same
+            // highlighted row never spawns twice.
+            schedule_cover_fetch(set_id, &tasks.home_cover_tx);
+        }
         Some(AppCommand::ScanLocalDatabase) => {
             spawn_scan_task(app, updates_tx.clone());
         }
@@ -698,6 +738,9 @@ struct BackgroundTasks {
     /// Nekoha size-probe channel. Fire-and-forget (no stored handle) — a probe
     /// left running at quit just finds the receiver dropped and ends.
     home_size_tx: mpsc::UnboundedSender<HomeSizeEvent>,
+    /// Cover-image fetch channel. Fire-and-forget (no stored handle) — a fetch
+    /// left running at quit just finds the receiver dropped and ends.
+    home_cover_tx: mpsc::UnboundedSender<HomeCoverEvent>,
     mirror_probe: Option<tokio::task::JoinHandle<()>>,
     mirror_probe_cancel: Option<tokio::sync::watch::Sender<bool>>,
     mirror_probe_tx: mpsc::UnboundedSender<MirrorProbeEvent>,

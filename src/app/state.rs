@@ -3,6 +3,7 @@ use super::{
     collection::CollectionPage,
     collection_state::{self, CollectionStateFile},
     config::{AuthLoginState, ConfigField, ConfigTab},
+    covers::Covers,
     download_history::DownloadHistory,
     downloads_tab::{DownloadsRow, DownloadsTab},
     failed_maps,
@@ -87,6 +88,10 @@ pub struct App {
     /// Transient top-right notifications — results and errors. Ephemeral by
     /// design; durable signals live on banners, inline state, or tab markers.
     pub toasts: Toasts,
+    /// Beatmapset cover-image cache + graphics picker for the set-browse
+    /// preview. `App::new` seeds a test-safe halfblocks picker; the runtime
+    /// swaps in the queried one before entering raw mode.
+    pub covers: Covers,
     pub active_tab: Tab,
     pub collection_state: CollectionStateFile,
     pub collection_state_path: Option<PathBuf>,
@@ -234,6 +239,11 @@ pub enum AppCommand {
     },
     /// Probe latency for all built-in mirrors.
     ProbeMirrors,
+    /// Fetch the cover image for the highlighted set-browse row (debounced,
+    /// claimed `Pending` before dispatch).
+    FetchCover {
+        set_id: u32,
+    },
     /// Backfill nekoha download sizes for the checked osu-routed find results
     /// (the download button's `· ~X` suffix). The dispatch claims which checked
     /// ids still need a probe, so emitting it on any selection change is cheap.
@@ -316,6 +326,7 @@ impl App {
             downloads_tab: DownloadsTab::default(),
             history: DownloadHistory::default(),
             toasts: Toasts::default(),
+            covers: Covers::new(),
             active_tab: Tab::Home,
             collection_state: coll_state,
             collection_state_path: state_path,
@@ -1280,6 +1291,23 @@ impl App {
             GetMapsSource::Collection => Some(&mut self.home.collection_browse),
             GetMapsSource::Update => None,
         }
+    }
+
+    /// Advance the cover-image prefetch one tick: returns a [`AppCommand::FetchCover`]
+    /// once the highlighted flat-browse row has held focus past the debounce and
+    /// its cover isn't cached. `None` for any non-flat-browse view (the update
+    /// source's missing-set preview has no single highlight) resets the debounce.
+    pub fn poll_cover_prefetch(&mut self) -> Option<AppCommand> {
+        let highlighted = if self.home_set_browsing() {
+            self.active_set_browse()
+                .and_then(|browse| browse.highlighted_row())
+                .map(|row| row.id)
+        } else {
+            None
+        };
+        self.covers
+            .poll_prefetch(highlighted)
+            .map(|set_id| AppCommand::FetchCover { set_id })
     }
 
     /// Whether a flat set browse (search results / collection browse&pick) is

@@ -210,6 +210,9 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource, tick: u
         preview_items,
         preview_selected,
         preview_offset: &form.preview_offset,
+        // The missing-set preview is a list with no single highlighted set, so
+        // no cover band.
+        preview_image: None,
         focused: if form.preview_focused() {
             Pane::Preview
         } else {

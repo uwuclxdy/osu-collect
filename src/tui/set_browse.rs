@@ -8,6 +8,7 @@
 //! rows (collection browse&pick) render as `#id`.
 
 use crate::app::EnrichSink;
+use crate::app::covers::Covers;
 use crate::app::find_source::{BrowseRow, SetBrowse};
 use osu_downloader::filter::BeatmapDetails;
 use osu_downloader::search::BeatmapSetMeta;
@@ -28,8 +29,9 @@ const PREVIEW_TITLE: &str = " PREVIEW ";
 const KV_WIDTH: usize = "favourites".len();
 
 /// Render a set browse over the whole body area. `list_title` names the left
-/// pane, `list_meta` renders in the list pane's header border. Pure selector —
-/// no download button.
+/// pane, `list_meta` renders in the list pane's header border. `covers` supplies
+/// the highlighted row's cover image (a top band on the preview) when its cover
+/// has loaded; `None` renders text-only. Pure selector — no download button.
 pub fn render(
     frame: &mut Frame,
     area: Rect,
@@ -37,6 +39,7 @@ pub fn render(
     list_title: &'static str,
     list_meta: Line<'static>,
     tick: u64,
+    covers: Option<&Covers>,
 ) {
     // Caret + label promotion render only while the list pane owns focus (the
     // contract's per-pane cursor rule); a descended preview drops both.
@@ -64,6 +67,11 @@ pub fn render(
         .map(|row| preview_rows(row, browse.details_for(row.id), enriching, tick))
         .unwrap_or_default();
 
+    // The highlighted row's cover, once loaded — a top band on the preview pane.
+    let preview_image = covers
+        .zip(browse.highlighted_row())
+        .and_then(|(covers, row)| covers.protocol_for(row.id));
+
     let view = MasterDetail {
         status: None,
         list_title: list_title.into(),
@@ -78,6 +86,7 @@ pub fn render(
         // selectable list, so no row is marked selected.
         preview_selected: None,
         preview_offset: &browse.preview_offset,
+        preview_image,
         focused: if browse.preview_focused() {
             Pane::Preview
         } else {
