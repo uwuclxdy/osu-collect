@@ -4,14 +4,14 @@ A vibecoded Rust library for downloading osu! beatmapsets in bulk from multiple 
 
 ```toml
 [dependencies]
-osu-downloader = "0.9"
+osu-downloader = "0.22"
 ```
 
 ## Features
 
 - Concurrent downloads across as many mirrors as you configure, with automatic failover when one returns 404, 429, or transient errors
 - Per-mirror rate-limit backoff with a shared penalty pool: a throttled mirror sits out and the rest keep working
-- Round-robin initial mirror per map so concurrent downloads spread across mirrors instead of all starting on the first one, plus per-mirror request spacing (100 ms between requests to the same mirror; 1 s for the official osu! API)
+- Round-robin initial mirror per map so concurrent downloads spread across mirrors instead of all starting on the first one, plus per-mirror request spacing (250 ms between requests to the same mirror; 1 s for the official osu! API)
 - Real-time progress, status, and completion events over a `Stream`, plus a one-shot summary on `.wait()`
 - Streaming downloads with MD5 hashing and ZIP/EOCD validation, written through a temp file and hard-linked into place
 - Optional osucollector.com collection fetcher (`collection` feature); writing `collection.db` stays in the caller, so the library never touches osu! database files
@@ -132,7 +132,7 @@ use osu_downloader::{classify_output_entry, OutputEntry};
 
 match classify_output_entry(&entry.file_name()) {
     OutputEntry::Archive { beatmapset_id } => …,
-    OutputEntry::OrphanTemp => /* leftover from a cancelled download — safe to delete */,
+    OutputEntry::OrphanTemp => /* leftover from a cancelled download; safe to delete */,
     OutputEntry::Other => /* foreign file */,
 }
 ```
@@ -149,7 +149,7 @@ let fetcher = SizeFetcher::new();
 // Per-id: separates the two, so a caller can cache an answer and retry a failure.
 match fetcher.fetch_size(1091132).await {
     Ok(Some(bytes)) => /* the mirror's size record */,
-    Ok(None)        => /* the mirror has no size for this set — a stable answer */,
+    Ok(None)        => /* the mirror has no size for this set; a stable answer */,
     Err(err)        => /* the mirror was unreachable; says nothing about the set */,
 }
 
@@ -168,7 +168,7 @@ The `size-fetch` feature exposes `SizeFetcher::check_availability` for cheap "is
 use osu_downloader::{Mirror, size::SizeFetcher};
 
 let fetcher = SizeFetcher::new();
-// Drop auth-gated mirrors — availability is an anonymous probe.
+// Drop auth-gated mirrors; availability is an anonymous probe.
 let mirrors: Vec<_> = Mirror::builtins()
     .into_iter()
     .filter(|m| !m.kind().requires_auth())
