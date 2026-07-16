@@ -9,7 +9,7 @@ Downloads rotate across every enabled mirror.
 | osu!direct | `osu.direct` | on | |
 | Nerinyan | `api.nerinyan.moe` | on | |
 | Sayobot | `dl.sayobot.cn` | on | |
-| Nekoha | `mirror.nekoha.moe` | on | Also serves the size estimates for find results |
+| Nekoha | `mirror.nekoha.moe` | on | Serves the size estimates for find results |
 | Beatconnect | `beatconnect.io` | on | |
 | osu!dl | `osudl.org` | on | Covers ranked / approved / loved sets only; rotation backfills the rest |
 | catboy.best | `catboy.best` | on | |

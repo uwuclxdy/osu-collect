@@ -4,7 +4,7 @@ The `update` source on the get maps tab re-checks every collection you've downlo
 
 ## Scanning
 
-Set your osu! install path (persisted across restarts), then press the scan button. The scan reads your osu! library (stable `osu!.db` or lazer realm db) to know what you already own, then diffs each downloaded collection against its current state on osu!collector.
+Set your osu! install path (persisted across restarts), then press the scan button. The scan reads your osu! library (stable `osu!.db` or the lazer client database) to know what you already own, then diffs each downloaded collection against its current state on osu!collector.
 
 Switch between the stable and lazer client with <kbd>c</kbd> on any tab; the choice persists too. Switching clients clears the scan, so rescan after.
 

@@ -38,7 +38,7 @@ Built-in mirror toggles. Hosts and what each mirror is good at: [Mirrors](Mirror
 | `retry_failed_on_download` | `"ask"` | When a new download overlaps previously failed maps: `"ask"`, `"yes"` (always retry), `"no"` (skip silently) |
 | `auto_skip_rate_limited` | `true` | Give up on a map once it has waited out rate-limit cooldowns for `rate_limit_skip_secs` |
 | `rate_limit_skip_secs` | `60` | Counts only time actually spent waiting on cooldowns |
-| `skip_already_imported` | `true` | Skip maps already in your osu! library (reads the selected client's `osu!.db` / lazer realm db); they still go into the generated `collection.db` |
+| `skip_already_imported` | `true` | Skip maps already in your osu! library (reads the selected client's `osu!.db` / lazer database); they still go into the generated `collection.db` |
 
 ## `[display]`
 

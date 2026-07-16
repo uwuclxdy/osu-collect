@@ -26,7 +26,7 @@ Every source shares the same download section (mirrors, directory, threads, over
 
 Custom mirror URLs and the built-in mirror toggles live on the config tab → [Mirrors](Mirrors).
 
-Before a run starts, maps already in your osu! library (stable `osu!.db` or lazer realm) are skipped instead of re-fetched; they still land in the generated `collection.db`. Turn this off with `download.skip_already_imported` ([Configuration](Configuration#download)).
+Before a run starts, maps already in your osu! library (stable `osu!.db` or the lazer client database) are skipped instead of re-fetched; they still land in the generated `collection.db`. Turn this off with `download.skip_already_imported` ([Configuration](Configuration#download)).
 
 ## Downloads tab
 
