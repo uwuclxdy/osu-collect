@@ -57,6 +57,8 @@ Everything else runs on either backend; the default is the osu! api. Status `app
 
 Results open in a two-pane browse: checkbox list left, preview right. Rows that arrive as bare IDs backfill their titles in pages while a loading cue shows. Press <kbd>m</kbd> to load more results on the osu! api route.
 
+The preview shows the highlighted set's title, artist, mapper, status, favourites, and plays. nzbasic-routed results add the tags, source, genre, language, and ranked / updated dates, plus one difficulty's max combo, drain time, pass count, and hash.
+
 Checked results show an approximate total size on the download button as sizes load: exact sizes come free with nzbasic responses, the osu! route probes them via Nekoha in the background.
 
 > [!NOTE]
