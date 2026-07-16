@@ -28,6 +28,9 @@ pub fn default_threads() -> u8 {
         .unwrap_or(1)
 }
 
+/// Thread counts above this warn about mirror rate-limiting risk (docs promise ">50 warns").
+pub const HIGH_THREAD_WARN_THRESHOLD: u8 = 50;
+
 /// Maximum number of additional passes through the mirror pool after every mirror has
 /// exhausted its transient retries. The library waits 5 seconds between passes
 /// (cancellable). Beyond this cap the beatmapset is reported as `BeatmapsetFailed`

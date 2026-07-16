@@ -336,6 +336,13 @@ impl DownloadConfig {
         self.concurrent
             .unwrap_or_else(super::constants::default_threads)
     }
+
+    /// Whether the explicitly-configured thread count is high enough to risk mirror
+    /// rate-limiting. `None` (the auto default) never warns.
+    pub fn concurrent_is_high(&self) -> bool {
+        self.concurrent
+            .is_some_and(|n| n > super::constants::HIGH_THREAD_WARN_THRESHOLD)
+    }
 }
 
 impl Default for LoggingConfig {
@@ -365,7 +372,7 @@ impl Config {
                 return Err(AppError::config("Thread count must be at least 1"));
             }
 
-            if concurrent > 100 {
+            if self.download.concurrent_is_high() {
                 warn!(
                     concurrent,
                     "Thread count is unusually high; consider lowering to avoid rate limiting"
