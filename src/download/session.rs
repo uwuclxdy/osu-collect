@@ -117,7 +117,6 @@ impl SessionTarget {
 }
 
 pub(crate) struct DownloadSession {
-    #[allow(dead_code)]
     pub(crate) id: DownloadId,
     pub(crate) target: SessionTarget,
     pub(crate) beatmapset_ids: Vec<u32>,

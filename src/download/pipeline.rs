@@ -204,7 +204,6 @@ async fn run_collection(
     let output_dir = session.output.output_dir.clone();
 
     let Some(tally) = run_pipeline_core(
-        id,
         &session,
         &config,
         auto_overwrite,
@@ -331,7 +330,7 @@ async fn run_selective(
     let target_ids = session.beatmapset_ids.clone();
 
     let Some(tally) = run_pipeline_core(
-        id, &session, &config, false, cancel_rx, defer_rx, skip_rx, &emit,
+        &session, &config, false, cancel_rx, defer_rx, skip_rx, &emit,
     )
     .await?
     else {
@@ -433,7 +432,6 @@ async fn run_ids(
     let output_dir = session.output.output_dir.clone();
 
     let Some(tally) = run_pipeline_core(
-        id,
         &session,
         &config,
         auto_overwrite,
@@ -506,9 +504,7 @@ async fn persist_snapshots(
 }
 
 /// Drives the [`Downloader`] for the prepared session. Returns `None` if cancelled.
-#[allow(clippy::too_many_arguments)]
 async fn run_pipeline_core(
-    id: DownloadId,
     session: &DownloadSession,
     config: &DownloadConfig,
     auto_overwrite: bool,
@@ -520,6 +516,8 @@ async fn run_pipeline_core(
     if config.mirrors.is_empty() {
         return Err(DownloadError::NoMirrors);
     }
+
+    let id = session.id;
 
     warn_low_disk_space(id, &session.output.output_dir, emit.as_ref());
 
