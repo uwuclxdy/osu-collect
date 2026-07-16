@@ -20,9 +20,12 @@ use tracing::debug;
 /// headers — the cover CDN is public.
 static COVER_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
 
-/// The public osu! CDN card cover for a beatmapset (a ~2.9:1 wide JPEG).
+/// The public osu! CDN list cover for a beatmapset: 300x300, the only square
+/// asset in the set (`card`/`cover`/`slimcover` run 2.9:1 to 5.3:1). The preview
+/// seats its cover in a right-hand column, which a wide crop can only fill by
+/// shrinking to a sliver, so square wins on every pane size.
 fn cover_url(set_id: u32) -> String {
-    format!("https://assets.ppy.sh/beatmaps/{set_id}/covers/card.jpg")
+    format!("https://assets.ppy.sh/beatmaps/{set_id}/covers/list@2x.jpg")
 }
 
 /// A settled cover fetch, folded back into [`crate::app::covers::Covers`].

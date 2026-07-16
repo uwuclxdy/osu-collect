@@ -6,10 +6,13 @@ use crate::app::App;
 use crate::config::Config;
 
 #[test]
-fn cover_url_builds_the_assets_ppy_card_path() {
+fn cover_url_builds_the_assets_ppy_square_list_path() {
+    // `list@2x` is the square (300x300) asset; the preview's cover column can
+    // only seat a wide crop by shrinking it to a sliver, so the `@2x` suffix and
+    // the `list` variant are both load-bearing, not cosmetic.
     assert_eq!(
         cover_url(1234),
-        "https://assets.ppy.sh/beatmaps/1234/covers/card.jpg"
+        "https://assets.ppy.sh/beatmaps/1234/covers/list@2x.jpg"
     );
 }
 

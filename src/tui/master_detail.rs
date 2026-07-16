@@ -9,12 +9,12 @@
 
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Layout, Rect, Size},
     text::Line,
     widgets::{ListItem, Paragraph},
 };
-use ratatui_image::StatefulImage;
 use ratatui_image::protocol::StatefulProtocol;
+use ratatui_image::{Resize, StatefulImage};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 
@@ -36,9 +36,19 @@ const COMPACT_HEIGHT: u16 = 14;
 /// crowds out the preview on an ultra-wide terminal.
 const LIST_WIDTH_MIN: u16 = 28;
 const LIST_WIDTH_MAX: u16 = 52;
-/// Minimum preview inner height before a cover band is carved: below this the
-/// band would crowd out the metadata text, so the preview stays text-only.
-const MIN_IMAGE_INNER_HEIGHT: u16 = 6;
+/// Cover-column width bounds: below the min the artwork reads as noise, above
+/// the max an ultra-wide pane would hand it more room than the metadata.
+const COVER_WIDTH_MIN: u16 = 12;
+const COVER_WIDTH_MAX: u16 = 34;
+/// Blank columns between the metadata text and the cover.
+const COVER_GAP: u16 = 2;
+/// The metadata text's floor: the widest static kv key (`favourites`) plus its
+/// separator and a readable value. A pane that can't seat this beside a cover
+/// drops the cover instead of squeezing the text.
+const MIN_TEXT_WIDTH: u16 = 22;
+/// Minimum preview inner height before a cover is carved: shorter than this the
+/// image is a smear rather than artwork.
+const MIN_IMAGE_INNER_HEIGHT: u16 = 4;
 
 /// A prepared two-pane master-detail browse view. See the module docs for the
 /// layout contract.
@@ -63,9 +73,9 @@ pub struct MasterDetail<'a> {
     pub preview_items: Vec<ListItem<'static>>,
     pub preview_selected: Option<usize>,
     pub preview_offset: &'a Cell<usize>,
-    /// The highlighted row's ready cover protocol. `Some` carves a top image
-    /// band above the preview text (when the pane has room); `None` (the
-    /// default for image-less consumers) renders the preview text-only.
+    /// The highlighted row's ready cover protocol. `Some` carves a right-hand
+    /// image column beside the preview text (when the pane has room); `None`
+    /// (the default for image-less consumers) renders the preview text-only.
     pub preview_image: Option<&'a RefCell<StatefulProtocol>>,
     pub focused: Pane,
 }
@@ -142,8 +152,8 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
     let highlight = focused && view.preview_selected.is_some();
     let selected = view.preview_selected.unwrap_or(0);
 
-    // A ready cover for the highlighted row, and a pane tall enough to spare
-    // room for text below it, carve a top image band inside the panel border.
+    // A ready cover for the highlighted row takes a column at the pane's right
+    // edge, the metadata text keeping everything left of it.
     if let Some(protocol) = view.preview_image {
         let block = widgets::panel_block(
             view.preview_title.clone(),
@@ -152,21 +162,8 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
             false,
         );
         let inner = block.inner(area);
-        if inner.height >= MIN_IMAGE_INNER_HEIGHT {
+        if let Some((text_area, cover_area)) = cover_split(inner, protocol) {
             frame.render_widget(block, area);
-            let [band_area, text_area] = Layout::vertical([
-                Constraint::Length(image_band_height(inner.height)),
-                Constraint::Min(0),
-            ])
-            .areas(inner);
-            // `StatefulImage` resizes-to-fit the band preserving aspect
-            // (letterboxes). `resize_encode_render` mutates the cached protocol,
-            // hence the `RefCell` borrow under this immutable-app draw path.
-            frame.render_stateful_widget(
-                StatefulImage::new(),
-                band_area,
-                &mut *protocol.borrow_mut(),
-            );
             widgets::render_list(
                 frame,
                 text_area,
@@ -174,6 +171,13 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
                 Some(selected),
                 highlight,
                 view.preview_offset,
+            );
+            // `resize_encode_render` mutates the cached protocol, hence the
+            // `RefCell` borrow under this immutable-app draw path.
+            frame.render_stateful_widget(
+                StatefulImage::new(),
+                cover_area,
+                &mut *protocol.borrow_mut(),
             );
             return;
         }
@@ -194,11 +198,55 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
     );
 }
 
-/// Cover-band height: about a third of the preview's inner height, clamped so a
-/// tall pane never lets the wide (~2.9:1) card swallow the metadata and a short
-/// one still shows a legible strip. The image letterboxes within whatever it gets.
-fn image_band_height(inner_height: u16) -> u16 {
-    (inner_height / 3).clamp(3, 8)
+/// Carve `inner` into `(text, cover)` — the cover flush against the pane's right
+/// edge, the text taking the rest. `None` leaves the preview text-only: the pane
+/// is too short, too narrow to seat both, or the image rounds away to nothing.
+///
+/// The cover rect is sized to what the image will *actually* occupy rather than
+/// to the allowance it was offered: [`Resize::Fit`] letterboxes within its area
+/// and anchors top-left, so handing `StatefulImage` a fixed column would float
+/// the artwork mid-pane with dead space against the border. Asking the protocol
+/// for its own fitted size first (it accounts for the terminal's font aspect,
+/// and never upscales past the source) makes the right edge land exactly.
+fn cover_split(inner: Rect, protocol: &RefCell<StatefulProtocol>) -> Option<(Rect, Rect)> {
+    if inner.height < MIN_IMAGE_INNER_HEIGHT {
+        return None;
+    }
+    let allowance = cover_width_allowance(inner.width)?;
+    let fitted = protocol
+        .borrow()
+        .size_for(Resize::Fit(None), Size::new(allowance, inner.height));
+    if fitted.width == 0 || fitted.height == 0 {
+        return None;
+    }
+    let text_width = inner.width.checked_sub(fitted.width + COVER_GAP)?;
+    let text_area = Rect {
+        width: text_width,
+        ..inner
+    };
+    let cover_area = Rect {
+        x: inner.right() - fitted.width,
+        y: inner.y,
+        width: fitted.width,
+        height: fitted.height,
+    };
+    Some((text_area, cover_area))
+}
+
+/// The widest column a cover may be offered: about two fifths of the preview's
+/// inner width, never more than [`COVER_WIDTH_MAX`] and never past what the text
+/// needs. `None` when what's left over can't reach [`COVER_WIDTH_MIN`] — the text
+/// is served first, so a cramped pane loses the cover rather than its metadata.
+///
+/// Capping the offer at `spare` is what keeps the text's floor safe: the fitted
+/// image can only be narrower than its allowance, so `cover_split` never has to
+/// re-check the text width it hands out.
+fn cover_width_allowance(inner_width: u16) -> Option<u16> {
+    let spare = inner_width.checked_sub(COVER_GAP + MIN_TEXT_WIDTH)?;
+    // Divide before multiply (matches `render_panes`) so the intermediate never
+    // overflows `u16` on an extreme-width terminal.
+    let share = (inner_width / 5 * 2).min(spare).min(COVER_WIDTH_MAX);
+    (share >= COVER_WIDTH_MIN).then_some(share)
 }
 
 #[cfg(test)]

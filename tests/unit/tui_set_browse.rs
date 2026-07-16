@@ -89,11 +89,14 @@ fn render_browse(browse: &SetBrowse) -> String {
         .collect::<String>()
 }
 
-/// A tiny vertical-gradient cover so the halfblocks encoder emits colored cells
-/// (adjacent rows differ), letting the render assert a populated band.
+/// A vertical-gradient cover so the halfblocks encoder emits colored cells
+/// (adjacent rows differ), letting the render assert a populated cover column.
+/// 300x300 mirrors the real `list@2x` asset: `Resize::Fit` never upscales, so a
+/// smaller fixture would cap the column below its allowance and stop exercising
+/// the flush-right geometry.
 fn gradient_cover() -> image::DynamicImage {
-    let img = image::RgbImage::from_fn(64, 32, |_, y| {
-        let v = (y * 8) as u8;
+    let img = image::RgbImage::from_fn(300, 300, |_, y| {
+        let v = (y * 255 / 299) as u8;
         image::Rgb([v, 128, 255 - v])
     });
     image::DynamicImage::ImageRgb8(img)
@@ -151,21 +154,28 @@ fn preview_row_of(buffer: &ratatui::buffer::Buffer, needle: &str) -> Option<usiz
         .map(|y| y as usize)
 }
 
-/// Whether any preview-pane cell in rows `[1, band_rows)` carries a real
-/// (non-`Reset`) background — the halfblocks encoder always paints one, so a
-/// colored cell here marks a rendered cover band.
-fn preview_band_has_color(buffer: &ratatui::buffer::Buffer, band_rows: u16) -> bool {
+/// The leftmost preview-pane column in `row` carrying a real (non-`Reset`)
+/// background — the halfblocks encoder always paints one and nothing else in an
+/// unfocused preview does, so this is where the cover column starts. `None` when
+/// the row holds no cover.
+fn cover_start_x(buffer: &ratatui::buffer::Buffer, row: u16) -> Option<u16> {
     let area = *buffer.area();
-    (1..band_rows.min(area.height))
-        .any(|y| (PREVIEW_X..area.width).any(|x| buffer[(x, y)].bg != Color::Reset))
+    (PREVIEW_X..area.width).find(|&x| buffer[(x, row)].bg != Color::Reset)
 }
 
 /// Whether ANY cell in rows `[0, rows)` carries a real background — used on a
 /// single-pane preview (no list pane to filter out), so a colored cell there can
-/// only be a cover band.
+/// only be a cover.
 fn any_colored_in_top_rows(buffer: &ratatui::buffer::Buffer, rows: u16) -> bool {
     let area = *buffer.area();
     (0..rows.min(area.height)).any(|y| (0..area.width).any(|x| buffer[(x, y)].bg != Color::Reset))
+}
+
+/// Row `y` of the preview, clipped to the columns left of `end_x`.
+fn preview_text_before(buffer: &ratatui::buffer::Buffer, y: u16, end_x: u16) -> String {
+    (PREVIEW_X..end_x)
+        .map(|x| buffer[(x, y)].symbol())
+        .collect()
 }
 
 /// The whole buffer as one string, for a presence check that ignores geometry.
@@ -267,55 +277,93 @@ fn drain_and_hash_formatters() {
 }
 
 #[test]
-fn ready_cover_paints_a_top_band_and_pushes_text_below_it() {
+fn ready_cover_paints_a_right_column_beside_the_text() {
     let browse = browse_with(vec![BrowseRow {
         id: 42,
         meta: Some(sample_meta(42)),
     }]);
     let covers = covers_ready(42);
 
-    // A tall pane (30 rows) carves an 8-row band: (28 inner / 3).clamp(3,8).
+    // 90 wide: list pane 36, preview inner spans x=38..88 (50 columns). The
+    // cover is offered 20 (50/5*2) and the 300x300 source fills all of them at
+    // the halfblocks picker's fixed 10x20 font, so it lands at 88-20 = 68.
+    const COVER_X: u16 = 68;
+    const LAST_INNER_X: u16 = 87;
+
     let with_cover = render_grid(&browse, Some(&covers), 90, 30);
     let without = render_grid(&browse, None, 90, 30);
 
-    assert!(
-        preview_band_has_color(&with_cover, 9),
-        "cover band should paint colored cells in the preview's top rows"
+    assert_eq!(
+        cover_start_x(&with_cover, 1),
+        Some(COVER_X),
+        "the cover column should start where its fitted width leaves the right edge"
     );
+    assert!(
+        with_cover[(LAST_INNER_X, 1)].bg != Color::Reset,
+        "the cover should sit flush against the preview's last inner column"
+    );
+    assert_eq!(
+        cover_start_x(&without, 1),
+        None,
+        "no cover means no colored cells in the preview"
+    );
+
+    // The whole point of a column over a band: the metadata keeps its rows.
     let title_with = preview_row_of(&with_cover, "Song Title").expect("title renders with cover");
     let title_without =
         preview_row_of(&without, "Song Title").expect("title renders without cover");
-    assert!(
-        title_with > title_without,
-        "the band should push the title below where it sits text-only \
-         (with band row {title_with}, text-only row {title_without})"
+    assert_eq!(
+        title_with, title_without,
+        "a right-column cover must not push the text down \
+         (with cover row {title_with}, text-only row {title_without})"
     );
-    // The text-only preview paints no image background in its top rows.
     assert!(
-        !preview_band_has_color(&without, 9),
-        "no cover means no colored band"
+        preview_text_before(&with_cover, title_with as u16, COVER_X).contains("Song Title"),
+        "the title must render entirely left of the cover column"
     );
 }
 
 #[test]
-fn short_pane_skips_the_band_even_with_a_ready_cover() {
+fn short_pane_skips_the_cover_even_when_ready() {
     let mut browse = browse_with(vec![BrowseRow {
         id: 42,
         meta: Some(sample_meta(42)),
     }]);
-    // Focus the preview so the short-terminal fallback renders it full-width
-    // (not the list pane); its inner height (5 = 7 − 2 borders) is below
-    // MIN_IMAGE_INNER_HEIGHT (6), so the band is skipped and text sits at the top.
+    // Focus the preview so the small-terminal fallback renders it full-width
+    // (not the list pane); its inner height (3 = 5 − 2 borders) is below
+    // MIN_IMAGE_INNER_HEIGHT (4), so the cover is skipped, text-only.
     browse.focus_preview();
     let covers = covers_ready(42);
 
-    let buffer = render_grid(&browse, Some(&covers), 90, 7);
+    let buffer = render_grid(&browse, Some(&covers), 90, 5);
     assert!(
         !any_colored_in_top_rows(&buffer, 4),
-        "a short pane must not carve an image band"
+        "a short pane must not carve a cover column"
     );
     assert!(
         buffer_text(&buffer).contains("Song Title"),
-        "the preview text still renders when the band is skipped"
+        "the preview text still renders when the cover is skipped"
+    );
+}
+
+#[test]
+fn narrow_pane_skips_the_cover_to_keep_the_text_readable() {
+    let mut browse = browse_with(vec![BrowseRow {
+        id: 42,
+        meta: Some(sample_meta(42)),
+    }]);
+    // Single-pane preview 38 wide → 34 inner columns, one short of the
+    // COVER_WIDTH_MIN + gap + MIN_TEXT_WIDTH floor, so the text takes all of it.
+    browse.focus_preview();
+    let covers = covers_ready(42);
+
+    let buffer = render_grid(&browse, Some(&covers), 38, 20);
+    assert!(
+        !any_colored_in_top_rows(&buffer, 20),
+        "a narrow pane must not carve a cover column"
+    );
+    assert!(
+        buffer_text(&buffer).contains("Song Title"),
+        "the preview text still renders when the cover is skipped"
     );
 }

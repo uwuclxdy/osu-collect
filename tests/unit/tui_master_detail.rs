@@ -1,4 +1,7 @@
-use super::{MasterDetail, Pane, render};
+use super::{
+    COVER_GAP, COVER_WIDTH_MAX, COVER_WIDTH_MIN, MIN_TEXT_WIDTH, MasterDetail, Pane,
+    cover_width_allowance, render,
+};
 use ratatui::{Terminal, backend::TestBackend, text::Line, widgets::ListItem};
 use std::cell::Cell;
 
@@ -109,6 +112,58 @@ fn list_meta_renders_in_top_border() {
     assert!(
         output.contains("651 new maps"),
         "list title-right meta should render in the panel's top border break"
+    );
+}
+
+#[test]
+fn cover_allowance_yields_nothing_until_both_fit() {
+    let floor = COVER_WIDTH_MIN + COVER_GAP + MIN_TEXT_WIDTH;
+    assert_eq!(
+        cover_width_allowance(floor - 1),
+        None,
+        "one column short of seating a minimum cover, the gap, and readable text \
+         must drop the cover rather than squeeze either"
+    );
+    assert_eq!(
+        cover_width_allowance(floor),
+        Some(COVER_WIDTH_MIN),
+        "at the floor the text keeps its width and the cover takes what's left, \
+         below its two-fifths share"
+    );
+    assert_eq!(cover_width_allowance(0), None, "an empty pane has no cover");
+}
+
+#[test]
+fn cover_allowance_never_eats_into_the_text_floor() {
+    // Every width the split can hand a cover must leave MIN_TEXT_WIDTH intact —
+    // that invariant is why `cover_split` doesn't re-check the text width.
+    for inner_width in 0..=400u16 {
+        let Some(allowance) = cover_width_allowance(inner_width) else {
+            continue;
+        };
+        assert!(
+            inner_width - allowance - COVER_GAP >= MIN_TEXT_WIDTH,
+            "inner {inner_width} offered {allowance} columns, starving the text"
+        );
+        assert!(
+            (COVER_WIDTH_MIN..=COVER_WIDTH_MAX).contains(&allowance),
+            "inner {inner_width} offered {allowance}, outside the cover bounds"
+        );
+    }
+}
+
+#[test]
+fn cover_allowance_tracks_two_fifths_between_its_bounds() {
+    assert_eq!(cover_width_allowance(60), Some(24), "60/5*2");
+    assert_eq!(
+        cover_width_allowance(100),
+        Some(COVER_WIDTH_MAX),
+        "an ultra-wide pane caps the cover instead of handing it two fifths"
+    );
+    assert_eq!(
+        cover_width_allowance(u16::MAX),
+        Some(COVER_WIDTH_MAX),
+        "the widest possible pane must clamp, not overflow"
     );
 }
 
