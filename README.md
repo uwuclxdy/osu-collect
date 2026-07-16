@@ -19,8 +19,8 @@ osu!collect is a terminal app (TUI) that **downloads osu! beatmap collections fr
 
 <div align="center">
 
-<img src="media/osu-collect-home.png" alt="osu!collect download tab with live per-map progress, speed and ETA" width="49%">
-<img src="media/osu-collect-downloading.png" alt="osu!collect update scan showing missing and removed maps" width="49%">
+<img src="media/osu-collect-home.png" alt="osu!collect: paste an osu!collector collection, pick mirrors and a download folder" width="49%">
+<img src="media/osu-collect-downloading.png" alt="osu!collect downloading a collection with live per-map progress, speed and ETA" width="49%">
 
 </div>
 
@@ -33,7 +33,7 @@ osu!collect is a terminal app (TUI) that **downloads osu! beatmap collections fr
 - **Collections updater**: re-check a collection later and download only the maps that are missing or newly added. [Guide.](https://github.com/uwuclxdy/osu-collect/wiki/Updating-Collections)
 - **Ez import with `collection.db`**: maps arrive as a proper osu! collection, not a loose folder of `.osz` files.
 - **Integrity verification**: MD5 plus archive validation on every download; files already on disk are verified and skipped.
-- **Skips what you already own**: reads your osu! library (stable `osu!.db` / lazer Realm) and skips maps you've already imported instead of re-fetching them; they still go into the generated `collection.db`.
+- **Skips what you already own**: reads your osu! library (stable `osu!.db` / lazer client database) and skips maps you've already imported instead of re-fetching them; they still go into the generated `collection.db`.
 - **Retry failed maps**: failures persist between runs. Retry them with one key, or on the next download.
 - **Self-updating**: checks for a newer release on launch and installs it. Flip auto-update off in config to only get a notice; then press <kbd>u</kbd> to read the changelog and update when you want.
 - **Downloads tab with history**: active and past runs live on one list; open a run for live per-map progress. Past runs (including cancelled ones) survive restarts.
