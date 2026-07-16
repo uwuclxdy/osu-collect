@@ -32,6 +32,7 @@ use crate::{
     tui::{apply_theme, draw},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui_image::picker::{Picker, ProtocolType};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tracing::{debug, info, trace, warn};
@@ -60,6 +61,39 @@ fn render_frame(terminal: &mut TuiTerminal, app: &App) -> std::io::Result<()> {
     Ok(())
 }
 
+/// The queried graphics picker, with konsole promoted off the halfblocks floor.
+fn query_cover_picker() -> Picker {
+    let mut picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+    if let Some(promoted) = konsole_promotion(picker.protocol_type(), is_konsole()) {
+        picker.set_protocol_type(promoted);
+    }
+    picker
+}
+
+/// What to promote a konsole session's protocol to, or `None` to keep whatever
+/// detection settled on.
+///
+/// `ratatui-image` blacklists Kitty and Sixel outright whenever `KONSOLE_VERSION`
+/// is set (its sixel path is buggy and neither implements kitty placeholders),
+/// then reaches iTerm2 only through a `TERM_PROGRAM` allowlist konsole isn't on —
+/// so every konsole session silently lands on halfblocks and renders the cover as
+/// a ~30x16 mosaic. Konsole has spoken the iTerm2 inline-image protocol since
+/// 22.04 (`1337;File=`, verified against the live terminal), so promote that
+/// fallback here.
+///
+/// Gating on halfblocks keeps this a floor-raise rather than an override: if a
+/// future konsole answers the kitty query, or the blacklist lifts upstream, the
+/// detected protocol wins and this stops firing on its own.
+fn konsole_promotion(detected: ProtocolType, is_konsole: bool) -> Option<ProtocolType> {
+    (is_konsole && detected == ProtocolType::Halfblocks).then_some(ProtocolType::Iterm2)
+}
+
+/// Whether this is a konsole session, keyed off the same env var (and the same
+/// non-empty test) `ratatui-image`'s own blacklist reads.
+fn is_konsole() -> bool {
+    std::env::var("KONSOLE_VERSION").is_ok_and(|version| !version.is_empty())
+}
+
 pub async fn run(
     config: Config,
     startup_notice: Option<String>,
@@ -83,8 +117,7 @@ pub async fn run(
     // run here it saves+restores RAW, leaving input intact. It must also precede
     // `spawn_input_thread` so the query's escape replies aren't eaten off stdin
     // by the event loop. Falls back to halfblocks (needs no graphics protocol).
-    let cover_picker = ratatui_image::picker::Picker::from_query_stdio()
-        .unwrap_or_else(|_| ratatui_image::picker::Picker::halfblocks());
+    let cover_picker = query_cover_picker();
     let mut app = App::new(config);
     // The disk-backed history store attaches here (not in `App::new`) so tests
     // constructing an `App` never read or write the user's real history file.
@@ -668,6 +701,10 @@ fn download_finished_id(event: &DownloadEvent) -> Option<DownloadId> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/runtime_picker.rs"]
+mod tests;
 
 fn signal_abort_downloads(downloads: &mut HashMap<DownloadId, DownloadHandle>) {
     if downloads.is_empty() {
