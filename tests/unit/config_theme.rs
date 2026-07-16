@@ -165,14 +165,17 @@ fn mirror_order_deserializes_from_toml() {
 
 #[test]
 fn thread_count_warning_boundary_is_fifty() {
-    let mut download = super::DownloadConfig::default();
-
-    download.concurrent = None;
-    assert!(!download.concurrent_is_high(), "the auto default never warns");
-
-    download.concurrent = Some(50);
-    assert!(!download.concurrent_is_high(), "50 threads must not warn");
-
-    download.concurrent = Some(51);
-    assert!(download.concurrent_is_high(), "51 threads must warn");
+    let with = |concurrent| super::DownloadConfig {
+        concurrent,
+        ..Default::default()
+    };
+    assert!(
+        !with(None).concurrent_is_high(),
+        "the auto default never warns"
+    );
+    assert!(
+        !with(Some(50)).concurrent_is_high(),
+        "50 threads must not warn"
+    );
+    assert!(with(Some(51)).concurrent_is_high(), "51 threads must warn");
 }
