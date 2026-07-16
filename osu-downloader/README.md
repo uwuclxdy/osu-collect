@@ -10,11 +10,11 @@ osu-downloader = "0.9"
 ## Features
 
 - Concurrent downloads across as many mirrors as you configure, with automatic failover when one returns 404, 429, or transient errors
-- Per-mirror rate-limit backoff with a shared penalty pool — a throttled mirror sits out while the others keep working
-- Round-robin initial mirror per map so concurrent downloads spread across mirrors instead of all starting on the first one, plus proactive per-mirror request spacing (100 ms between requests to the same mirror; 1 s for the official osu! API)
+- Per-mirror rate-limit backoff with a shared penalty pool: a throttled mirror sits out and the rest keep working
+- Round-robin initial mirror per map so concurrent downloads spread across mirrors instead of all starting on the first one, plus per-mirror request spacing (100 ms between requests to the same mirror; 1 s for the official osu! API)
 - Real-time progress, status, and completion events over a `Stream`, plus a one-shot summary on `.wait()`
 - Streaming downloads with MD5 hashing and ZIP/EOCD validation, written through a temp file and hard-linked into place
-- Optional osucollector.com collection fetcher (`collection` feature) — writing `collection.db` stays in the caller, the library never touches osu! database files
+- Optional osucollector.com collection fetcher (`collection` feature); writing `collection.db` stays in the caller, so the library never touches osu! database files
 - Optional Nekoha-backed size and availability probes (`size-fetch` feature)
 
 ## Quick start
@@ -57,17 +57,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Mirrors
 
-- **Nerinyan** — https://api.nerinyan.moe
-- **osu.direct** — https://osu.direct
-- **Sayobot** — https://dl.sayobot.cn
-- **Nekoha** — https://mirror.nekoha.moe
-- **Beatconnect** — https://beatconnect.io (anonymous `/b/{id}/`)
-- **osu!dl** — https://osudl.org (anonymous `/s/{id}`, `302` → presigned R2; ranked/approved/loved only)
-- **Hinamizawa** — https://mirror.hinamizawa.ai (server-side cascade over the others)
-- **osu! official** — `https://osu.ppy.sh/api/v2/beatmapsets/{id}/download` — **needs auth**: attach a `lazer`-scope bearer token via `Mirror::osu_api().with_headers(..)`. `MirrorKind::requires_auth()` reports this.
-- **Custom** — `Mirror::custom("https://your.mirror/d/{id}")?`
+- **Nerinyan**: https://api.nerinyan.moe
+- **osu.direct**: https://osu.direct
+- **Sayobot**: https://dl.sayobot.cn
+- **Nekoha**: https://mirror.nekoha.moe
+- **Beatconnect**: https://beatconnect.io (anonymous `/b/{id}/`)
+- **osu!dl**: https://osudl.org (anonymous `/s/{id}`, `302` → presigned R2; ranked/approved/loved only)
+- **Hinamizawa**: https://mirror.hinamizawa.ai (server-side cascade over the others)
+- **osu! official**: `https://osu.ppy.sh/api/v2/beatmapsets/{id}/download`. **Needs auth**: attach a `lazer`-scope bearer token via `Mirror::osu_api().with_headers(..)`. `MirrorKind::requires_auth()` reports this.
+- **Custom**: `Mirror::custom("https://your.mirror/d/{id}")?`
 
-`Mirror::builtins()` returns every built-in as a `Vec` (including `OsuApi`, which needs a caller-supplied auth header — filter with `MirrorKind::requires_auth()` in anonymous contexts). `Mirror::builtin(MirrorKind::Sayobot)` constructs a single built-in by tag (returns `None` for `Custom`). `Mirror::nerinyan().no_video()` switches to the no-video template for mirrors that have one (no-op for custom mirrors and osu! official).
+`Mirror::builtins()` returns every built-in as a `Vec` (including `OsuApi`, which needs a caller-supplied auth header; filter with `MirrorKind::requires_auth()` in anonymous contexts). `Mirror::builtin(MirrorKind::Sayobot)` constructs a single built-in by tag (returns `None` for `Custom`). `Mirror::nerinyan().no_video()` switches to the no-video template for mirrors that have one (no-op for custom mirrors and osu! official).
 
 ## Collections
 
@@ -85,11 +85,11 @@ let mut session = downloader.download_many(collection.beatmapset_ids(), "./downl
 - `CollectionClient::fetch_retrying(id, attempts)` adds the library's built-in retry policy (rate-limit-aware sleeps + exponential backoff for transient network errors).
 - `parse_collection_id(input)` is at the crate root and handles ID-or-URL parsing with strict `osucollector.com` HTTPS validation.
 - `Collection` exposes `beatmapset_ids()`, `beatmap_count()`, and `folder_name()`; the raw `Beatmapset` / `Beatmap` / `Uploader` data is public too.
-- Writing `collection.db` is deliberately **not** part of this library — pair it with the [osu-db](https://crates.io/crates/osu-db) crate in your app.
+- Writing `collection.db` is deliberately **not** part of this library; pair it with the [osu-db](https://crates.io/crates/osu-db) crate in your app.
 
 ## Events and summary
 
-`Event::BeatmapsetFailed` covers every failure path, including transient/network failures that exhausted every mirror — those arrive with `Error::Network(_)` (or another `Error::is_transient()` variant) and `mirror: None`. `Summary::failed` is `Vec<(u32, Error)>`; there is no separate "network errors" bucket.
+`Event::BeatmapsetFailed` covers every failure path, including transient/network failures that exhausted every mirror; those arrive with `Error::Network(_)` (or another `Error::is_transient()` variant) and `mirror: None`. `Summary::failed` is `Vec<(u32, Error)>`; there is no separate "network errors" bucket.
 
 ## Errors
 
@@ -158,7 +158,7 @@ match fetcher.fetch_size(1091132).await {
 let estimate = fetcher.fetch_sizes(&[1091132, 1234567]).await;
 ```
 
-`fetch_size` performs a single request and never retries — retry on the caller side if you want one.
+`fetch_size` performs a single request and never retries; retry on the caller side if you want one.
 
 ## Availability checks
 
@@ -184,12 +184,12 @@ println!("available: {:?}, unavailable: {:?}", result.available, result.unavaila
 
 ## Feature flags
 
-- `collection` (default) — `CollectionClient`, `Collection`, `Beatmapset`, `Beatmap`, `Uploader`
-- `size-fetch` (default) — `SizeFetcher` for beatmapset size estimates and mirror availability probes
+- `collection` (default): `CollectionClient`, `Collection`, `Beatmapset`, `Beatmap`, `Uploader`
+- `size-fetch` (default): `SizeFetcher` for beatmapset size estimates and mirror availability probes
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
 
 ## Acknowledgments
 
