@@ -24,7 +24,7 @@ Press <kbd>?</kbd> anywhere in the app for this list as an overlay.
 
 | Keys | Action |
 |---|---|
-| <kbd>1</kbd>-<kbd>3</kbd> | Jump straight to a source (collection / find / update) |
+| <kbd>1</kbd>-<kbd>3</kbd> | Jump straight to a source (find / collection / update) |
 | <kbd>←</kbd> <kbd>→</kbd> | Focus the list / preview pane inside a browse |
 | <kbd>s</kbd> | Jump to the last enabled action button (find / scan / view maps / download); cycle the sort in the update browse |
 | <kbd>a</kbd> / <kbd>A</kbd> | Select all / none (update browse) |
