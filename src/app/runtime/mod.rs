@@ -61,36 +61,174 @@ fn render_frame(terminal: &mut TuiTerminal, app: &App) -> std::io::Result<()> {
     Ok(())
 }
 
-/// The queried graphics picker, with konsole promoted off the halfblocks floor.
+/// What sits between this process and the terminal that paints the image.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Host {
+    /// Nothing: the process environment describes the real terminal.
+    Direct,
+    /// A multiplexer `ratatui-image` will wrap its escapes in passthrough for,
+    /// so a pixel protocol still reaches the outer terminal.
+    Passthrough,
+    /// A multiplexer that swallows graphics escapes: GNU screen, or a tmux
+    /// `ratatui-image` won't wrap for. Only text can be trusted to arrive.
+    Opaque,
+}
+
+/// The outer terminal's graphics capability, as far as trustworthy evidence goes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Outer {
+    /// Speaks kitty graphics with unicode placeholders. Placement anchors to
+    /// text cells, making it the one pixel protocol a multiplexer's redraw
+    /// cannot wipe.
+    KittyPlaceholders,
+    /// Speaks iTerm2 inline images and nothing better (konsole).
+    Iterm2Only,
+    /// No evidence worth acting on.
+    Unknown,
+}
+
+/// The queried graphics picker, with a protocol forced when detection was
+/// blocked by a stale environment. See [`protocol_override`].
 fn query_cover_picker() -> Picker {
     let mut picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
-    if let Some(promoted) = konsole_promotion(picker.protocol_type(), is_konsole()) {
-        picker.set_protocol_type(promoted);
+    let host = detect_host();
+    let outer = resolve_outer(outer_termname(host).as_deref(), is_konsole_env(), host);
+    let detected = picker.protocol_type();
+    if let Some(forced) = protocol_override(detected, outer) {
+        picker.set_protocol_type(forced);
     }
+    // Every "covers don't render" report turns on these five values.
+    debug!(
+        ?host,
+        ?outer,
+        ?detected,
+        chosen = ?picker.protocol_type(),
+        font_size = ?picker.font_size(),
+        "Resolved cover graphics protocol"
+    );
     picker
 }
 
-/// What to promote a konsole session's protocol to, or `None` to keep whatever
-/// detection settled on.
+/// What to force the picker to, or `None` to keep whatever detection settled on.
 ///
 /// `ratatui-image` blacklists Kitty and Sixel outright whenever `KONSOLE_VERSION`
-/// is set (its sixel path is buggy and neither implements kitty placeholders),
-/// then reaches iTerm2 only through a `TERM_PROGRAM` allowlist konsole isn't on —
-/// so every konsole session silently lands on halfblocks and renders the cover as
-/// a ~30x16 mosaic. Konsole has spoken the iTerm2 inline-image protocol since
-/// 22.04 (`1337;File=`, verified against the live terminal), so promote that
-/// fallback here.
+/// or `WEZTERM_EXECUTABLE` is set (its sixel path is buggy there and neither
+/// terminal implements kitty placeholders), then reaches iTerm2 only through a
+/// `TERM_PROGRAM` allowlist konsole isn't on. A blacklisted session therefore
+/// lands on halfblocks with the deciding queries never sent, and renders the
+/// cover as a ~30x16 mosaic. This puts back the protocol that evidence supports.
 ///
-/// Gating on halfblocks keeps this a floor-raise rather than an override: if a
-/// future konsole answers the kitty query, or the blacklist lifts upstream, the
-/// detected protocol wins and this stops firing on its own.
-fn konsole_promotion(detected: ProtocolType, is_konsole: bool) -> Option<ProtocolType> {
-    (is_konsole && detected == ProtocolType::Halfblocks).then_some(ProtocolType::Iterm2)
+/// Gating on halfblocks keeps this a floor-raise rather than an override: a
+/// protocol the terminal actually answered for outranks any guess, so lifting
+/// the upstream blacklist retires this on its own.
+fn protocol_override(detected: ProtocolType, outer: Outer) -> Option<ProtocolType> {
+    if detected != ProtocolType::Halfblocks {
+        return None;
+    }
+    match outer {
+        Outer::KittyPlaceholders => Some(ProtocolType::Kitty),
+        Outer::Iterm2Only => Some(ProtocolType::Iterm2),
+        Outer::Unknown => None,
+    }
 }
 
-/// Whether this is a konsole session, keyed off the same env var (and the same
-/// non-empty test) `ratatui-image`'s own blacklist reads.
-fn is_konsole() -> bool {
+/// Who the outer terminal is, given a `termname` sourced as [`outer_termname`]
+/// does for this `host`.
+fn resolve_outer(termname: Option<&str>, konsole_env: bool, host: Host) -> Outer {
+    if host == Host::Opaque {
+        return Outer::Unknown;
+    }
+    if let Some(outer) = termname.and_then(outer_from_termname) {
+        return outer;
+    }
+    // KONSOLE_VERSION is inherited by every descendant, tmux panes included, so
+    // it describes the terminal in front of us only when nothing sits between.
+    // It stays the signal despite that because konsole is unidentifiable by
+    // TERM, which it reports as a plain xterm-256color.
+    match host {
+        Host::Direct if konsole_env => Outer::Iterm2Only,
+        _ => Outer::Unknown,
+    }
+}
+
+/// kitty and ghostty are the terminals whose kitty-graphics support includes the
+/// unicode placeholders `ratatui-image` emits. wezterm and konsole implement
+/// kitty without them and are left out on purpose.
+fn outer_from_termname(termname: &str) -> Option<Outer> {
+    matches!(termname, "xterm-kitty" | "xterm-ghostty" | "ghostty")
+        .then_some(Outer::KittyPlaceholders)
+}
+
+/// Where to read the outer terminal's `TERM` from, given what sits in between.
+fn outer_termname(host: Host) -> Option<String> {
+    match host {
+        Host::Direct => std::env::var("TERM").ok(),
+        Host::Passthrough => tmux_client_termname(),
+        Host::Opaque => None,
+    }
+}
+
+/// Inside tmux the process environment names whichever terminal started the
+/// *server*, which need not be the attached client. Only tmux knows the client.
+fn tmux_client_termname() -> Option<String> {
+    let output = std::process::Command::new("tmux")
+        .args(["display-message", "-p", "#{client_termname}"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    (!name.is_empty()).then_some(name)
+}
+
+fn detect_host() -> Host {
+    classify_host(
+        std::env::var_os("TMUX").is_some(),
+        std::env::var_os("STY").is_some(),
+        std::env::var("TERM").ok().as_deref(),
+        std::env::var("TERM_PROGRAM").ok().as_deref(),
+    )
+}
+
+/// `$TMUX`/`$STY` are set by the multiplexer itself in every pane, so they beat
+/// `TERM`, which a `default-terminal` override can rename to anything.
+fn classify_host(
+    in_tmux: bool,
+    in_screen: bool,
+    term: Option<&str>,
+    term_program: Option<&str>,
+) -> Host {
+    // Screen wins when both are set: whichever nests inside the other, the
+    // escapes still have to cross screen, which has no passthrough of its own
+    // and eats them. A stale `$STY` costs a mosaic, a missed one costs the
+    // whole image.
+    if in_screen {
+        return Host::Opaque;
+    }
+    if in_tmux {
+        // `ratatui-image` decides on passthrough wrapping from TERM/TERM_PROGRAM
+        // alone, never `$TMUX`, so a `default-terminal` override on a tmux too
+        // old to set TERM_PROGRAM leaves it emitting raw escapes for tmux to
+        // swallow. Forcing a pixel protocol into that renders nothing at all.
+        let wrapped =
+            term.is_some_and(|term| term.starts_with("tmux")) || term_program == Some("tmux");
+        return if wrapped {
+            Host::Passthrough
+        } else {
+            Host::Opaque
+        };
+    }
+    // A multiplexer whose $TMUX/$STY got scrubbed still announces itself here.
+    match term {
+        Some(term) if term.starts_with("tmux") || term.starts_with("screen") => Host::Opaque,
+        _ => Host::Direct,
+    }
+}
+
+/// Keyed off the same env var, and the same non-empty test, that
+/// `ratatui-image`'s own blacklist reads.
+fn is_konsole_env() -> bool {
     std::env::var("KONSOLE_VERSION").is_ok_and(|version| !version.is_empty())
 }
 

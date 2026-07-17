@@ -1,9 +1,12 @@
 //! Session-lived beatmapset cover-image store for the flat set-browse preview.
 //!
 //! Holds the terminal-graphics [`Picker`] and a per-set cache of decoded cover
-//! protocols. The picker is queried once at runtime startup (before raw mode)
-//! and defaults to [`Picker::halfblocks`] — deterministic and test-safe, so a
-//! constructed [`crate::app::App`] never touches the terminal. Progressive
+//! protocols. The picker defaults to [`Picker::halfblocks`], which queries no
+//! terminal, keeping a constructed [`crate::app::App`] deterministic; the
+//! runtime swaps in the queried picker once raw mode is live, because querying
+//! before it saves and restores COOKED termios and silently kills keyboard
+//! input. Neither constructor is side-effect-free under tmux: `ratatui-image`
+//! spawns `tmux set -p allow-passthrough on` from both. Progressive
 //! enhancement throughout: a set with no cached cover (or one that 404'd or
 //! failed to decode) renders text-only, no panic, no toast.
 //!
