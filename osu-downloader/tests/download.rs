@@ -914,7 +914,10 @@ async fn defer_signal_requeues_a_parked_map() {
 
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(20)).await;
-        defer.notify_waiters();
+        // notify_one, not notify_waiters: a stored permit survives the window
+        // before the map parks in inline_wait (find_existing_beatmapset's
+        // spawn_blocking fs scan), so the signal can't be lost under load.
+        defer.notify_one();
     });
 
     let (outcome, _) = download_beatmapset(params).await;
@@ -937,7 +940,10 @@ async fn drop_signal_discards_a_parked_map() {
 
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(20)).await;
-        drop_signal.notify_waiters();
+        // notify_one, not notify_waiters: a stored permit survives the window
+        // before the map parks in inline_wait (find_existing_beatmapset's
+        // spawn_blocking fs scan), so the signal can't be lost under load.
+        drop_signal.notify_one();
     });
 
     let (outcome, _) = download_beatmapset(params).await;
