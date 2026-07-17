@@ -32,6 +32,8 @@ Before a run starts, maps already in your osu! library (stable `osu!.db` or the 
 
 Every run lives on the downloads tab: active runs first, then finished ones, then past runs restored from disk. History survives restarts, cancelled runs included. A new download switches to this tab by default; turn off `display.jump_to_downloads` to stay where you are.
 
+Delete a finished run or a past history entry from the list with <kbd>d</kbd> (an active run can't be deleted; cancel it with <kbd>q</kbd> first). It asks to confirm; tick "don't ask again" with <kbd>space</kbd> in the prompt to skip the confirmation from then on (re-enable it by setting `display.confirm_delete_history = true` in the config file).
+
 Open a run with <kbd>↵</kbd> to see live per-map progress, download speed, ETA, rate-limit countdowns per map, plus a failure summary with reasons.
 
 | Key | Action (inside an open run) |

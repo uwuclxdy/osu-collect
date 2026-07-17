@@ -47,6 +47,7 @@ Built-in mirror toggles. Hosts and what each mirror is good at: [Mirrors](Mirror
 | `theme` | absent | `"full"` (truecolor) or `"compatible"` (xterm-256). |
 | `vim_keys` | `false` | Vim navigation keymap → [Keybindings](Keybindings#vim-keymap) |
 | `jump_to_downloads` | `true` | Switch to the downloads tab when a download starts |
+| `confirm_delete_history` | `true` | Ask before deleting a downloads-tab entry (<kbd>d</kbd>). The prompt's "don't ask again" flips this off; set it back to `true` here to restore the confirmation |
 
 ## `[logging]`
 
