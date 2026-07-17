@@ -105,6 +105,64 @@ fn ring_caps_at_fifty_newest_first() {
 }
 
 #[test]
+fn remove_record_deletes_by_value_and_persists() {
+    let (_dir, path) = tmp_store();
+    let mut history = DownloadHistory::load_from(Some(path.clone()));
+    history.record_removed(&page(1, DownloadStage::Completed));
+    history.record_removed(&page(2, DownloadStage::Failed)); // newest → leads
+
+    let target = history.records[0].clone(); // run 2
+    assert!(
+        history.remove_record(&target),
+        "an existing record is removed"
+    );
+    assert_eq!(history.records.len(), 1);
+    assert_eq!(
+        history.records[0].title, "run 1",
+        "the other record survives"
+    );
+    // The delete reaches disk, so a restart can't resurrect it.
+    let reloaded = DownloadHistory::load_from(Some(path));
+    assert_eq!(reloaded.records.len(), 1);
+    assert_eq!(reloaded.records[0].title, "run 1");
+}
+
+#[test]
+fn remove_record_is_a_noop_when_absent() {
+    let (_dir, path) = tmp_store();
+    let mut history = DownloadHistory::load_from(Some(path));
+    history.record_removed(&page(1, DownloadStage::Completed));
+    let target = history.records[0].clone();
+
+    assert!(history.remove_record(&target));
+    assert!(
+        !history.remove_record(&target),
+        "removing the same record twice is a no-op"
+    );
+    assert!(history.records.is_empty());
+}
+
+#[test]
+fn discard_pending_drops_the_crash_safe_copy() {
+    let (_dir, path) = tmp_store();
+    let mut history = DownloadHistory::load_from(Some(path.clone()));
+    history.record_settled(&page(1, DownloadStage::Completed));
+    // Hidden from the list but written to disk as a leading pending record.
+    assert_eq!(
+        DownloadHistory::load_from(Some(path.clone())).records.len(),
+        1
+    );
+
+    history.discard_pending(1);
+
+    // Gone from disk too — a later exit/save can't bring it back.
+    assert!(
+        DownloadHistory::load_from(Some(path)).records.is_empty(),
+        "discarded pending record leaves no trace"
+    );
+}
+
+#[test]
 fn corrupt_file_loads_as_empty() {
     let (_dir, path) = tmp_store();
     std::fs::write(&path, "{ not json").unwrap();

@@ -283,7 +283,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let overlay_open = app.confirm_retry_on_start.is_some()
         || app.confirm_retry.is_some()
         || app.help_open
-        || app.update_modal.is_some();
+        || app.update_modal.is_some()
+        || app.confirm_delete.is_some();
     let editing = app.editing && !overlay_open;
     match app.active_tab() {
         Tab::Home => home::render(
@@ -347,6 +348,14 @@ pub fn draw(frame: &mut Frame, app: &App) {
             );
             modal.scroll.set(clamped);
         }
+    } else if let Some(modal) = &app.confirm_delete {
+        modal::render_confirm_delete_modal(
+            frame,
+            area,
+            &modal.title,
+            modal.focus,
+            modal.dont_ask_again,
+        );
     } else if app.help_open {
         // Clamp the requested scroll to the real viewport and store it back so
         // the next ↑/↓ starts from the on-screen position (no dead presses).

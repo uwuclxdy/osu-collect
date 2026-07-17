@@ -22,8 +22,10 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::widgets;
-use super::{accent, accent_alt, bg, text, text_dim};
-use crate::app::state::{CONFIRM_RETRY_BUTTONS, RETRY_ON_START_BUTTONS, UPDATE_MODAL_BUTTONS};
+use super::{accent, accent_alt, bg, text, text_dim, text_faint};
+use crate::app::state::{
+    CONFIRM_DELETE_BUTTONS, CONFIRM_RETRY_BUTTONS, RETRY_ON_START_BUTTONS, UPDATE_MODAL_BUTTONS,
+};
 use crate::app::tab::Tab;
 
 /// Modal sizing cap: a modal never exceeds 60% of the terminal width.
@@ -133,6 +135,7 @@ const DOWNLOADS_TAB: &[HelpRow] = &[
     HelpRow::new("↵", "open run / expand failed"),
     HelpRow::new("↑ ↓", "select run / scroll"),
     HelpRow::new("←", "back to the run list"),
+    HelpRow::new("d", "delete entry (history / settled run)"),
     HelpRow::new("r", "retry failed mapsets (preview)"),
     HelpRow::new("s / S", "defer / drop rate-limited"),
     HelpRow::new("q", "cancel run (preview)"),
@@ -262,6 +265,49 @@ pub(crate) fn render_confirm_retry_modal(
         " CONFIRM ",
         body,
         &CONFIRM_RETRY_BUTTONS,
+        focus,
+    );
+}
+
+/// Renders the Downloads-tab "Delete this entry?" confirmation modal.
+///
+/// `title` names the entry; `dont_ask_again` drives the checkbox glyph. Buttons
+/// (`cancel`, `delete`); ←/→ move focus, `space` toggles the checkbox, `enter`
+/// activates, `esc`/`q` cancel (all handled in `handle_key`).
+pub(crate) fn render_confirm_delete_modal(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    focus: usize,
+    dont_ask_again: bool,
+) {
+    let (check_glyph, check_label) = if dont_ask_again {
+        (accent(), text())
+    } else {
+        (text_dim(), text_dim())
+    };
+    let body = vec![
+        Line::from(vec![
+            "Delete ".fg(text_dim()),
+            format!("\"{title}\"").fg(accent()).bold(),
+            " from downloads?".fg(text_dim()),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                if dont_ask_again { "[x] " } else { "[ ] " },
+                Style::default().fg(check_glyph),
+            ),
+            "don't ask again".fg(check_label),
+            "  space".fg(text_faint()),
+        ]),
+    ];
+    render_button_modal(
+        frame,
+        area,
+        " CONFIRM DELETE ",
+        body,
+        &CONFIRM_DELETE_BUTTONS,
         focus,
     );
 }

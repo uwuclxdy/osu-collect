@@ -33,6 +33,8 @@ const HINT_CANCEL: &str = "q cancel";
 /// notification key, not a page action) so it isn't a back key.
 const HINT_CLOSE: &str = "esc / q close";
 const HINT_RETRY: &str = "r retry failed";
+/// `d` deletes the highlighted Downloads entry (history record or settled run).
+const HINT_DELETE: &str = "d delete";
 const HINT_DEFER_DROP: &str = "s defer · S drop";
 /// Drop-only variant: shown when maps are queue-deferred but none are parked
 /// inline, so `s defer` cannot act but `S drop` still drains the queue.
@@ -87,6 +89,9 @@ const HINT_DISMISS: &str = "x dismiss";
 /// Footer hint for button-carrying confirm modals — the buttons show the
 /// choices, so only the universal cancel key is surfaced.
 const HINT_MODAL_CANCEL: &str = "esc cancel";
+/// Footer hint for the delete-confirm modal — surfaces its `space` don't-ask
+/// toggle alongside the universal cancel key.
+const HINT_MODAL_DELETE: &str = "space don't ask  ·  esc cancel";
 /// Footer hint for a scrollable modal — both the help overlay and the update
 /// changelog scroll the body and close on `esc` (the changelog's
 /// [later]/[update] buttons carry its choices).
@@ -162,6 +167,8 @@ fn modal_hint(app: &App) -> Option<String> {
         Some(HINT_MODAL_SCROLL_CLOSE.to_string())
     } else if app.confirm_retry_on_start.is_some() || app.confirm_retry.is_some() {
         Some(HINT_MODAL_CANCEL.to_string())
+    } else if app.confirm_delete.is_some() {
+        Some(HINT_MODAL_DELETE.to_string())
     } else if app.update_modal.is_some() {
         Some(HINT_MODAL_SCROLL_CLOSE.to_string())
     } else {
@@ -348,11 +355,15 @@ fn login_hints(app: &App) -> Vec<&'static str> {
 /// browse.
 fn downloads_hints(app: &App) -> (Vec<&'static str>, Option<&'static str>) {
     if !app.downloads_tab.preview_focused {
-        let segments = if app.downloads_rows().is_empty() {
-            Vec::new()
-        } else {
-            vec![HINT_MOVE, HINT_ENTER_OPEN]
-        };
+        let mut segments = Vec::new();
+        if !app.downloads_rows().is_empty() {
+            segments.push(HINT_MOVE);
+            segments.push(HINT_ENTER_OPEN);
+            // Only a history record or a settled run can be deleted.
+            if app.selected_row_deletable() {
+                segments.push(HINT_DELETE);
+            }
+        }
         return (segments, Some(HINT_QUIT));
     }
 
@@ -369,6 +380,9 @@ fn downloads_hints(app: &App) -> (Vec<&'static str>, Option<&'static str>) {
     if page.is_some_and(|page| !page.retryable_ids(None).is_empty()) {
         segments.push(HINT_RETRY);
     }
+    // `d delete` is advertised at the list level (the primary place to prune
+    // entries); the preview keeps its <=4-segment cap so the destructive keys
+    // never trim. `d` still works here — see the `?` help.
     segments.push(HINT_FOCUS_LIST);
     let back = running.then_some(HINT_CANCEL);
     (segments, back)

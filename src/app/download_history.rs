@@ -145,6 +145,29 @@ impl DownloadHistory {
         self.save();
     }
 
+    /// Delete a visible record (user-driven, from the Downloads tab). Removes the
+    /// first record equal to `record` — matched by value so a background
+    /// promotion inserting a record above it can't shift a stale index onto the
+    /// wrong entry — and re-saves. Returns whether one was removed.
+    pub fn remove_record(&mut self, record: &HistoryRecord) -> bool {
+        let Some(pos) = self.records.iter().position(|r| r == record) else {
+            return false;
+        };
+        self.records.remove(pos);
+        self.save();
+        true
+    }
+
+    /// Drop the crash-safe pending record for a run the user hard-deleted from
+    /// the list before it was ever promoted. Without this the pending copy would
+    /// resurface on the next `save`/exit, resurrecting the deleted run.
+    pub fn discard_pending(&mut self, id: DownloadId) {
+        if let Some(pos) = self.pending.iter().position(|(pid, _)| *pid == id) {
+            self.pending.remove(pos);
+            self.save();
+        }
+    }
+
     fn save(&self) {
         let Some(path) = self.path.as_deref() else {
             return;

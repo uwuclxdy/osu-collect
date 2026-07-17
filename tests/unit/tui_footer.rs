@@ -81,6 +81,32 @@ fn footer_hint_downloads_list_advertises_open() {
 }
 
 #[test]
+fn footer_hint_downloads_list_advertises_delete_on_a_settled_run() {
+    let mut app = App::new(Config::default());
+    push_focused_page(&mut app, 1, DownloadStage::Completed);
+    app.downloads_tab.preview_focused = false;
+
+    let hint = hint_for(&app);
+    assert!(
+        hint.contains("d delete"),
+        "a settled run on the list is deletable, got: {hint}"
+    );
+}
+
+#[test]
+fn footer_hint_downloads_list_omits_delete_on_an_active_run() {
+    let mut app = App::new(Config::default());
+    push_focused_page(&mut app, 1, DownloadStage::Downloading);
+    app.downloads_tab.preview_focused = false;
+
+    let hint = hint_for(&app);
+    assert!(
+        !hint.contains("d delete"),
+        "an in-flight run must be cancelled, not deleted, got: {hint}"
+    );
+}
+
+#[test]
 fn footer_hint_settled_preview_has_no_dismiss_token() {
     let mut app = App::new(Config::default());
     push_focused_page(&mut app, 1, DownloadStage::Completed);

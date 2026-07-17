@@ -98,9 +98,18 @@ pub struct DisplayConfig {
     /// turn off to stay on the current tab instead.
     #[serde(default = "default_jump_to_downloads")]
     pub jump_to_downloads: bool,
+    /// Ask for confirmation before deleting a Downloads-tab entry (`d`). On by
+    /// default; the modal's "don't ask again" toggle flips it off, after which
+    /// `d` deletes without a prompt. Re-enable by editing the config file.
+    #[serde(default = "default_confirm_delete_history")]
+    pub confirm_delete_history: bool,
 }
 
 fn default_jump_to_downloads() -> bool {
+    true
+}
+
+fn default_confirm_delete_history() -> bool {
     true
 }
 
@@ -110,6 +119,7 @@ impl Default for DisplayConfig {
             theme: None,
             vim_keys: false,
             jump_to_downloads: true,
+            confirm_delete_history: true,
         }
     }
 }

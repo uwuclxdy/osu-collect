@@ -543,6 +543,9 @@ impl ConfigTab {
                 theme: Some(self.theme),
                 vim_keys: self.vim_keys,
                 jump_to_downloads: self.jump_to_downloads,
+                // Not editable from the config form; preserve whatever was loaded
+                // (the delete modal's "don't ask again" toggle writes it directly).
+                confirm_delete_history: self.loaded_config.display.confirm_delete_history,
             },
             update: UpdateConfig {
                 auto_update: self.auto_update,

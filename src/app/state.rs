@@ -4,7 +4,7 @@ use super::{
     collection_state::{self, CollectionStateFile},
     config::{AuthLoginState, ConfigField, ConfigTab},
     covers::Covers,
-    download_history::DownloadHistory,
+    download_history::{DownloadHistory, HistoryRecord},
     downloads_tab::{DownloadsRow, DownloadsTab},
     failed_maps,
     find_source::{BrowseRow, EnrichSink, EnrichTarget, FindPlan, FindStatusMsg, SetBrowse},
@@ -128,6 +128,9 @@ pub struct App {
     pub update_phase: Option<UpdateIndicator>,
     /// The update-changelog modal, opened with `u` when an update is available.
     pub update_modal: Option<UpdateModal>,
+    /// Confirm-before-delete modal for the Downloads tab (`d`). Suppressed once
+    /// the user arms its "don't ask again" toggle (`display.confirm_delete_history`).
+    pub confirm_delete: Option<ConfirmDeleteModal>,
     /// Override for the on-disk failed-maps file, set by tests. Production
     /// callers always pass `None` and the path is resolved at use-site.
     pub(crate) failed_maps_path_override: Option<PathBuf>,
@@ -310,6 +313,41 @@ pub const UPDATE_MODAL_BUTTONS: [&str; 2] = ["later", "update"];
 /// Default-focused button: `update`.
 pub const UPDATE_MODAL_DEFAULT_FOCUS: usize = 1;
 
+/// What a Downloads-tab `d` delete removes. Captured at press time so a
+/// background record promotion can't shift a stale index onto the wrong row: a
+/// record is held by value (matched on delete), a live page by its stable id.
+#[derive(Debug, Clone)]
+pub enum DeleteTarget {
+    /// A persisted history record — removed from `history.records`.
+    Record(HistoryRecord),
+    /// A settled-retained session page — hard-dropped WITHOUT a history record
+    /// (unlike cancel/eviction, which promote one). Only a terminal-stage page
+    /// is ever a target; an in-flight run must be cancelled first (`q`).
+    Page(DownloadId),
+}
+
+/// State for the "Delete this entry?" confirmation modal (`d` on the Downloads
+/// tab). Buttons (left→right): `cancel`, `delete`; ←/→ move `focus`, `space`
+/// toggles `dont_ask_again`, `enter` activates the focused button, `esc`/`q`
+/// cancel. Confirming `delete` with `dont_ask_again` armed persists the
+/// suppression (`display.confirm_delete_history = false`).
+#[derive(Debug)]
+pub struct ConfirmDeleteModal {
+    pub target: DeleteTarget,
+    /// The entry's display title (record or page name), for the modal body.
+    pub title: String,
+    /// Selected button index into [`CONFIRM_DELETE_BUTTONS`].
+    pub focus: usize,
+    /// Whether the "don't ask again" checkbox is armed.
+    pub dont_ask_again: bool,
+}
+
+/// Button labels for [`ConfirmDeleteModal`], left→right.
+pub const CONFIRM_DELETE_BUTTONS: [&str; 2] = ["cancel", "delete"];
+/// Default-focused button: `delete` — matches the retry/update modals (default
+/// to the action); the confirm step and the named target are the safety.
+pub const CONFIRM_DELETE_DEFAULT_FOCUS: usize = 1;
+
 impl App {
     pub fn new(config: Config) -> Self {
         let state_path = collection_state::state_path();
@@ -341,6 +379,7 @@ impl App {
             available_update: None,
             update_phase: None,
             update_modal: None,
+            confirm_delete: None,
             failed_maps_path_override: None,
             next_download_id: 1,
             disk_cache: Cell::new(None),
@@ -541,6 +580,10 @@ impl App {
             self.update_modal = None;
             return true;
         }
+        if self.confirm_delete.is_some() {
+            self.confirm_delete = None;
+            return true;
+        }
         if self.help_open {
             self.close_help();
             return true;
@@ -560,6 +603,7 @@ impl App {
             || self.confirm_retry.is_some()
             || self.confirm_retry_on_start.is_some()
             || self.update_modal.is_some()
+            || self.confirm_delete.is_some()
     }
 
     /// Cancel a pending pre-download retry prompt. Drops the queued page that
@@ -2018,6 +2062,44 @@ impl App {
             return None;
         }
 
+        // Confirm-delete modal: button-driven. ←/→ move across [cancel, delete];
+        // `space` toggles "don't ask again"; `enter` activates the focused button
+        // (delete arms suppression when the toggle is on); `esc`/`q` cancel.
+        if self.confirm_delete.is_some() {
+            match key.code {
+                KeyCode::Left => {
+                    if let Some(m) = self.confirm_delete.as_mut() {
+                        m.focus = m.focus.saturating_sub(1);
+                    }
+                }
+                KeyCode::Right => {
+                    if let Some(m) = self.confirm_delete.as_mut() {
+                        m.focus = (m.focus + 1).min(CONFIRM_DELETE_BUTTONS.len() - 1);
+                    }
+                }
+                KeyCode::Char(' ') => {
+                    if let Some(m) = self.confirm_delete.as_mut() {
+                        m.dont_ask_again = !m.dont_ask_again;
+                    }
+                }
+                KeyCode::Enter => {
+                    let modal = self.confirm_delete.take()?;
+                    // 0 cancel, 1 delete.
+                    if modal.focus == 1 {
+                        if modal.dont_ask_again {
+                            self.disable_delete_confirm();
+                        }
+                        self.delete_download(modal.target);
+                    }
+                }
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.confirm_delete = None;
+                }
+                _ => {}
+            }
+            return None;
+        }
+
         // Help overlay owns all input while open: ↑/↓ (and PageUp/Down, Home/End)
         // scroll it; `?`/esc/`q` close it; everything else is inert. Render clamps
         // the offset to the viewport, so over-scrolling is harmless.
@@ -3006,6 +3088,96 @@ impl App {
         Some(page.title)
     }
 
+    /// Whether the row under the Downloads cursor can be deleted with `d`: a
+    /// persisted history record, or a settled-retained session run. An in-flight
+    /// run is not deletable — cancel it with `q` first. Drives the `d delete`
+    /// footer hint.
+    pub fn selected_row_deletable(&self) -> bool {
+        if self.active_tab != Tab::Downloads {
+            return false;
+        }
+        match self.selected_row_key() {
+            Some(SelectedRow::Record(_)) => true,
+            Some(SelectedRow::Page(id)) => self
+                .downloads
+                .iter()
+                .find(|p| p.id == id)
+                .is_some_and(CollectionPage::is_settled),
+            None => false,
+        }
+    }
+
+    /// `d` on the Downloads tab: capture the entry under the cursor, then either
+    /// open the confirm modal or delete straight away when the user disabled it.
+    /// Inert on an in-flight run (cancel with `q` first) or an empty list.
+    fn request_delete_download(&mut self) -> Option<AppCommand> {
+        let (target, title) = match self.selected_row_key()? {
+            SelectedRow::Record(index) => {
+                let record = self.history.records.get(index)?.clone();
+                let title = record.title.clone();
+                (DeleteTarget::Record(record), title)
+            }
+            SelectedRow::Page(id) => {
+                let page = self.downloads.iter().find(|p| p.id == id)?;
+                if !page.is_settled() {
+                    return None;
+                }
+                (DeleteTarget::Page(id), page.title.clone())
+            }
+        };
+        if self.config.loaded_config.display.confirm_delete_history {
+            self.confirm_delete = Some(ConfirmDeleteModal {
+                target,
+                title,
+                focus: CONFIRM_DELETE_DEFAULT_FOCUS,
+                dont_ask_again: false,
+            });
+        } else {
+            self.delete_download(target);
+        }
+        None
+    }
+
+    /// Perform a confirmed delete. A record drops from `history.records`; a
+    /// settled page is hard-dropped together with its crash-safe pending record,
+    /// so — unlike cancel/eviction — it leaves NO history entry behind. The
+    /// cursor keeps its row slot (the next entry slides up) and is clamped.
+    fn delete_download(&mut self, target: DeleteTarget) {
+        let title = match target {
+            DeleteTarget::Record(record) => {
+                if !self.history.remove_record(&record) {
+                    return;
+                }
+                record.title
+            }
+            DeleteTarget::Page(id) => {
+                let Some(pos) = self.downloads.iter().position(|p| p.id == id) else {
+                    return;
+                };
+                let title = self.downloads[pos].title.clone();
+                self.downloads.remove(pos);
+                self.history.discard_pending(id);
+                title
+            }
+        };
+        // The previewed entry may be gone; drop to the list, then keep the cursor
+        // on a real row.
+        self.downloads_tab.preview_focused = false;
+        self.downloads_tab.clamp(self.downloads_row_count());
+        self.push_toast(Toast::info("deleted from downloads").with_detail(title));
+    }
+
+    /// Persist "don't ask again" for the delete modal: flip the in-memory config
+    /// so this session skips the prompt, and write it to disk (re-read first so
+    /// nothing else is clobbered). Failures are silent — a missed persist only
+    /// means the prompt returns next launch.
+    fn disable_delete_confirm(&mut self) {
+        self.config.loaded_config.display.confirm_delete_history = false;
+        let mut config = crate::config::load_config_or_default();
+        config.display.confirm_delete_history = false;
+        let _ = save_config(&config);
+    }
+
     /// Keep at most [`HISTORY_CAP`](super::download_history::HISTORY_CAP)
     /// settled pages retained; the oldest evict to their history records.
     fn evict_settled_pages_over_cap(&mut self) {
@@ -3096,6 +3268,11 @@ impl App {
     /// here, so letter suppression never applies.
     fn handle_download_tab_key(&mut self, ch: char) -> Option<AppCommand> {
         match ch {
+            // `d`/`D` deletes the entry under the cursor — a persisted history
+            // record or a settled-retained session run (an in-flight run is inert:
+            // cancel it with `q` first). Routes through the confirm modal unless
+            // the user disabled it. Works at the list or preview level.
+            'd' | 'D' => self.request_delete_download(),
             // Case-insensitive retry (hotkeys are case-insensitive):
             // `r`/`R` retry ALL retryable failed maps (NotFound skipped); >50
             // routes through the confirm modal.

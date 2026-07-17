@@ -433,6 +433,155 @@ fn retry_from_descended_preview_never_jumps_or_ascends() {
     );
 }
 
+// ── d: delete a history record / settled run ─────────────────────────────────
+
+/// Cancel a downloading run so it settles into one visible history record.
+fn make_record(app: &mut App, id: DownloadId) {
+    push_page(app, id, DownloadStage::Downloading);
+    app.handle_cancel_result(id, true);
+    app.active_tab = Tab::Downloads;
+    app.downloads_tab.selected = 0;
+    app.downloads_tab.preview_focused = false;
+}
+
+#[test]
+fn d_on_a_history_record_opens_the_confirm_modal() {
+    let mut app = make_app();
+    make_record(&mut app, 1);
+    assert_eq!(app.history.records.len(), 1);
+
+    let cmd = app.handle_key(press(KeyCode::Char('d')));
+
+    assert!(cmd.is_none());
+    assert!(
+        app.confirm_delete.is_some(),
+        "d opens the delete-confirm modal"
+    );
+    assert_eq!(app.history.records.len(), 1, "the modal defers the delete");
+}
+
+#[test]
+fn confirming_delete_removes_the_record() {
+    let mut app = make_app();
+    make_record(&mut app, 1);
+
+    app.handle_key(press(KeyCode::Char('d'))); // open, default focus = delete
+    let cmd = app.handle_key(press(KeyCode::Enter));
+
+    assert!(cmd.is_none());
+    assert!(app.confirm_delete.is_none(), "enter closes the modal");
+    assert!(
+        app.history.records.is_empty(),
+        "enter on the default `delete` removes the record"
+    );
+}
+
+#[test]
+fn focusing_cancel_then_enter_keeps_the_record() {
+    let mut app = make_app();
+    make_record(&mut app, 1);
+
+    app.handle_key(press(KeyCode::Char('d'))); // open, default focus = delete
+    app.handle_key(press(KeyCode::Left)); // move to `cancel`
+    let cmd = app.handle_key(press(KeyCode::Enter));
+
+    assert!(cmd.is_none());
+    assert!(app.confirm_delete.is_none());
+    assert_eq!(
+        app.history.records.len(),
+        1,
+        "enter on the cancel button keeps the record"
+    );
+}
+
+#[test]
+fn esc_dismisses_the_delete_modal_without_deleting() {
+    let mut app = make_app();
+    make_record(&mut app, 1);
+
+    app.handle_key(press(KeyCode::Char('d')));
+    app.handle_key(press(KeyCode::Esc));
+
+    assert!(app.confirm_delete.is_none(), "esc closes the modal");
+    assert_eq!(app.history.records.len(), 1, "esc never deletes");
+}
+
+#[test]
+fn d_on_an_in_flight_run_is_inert() {
+    let mut app = make_app();
+    push_page(&mut app, 1, DownloadStage::Downloading);
+
+    let cmd = app.handle_key(press(KeyCode::Char('d')));
+
+    assert!(cmd.is_none());
+    assert!(
+        app.confirm_delete.is_none(),
+        "an active run must be cancelled (q), not deleted"
+    );
+    assert_eq!(app.downloads.len(), 1);
+}
+
+#[test]
+fn deleting_a_settled_page_leaves_no_history_trace() {
+    let mut app = make_app();
+    push_page(&mut app, 1, DownloadStage::Completed);
+    // Settling wrote a hidden pending record; a hard delete must drop it too.
+    app.history.record_settled(&app.downloads[0]);
+    app.downloads_tab.selected = 0;
+
+    app.handle_key(press(KeyCode::Char('d')));
+    app.handle_key(press(KeyCode::Enter));
+
+    assert!(app.downloads.is_empty(), "settled page is hard-dropped");
+    assert!(app.history.records.is_empty(), "no visible record");
+    // The pending copy is gone, so an exit flush can't resurrect the run.
+    app.flush_history_on_exit();
+    assert!(
+        app.history.records.is_empty(),
+        "a hard-deleted run records nothing, unlike cancel/eviction"
+    );
+}
+
+#[test]
+fn dont_ask_again_suppresses_and_persists() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    // Isolate the config write from the real user file.
+    unsafe { std::env::set_var("OSU_COLLECT_CONFIG", path.to_str().unwrap()) };
+
+    let mut app = make_app();
+    make_record(&mut app, 1);
+    make_record(&mut app, 2);
+    assert_eq!(app.history.records.len(), 2);
+    app.downloads_tab.selected = 0;
+
+    // First delete: arm "don't ask again" (space), confirm on the default delete.
+    app.handle_key(press(KeyCode::Char('d')));
+    app.handle_key(press(KeyCode::Char(' ')));
+    app.handle_key(press(KeyCode::Enter));
+
+    assert_eq!(app.history.records.len(), 1, "first delete removed one");
+    assert!(
+        !app.config.loaded_config.display.confirm_delete_history,
+        "the toggle flips the in-memory flag"
+    );
+
+    // Second delete: no modal, straight through.
+    let cmd = app.handle_key(press(KeyCode::Char('d')));
+    assert!(cmd.is_none());
+    assert!(app.confirm_delete.is_none(), "suppressed — no modal");
+    assert!(
+        app.history.records.is_empty(),
+        "second d deletes immediately"
+    );
+
+    // Suppression survives a restart.
+    let saved = crate::config::load_config_from(&path).unwrap();
+    assert!(!saved.display.confirm_delete_history);
+
+    unsafe { std::env::remove_var("OSU_COLLECT_CONFIG") };
+}
+
 // ── x stays toast-only ───────────────────────────────────────────────────────
 
 #[test]
