@@ -162,9 +162,10 @@ fn preview_lead_and_items(
 }
 
 /// The preview's field rows (no title — that rides as the lead): artist, the
-/// static kv rows, the video/nsfw flags, then the set-level extras (nzbasic
-/// route) and the per-difficulty section (both routes). Each is one line, so
-/// the cover/text budget is a plain row count.
+/// static kv rows, the video/nsfw flags, then the per-difficulty section
+/// (both routes) behind a blank-line separator, and finally the nzbasic-only
+/// set-level extras. Each is one line, so the cover/text budget is a plain
+/// row count.
 fn meta_field_rows(
     meta: &BeatmapSetMeta,
     details: Option<&BeatmapDetails>,
@@ -189,10 +190,17 @@ fn meta_field_rows(
         }
         rows.push(ListItem::new(Line::from(flags)));
     }
+    // Difficulty attributes are the most scannable beatmap data, so they sit
+    // right after the core metadata behind a separator. Secondary set-level
+    // extras (tags/genre/dates, nzbasic only) follow below.
+    let diff = diff_section_rows(meta, details);
+    if !diff.is_empty() {
+        rows.push(ListItem::new(Line::default()));
+        rows.extend(diff);
+    }
     if let Some(details) = details {
         append_set_extras(&mut rows, details);
     }
-    rows.extend(diff_section_rows(meta, details));
     rows
 }
 
@@ -336,24 +344,27 @@ fn diff_rows(
     rows
 }
 
-/// A bar-meter row for one of AR/CS/OD/HP: `<label> [████░░░░░░] <value>` with
-/// a [`BAR_WIDTH`]-cell bar, filled cells in `accent`, empty cells + brackets
-/// in `text_faint`. Compact (no [`KV_WIDTH`] padding) so the row fits the text
-/// floor beside a cover.
+/// A bar-meter row for one of AR/CS/OD/HP: label ([`KV_WIDTH`]-aligned,
+/// matching [`kv_row`]), then the numeric value, then a [`BAR_WIDTH`]-cell
+/// bar trailing as a visual supplement. Filled cells in `accent`, empty in
+/// `text_faint`. No brackets — numeric values stay column-aligned across all
+/// preview rows (kv and bar).
 fn bar_row(label: &'static str, value: f64) -> ListItem<'static> {
     let filled = (value / 10.0 * BAR_WIDTH as f64)
         .round()
         .clamp(0.0, BAR_WIDTH as f64) as usize;
-    let mut spans: Vec<Span<'static>> =
-        vec![label.fg(text_dim()), Span::raw(" [").fg(text_faint())];
+    let mut spans: Vec<Span<'static>> = vec![
+        format!("{label:<width$}  ", width = KV_WIDTH)
+            .fg(text_dim())
+            .bold(),
+        format!("{value:.1} ").fg(text()),
+    ];
     if filled > 0 {
         spans.push("█".repeat(filled).fg(accent()));
     }
     if filled < BAR_WIDTH {
         spans.push("░".repeat(BAR_WIDTH - filled).fg(text_faint()));
     }
-    spans.push("]".fg(text_faint()));
-    spans.push(format!(" {value:.1}").fg(text()));
     ListItem::new(Line::from(spans))
 }
 
