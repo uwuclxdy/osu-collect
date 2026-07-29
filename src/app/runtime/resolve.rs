@@ -127,16 +127,17 @@ pub fn handle_home_resolve_event(event: HomeResolveEvent, home: &mut crate::app:
 
             let beatmapset_ids: Vec<u32> =
                 collection.beatmapsets.iter().map(|set| set.id).collect();
-            // One diff id per unique set feeds the batch-enrichment pager (the
-            // endpoint takes diff ids; the set metadata rides nested in each row).
+            // Every diff id of every unique set feeds the batch-enrichment pager,
+            // so each set gains a full difficulty spread (the endpoint returns
+            // per-diff attributes; the set metadata rides nested in each row).
             // Sets with no diffs stay id-only in the preview.
             let mut seen = HashSet::with_capacity(beatmapset_ids.len());
-            let enrich_pairs: Vec<(u32, u32)> = collection
-                .beatmapsets
-                .iter()
-                .filter(|set| seen.insert(set.id))
-                .filter_map(|set| set.beatmaps.first().map(|diff| (set.id, diff.id)))
-                .collect();
+            let mut enrich_pairs: Vec<(u32, u32)> = Vec::new();
+            for set in collection.beatmapsets.iter().filter(|s| seen.insert(s.id)) {
+                for diff in &set.beatmaps {
+                    enrich_pairs.push((set.id, diff.id));
+                }
+            }
             // Derived from the full collection (the lib stays the single source of
             // folder naming) since the app side keeps only name + id.
             let folder_name = collection.folder_name();

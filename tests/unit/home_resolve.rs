@@ -145,8 +145,12 @@ fn resolve_success_event_sets_success_state() {
         Some("Top 100 of 2024-1")
     );
     assert_eq!(home.resolved_collection, Some((1, vec![11, 22])));
-    // One (set, diff) pair per set for browse&pick enrichment — the first diff.
-    assert_eq!(home.resolved_enrich_pairs, vec![(11, 101), (22, 202)]);
+    // Every (set, diff) pair feeds browse&pick enrichment so each set gains a
+    // full difficulty spread, not just its first diff.
+    assert_eq!(
+        home.resolved_enrich_pairs,
+        vec![(11, 101), (11, 102), (22, 202)]
+    );
 }
 
 /// The resolve's payload is parked in the session cache, so the download press

@@ -21,8 +21,8 @@ use osu_downloader::filter::{
     FilterSpecial, FilterStatus,
 };
 use osu_downloader::search::{
-    BeatmapSetMeta, QueryRange, RangeBound, SearchMode, SearchQuery, SearchStatus, SortField,
-    SortOrder,
+    Beatmap, BeatmapSetMeta, QueryRange, RangeBound, SearchMode, SearchQuery, SearchStatus,
+    SortField, SortOrder,
 };
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -185,6 +185,12 @@ pub struct SetBrowse {
     list_cursor: Option<usize>,
     pub list_offset: Cell<usize>,
     pub preview_offset: Cell<usize>,
+    /// Cursor into the highlighted row's `beatmaps[]`: which difficulty the
+    /// preview's detail block renders. `None` resolves to the hardest diff
+    /// (first-seen on ties, matching [`Self::record_details`]'s strict-`>` fold).
+    /// Reset to `None` whenever the list cursor moves to another row, since the
+    /// cursor is only meaningful relative to one row's spread.
+    diff_cursor: Option<usize>,
     /// osu-batch metadata backfill for this browse's id-only rows. Empty (inert)
     /// for a browse whose rows already carry `meta` (osu search results).
     enrich: EnrichPager,
@@ -221,6 +227,7 @@ impl SetBrowse {
         self.selected.retain(|id| present.contains(id));
         self.rows = rows;
         self.list_cursor = Some(0);
+        self.diff_cursor = None;
         self.enrich.clear();
         // New identity → any prior nzbasic details are stale; the details path
         // reseeds itself off the fresh enrichment pages under the new generation.
@@ -369,6 +376,7 @@ impl SetBrowse {
         if self.preview_focused {
             return;
         }
+        self.diff_cursor = None;
         scroll_list_clamped(&mut self.list_cursor, self.rows.len(), -LIST_PAGE);
     }
 
@@ -376,16 +384,18 @@ impl SetBrowse {
         if self.preview_focused {
             return;
         }
+        self.diff_cursor = None;
         scroll_list_clamped(&mut self.list_cursor, self.rows.len(), LIST_PAGE);
     }
 
-    /// Jump the list cursor to the first (`top`) or last row (`gg` / `G`). The
-    /// preview is a static detail of the highlighted row, so it has no cursor to
-    /// jump.
+    /// Jump the list cursor to the first (`top`) or last row (`gg` / `G`).
+    /// Preview-focused is a no-op: `gg`/`G` jump the list, not the diff cursor
+    /// (j/k or arrows move that). A list jump resets the diff cursor to hardest.
     pub fn scroll_to_edge(&mut self, top: bool) {
         if self.preview_focused {
             return;
         }
+        self.diff_cursor = None;
         let len = self.rows.len();
         if len > 0 {
             self.list_cursor = Some(if top { 0 } else { len - 1 });
@@ -394,9 +404,55 @@ impl SetBrowse {
 
     fn scroll_by(&mut self, delta: i64) {
         if self.preview_focused {
+            // The preview owns ↑/↓: step the difficulty cursor within the
+            // highlighted row's spread (no-op when it has none).
+            self.move_diff_cursor(delta);
             return;
         }
+        // Moving the list changes the highlighted row, so the diff cursor
+        // (relative to one row's spread) resets to hardest.
+        self.diff_cursor = None;
         scroll_list(&mut self.list_cursor, self.rows.len(), delta);
+    }
+
+    // ── difficulty cursor ─────────────────────────────────────────────────────
+
+    /// Index into the highlighted row's `beatmaps[]` of the difficulty the
+    /// preview's detail block renders: the cursor if set (clamped to the
+    /// spread), else the hardest diff (first-seen on ties). `None` when the row
+    /// has no metadata or no difficulty spread — the render then falls back to a
+    /// recorded [`BeatmapDetails`] single diff, or nothing.
+    pub fn focused_diff_index(&self) -> Option<usize> {
+        let beatmaps = &self.highlighted_row()?.meta.as_ref()?.beatmaps;
+        if beatmaps.is_empty() {
+            return None;
+        }
+        Some(
+            self.diff_cursor
+                .map(|i| i.min(beatmaps.len() - 1))
+                .unwrap_or_else(|| hardest_beatmap_index(beatmaps)),
+        )
+    }
+
+    /// Step the difficulty cursor by `delta`, clamped at the spread's ends (no
+    /// wrap). A no-op when the highlighted row has no spread. Only called while
+    /// the preview owns focus.
+    fn move_diff_cursor(&mut self, delta: i64) {
+        let next = self.highlighted_row().and_then(|row| {
+            let beatmaps = &row.meta.as_ref()?.beatmaps;
+            if beatmaps.is_empty() {
+                return None;
+            }
+            let current = self
+                .diff_cursor
+                .map(|i| i.min(beatmaps.len() - 1))
+                .unwrap_or_else(|| hardest_beatmap_index(beatmaps));
+            let stepped = (current as i64 + delta).clamp(0, beatmaps.len() as i64 - 1) as usize;
+            Some(stepped)
+        });
+        if let Some(next) = next {
+            self.diff_cursor = Some(next);
+        }
     }
 
     // ── enrichment pager ──────────────────────────────────────────────────────
@@ -414,6 +470,24 @@ impl SetBrowse {
     ) {
         self.enrich.seed(pruned_diff_ids(seeds, cache));
     }
+}
+
+/// Index of the hardest diff (highest star rating) in `beatmaps`, first-seen
+/// winning ties — matching [`SetBrowse::record_details`]'s strict-`>` fold, so
+/// the preview's default focused diff agrees with the recorded representative.
+/// `rev()` before `max_by` so the last maximal element is the earliest index.
+pub(crate) fn hardest_beatmap_index(beatmaps: &[Beatmap]) -> usize {
+    beatmaps
+        .iter()
+        .enumerate()
+        .rev()
+        .max_by(|(_, a), (_, b)| {
+            a.difficulty_rating
+                .partial_cmp(&b.difficulty_rating)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(i, _)| i)
+        .unwrap_or(0)
 }
 
 /// Diff ids the enrichment pager must actually fetch: drop any seed whose set is

@@ -9,9 +9,9 @@
 
 use crate::app::EnrichSink;
 use crate::app::covers::Covers;
-use crate::app::find_source::{BrowseRow, SetBrowse};
+use crate::app::find_source::{BrowseRow, SetBrowse, hardest_beatmap_index};
 use osu_downloader::filter::BeatmapDetails;
-use osu_downloader::search::BeatmapSetMeta;
+use osu_downloader::search::{Beatmap, BeatmapSetMeta};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -23,7 +23,7 @@ use ratatui::{
 use super::master_detail::{self, MasterDetail, Pane, PreviewCover, PreviewLead};
 use super::theme::stars_color;
 use super::widgets;
-use super::{accent, focused_label, spinner_str, text, text_dim, text_faint, warning};
+use super::{accent, focused_label, spinner_str, success, text, text_dim, text_faint, warning};
 
 const PREVIEW_TITLE: &str = " PREVIEW ";
 /// Widest key on the preview card, for column-aligning the static kv rows.
@@ -70,7 +70,13 @@ pub fn render(
     // lines beside the cover); the fields fill `preview_items`. An id-only or
     // still-loading row has no lead, its id/loading note filling the items.
     let (preview_lead, preview_items) = match browse.highlighted_row() {
-        Some(row) => preview_lead_and_items(row, browse.details_for(row.id), enriching, tick),
+        Some(row) => preview_lead_and_items(
+            row,
+            browse.details_for(row.id),
+            browse.focused_diff_index(),
+            enriching,
+            tick,
+        ),
         None => (None, Vec::new()),
     };
 
@@ -136,6 +142,7 @@ fn list_row(row: &BrowseRow, selected: bool, is_cursor: bool) -> ListItem<'stati
 fn preview_lead_and_items(
     row: &BrowseRow,
     details: Option<&BeatmapDetails>,
+    focused_idx: Option<usize>,
     enriching: bool,
     tick: u64,
 ) -> (Option<PreviewLead>, Vec<ListItem<'static>>) {
@@ -145,7 +152,7 @@ fn preview_lead_and_items(
                 text: meta.title.clone(),
                 style: Style::new().fg(accent()).bold(),
             }),
-            meta_field_rows(meta, details),
+            meta_field_rows(meta, details, focused_idx),
         ),
         None => {
             let id_line = ListItem::new(Line::from(format!("#{}", row.id).fg(text())));
@@ -169,14 +176,33 @@ fn preview_lead_and_items(
 fn meta_field_rows(
     meta: &BeatmapSetMeta,
     details: Option<&BeatmapDetails>,
+    focused_idx: Option<usize>,
 ) -> Vec<ListItem<'static>> {
-    let mut rows = vec![
-        ListItem::new(Line::from(meta.artist.clone().fg(text()))),
-        kv_row("mapper", meta.creator.clone()),
-        kv_row("status", meta.status.clone()),
-        kv_row("favourites", group_thousands(meta.favourite_count as u64)),
-        kv_row("plays", group_thousands(meta.play_count as u64)),
-    ];
+    let mut rows = Vec::new();
+    // Unicode (original-script) title under the romanised lead, when it differs
+    // — the web's two-line title. Omitted when empty or identical (roman-only).
+    if !meta.title_unicode.is_empty() && meta.title_unicode != meta.title {
+        rows.push(ListItem::new(Line::from(
+            meta.title_unicode.clone().fg(text_dim()),
+        )));
+    }
+    // Artist: romanised, with the unicode form appended when it differs.
+    if !meta.artist_unicode.is_empty() && meta.artist_unicode != meta.artist {
+        rows.push(ListItem::new(Line::from(vec![
+            meta.artist.clone().fg(text()),
+            " · ".fg(text_faint()),
+            meta.artist_unicode.clone().fg(text_dim()),
+        ])));
+    } else {
+        rows.push(ListItem::new(Line::from(meta.artist.clone().fg(text()))));
+    }
+    rows.push(kv_row("mapper", meta.creator.clone()));
+    rows.push(kv_row("status", meta.status.clone()));
+    rows.push(kv_row(
+        "favourites",
+        group_thousands(meta.favourite_count as u64),
+    ));
+    rows.push(kv_row("plays", group_thousands(meta.play_count as u64)));
     if meta.video || meta.nsfw {
         let mut flags: Vec<Span<'static>> = Vec::new();
         if meta.video {
@@ -190,10 +216,10 @@ fn meta_field_rows(
         }
         rows.push(ListItem::new(Line::from(flags)));
     }
-    // Difficulty attributes are the most scannable beatmap data, so they sit
-    // right after the core metadata behind a separator. Secondary set-level
-    // extras (tags/genre/dates, nzbasic only) follow below.
-    let diff = diff_section_rows(meta, details);
+    // The difficulty spread is the most scannable beatmap data, so it sits right
+    // after the core metadata behind a separator. Secondary set-level extras
+    // (tags/genre/dates, nzbasic only) follow below.
+    let diff = diff_block_rows(meta, details, focused_idx);
     if !diff.is_empty() {
         rows.push(ListItem::new(Line::default()));
         rows.extend(diff);
@@ -230,67 +256,131 @@ fn append_set_extras(rows: &mut Vec<ListItem<'static>>, d: &BeatmapDetails) {
     }
 }
 
-/// Build the per-difficulty section: a header line (difficulty name + a
-/// tier-colored star rating, plus `+N more` when the set carries multiple
-/// diffs), a BPM kv row, four AR/CS/OD/HP bar meters, and `length`/`drain`
-/// rows. The representative diff is the HARDEST one (highest star rating),
-/// first-seen winning ties — matching `record_details`'s strict-`>` fold so a
-/// set's preview and its recorded details agree. osu-route rows source the
-/// representative from the nested `beatmaps[]` array (count known, no
-/// combo/pass/hash — those fields aren't on [`Beatmap`]); nzbasic rows source
-/// it from the recorded [`BeatmapDetails`] (count unknown, combo / pass count
-/// / short hash appended). Empty when neither source has data.
-fn diff_section_rows(
+/// Build the difficulty section. When the row carries a `beatmaps[]` spread
+/// (every route once enriched), render a one-line-per-diff list with per-diff
+/// star meters above the focused diff's full attribute block. Otherwise fall
+/// back to the single recorded diff ([`BeatmapDetails`], the nzbasic path while
+/// a set's spread has not populated). Empty when neither source has data.
+fn diff_block_rows(
     meta: &BeatmapSetMeta,
     details: Option<&BeatmapDetails>,
+    focused_idx: Option<usize>,
 ) -> Vec<ListItem<'static>> {
-    // `Iterator::max_by` returns the LAST equal element; reverse so the FIRST
-    // diff in the array wins ties, agreeing with `record_details`'s strict `>`.
-    if let Some(hardest) = meta.beatmaps.iter().rev().max_by(|a, b| {
-        a.difficulty_rating
-            .partial_cmp(&b.difficulty_rating)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    }) {
-        diff_rows(
-            &hardest.version,
-            hardest.difficulty_rating,
-            hardest.bpm,
-            hardest.ar,
-            hardest.cs,
-            hardest.od,
-            hardest.hp,
-            hardest.total_length,
-            hardest.hit_length,
-            Some(meta.beatmaps.len()),
-            None,
-        )
+    if let Some(focused) = focused_idx
+        && !meta.beatmaps.is_empty()
+    {
+        spread_rows(&meta.beatmaps, focused, details)
     } else if let Some(d) = details {
-        diff_rows(
-            &d.version,
-            d.stars,
-            d.bpm,
-            d.ar,
-            d.cs,
-            d.od,
-            d.hp,
-            d.total_length,
-            d.hit_length,
-            None,
-            Some(d),
-        )
+        recorded_diff_rows(d)
     } else {
         Vec::new()
     }
 }
 
-/// Render the per-difficulty rows for a single representative diff. `diff_count`
-/// carries the set's total diff count when known (osu route) — it drives the
-/// `+N more` suffix. `details` carries the nzbasic-only combo/pass/hash extras
-/// when present.
-#[allow(clippy::too_many_arguments)]
-fn diff_rows(
-    version: &str,
-    stars: f64,
+/// The full difficulty spread: one line per diff (name + tier-coloured star
+/// meter, the focused diff marked `▸`), a separator, then the focused diff's
+/// attribute block. The nzbasic-only combo/hash extras append only when the
+/// focused diff is the recorded representative (the hardest) — they are
+/// recorded for that diff alone, so rendering them under a different diff would
+/// mislabel.
+fn spread_rows(
+    beatmaps: &[Beatmap],
+    focused: usize,
+    details: Option<&BeatmapDetails>,
+) -> Vec<ListItem<'static>> {
+    let focused = focused.min(beatmaps.len() - 1);
+    let mut rows: Vec<ListItem<'static>> = Vec::new();
+    for (i, b) in beatmaps.iter().enumerate() {
+        rows.push(ListItem::new(spread_line(b, i == focused)));
+    }
+    rows.push(ListItem::new(Line::default()));
+    rows.extend(beat_attr_rows(&beatmaps[focused]));
+    if focused == hardest_beatmap_index(beatmaps)
+        && let Some(d) = details
+    {
+        append_recorded_per_diff(&mut rows, d);
+    }
+    rows
+}
+
+/// The focused diff's attribute block (from a [`Beatmap`]): name + star meter
+/// header, the core attribute rows, the object-count breakdown, then the
+/// success-rate bar.
+fn beat_attr_rows(b: &Beatmap) -> Vec<ListItem<'static>> {
+    let mut header = vec![b.version.to_string().fg(text_dim()).bold()];
+    header.extend(star_meter_spans(b.difficulty_rating));
+    let mut rows = vec![ListItem::new(Line::from(header))];
+    rows.extend(core_attr_rows(
+        b.bpm,
+        b.ar,
+        b.cs,
+        b.od,
+        b.hp,
+        b.total_length,
+        b.hit_length,
+    ));
+    let objects = b.count_circles + b.count_sliders + b.count_spinners;
+    if objects > 0 {
+        rows.push(objects_row(
+            b.count_circles,
+            b.count_sliders,
+            b.count_spinners,
+        ));
+    }
+    rows.push(ratio_bar_row("success", b.passcount, b.playcount));
+    rows
+}
+
+/// The single recorded-diff block (the nzbasic fallback): name + star meter,
+/// core attributes, a success-rate bar from the recorded pass/play counts, then
+/// the combo/hash extras. Used only when a set has no `beatmaps[]` spread.
+fn recorded_diff_rows(d: &BeatmapDetails) -> Vec<ListItem<'static>> {
+    let mut header = vec![d.version.to_string().fg(text_dim()).bold()];
+    header.extend(star_meter_spans(d.stars));
+    let mut rows = vec![ListItem::new(Line::from(header))];
+    rows.extend(core_attr_rows(
+        d.bpm,
+        d.ar,
+        d.cs,
+        d.od,
+        d.hp,
+        d.total_length,
+        d.hit_length,
+    ));
+    rows.push(ratio_bar_row("success", d.pass_count, d.play_count));
+    append_recorded_per_diff(&mut rows, d);
+    rows
+}
+
+/// One spread line: a `▸` caret on the focused diff (a blank on the others),
+/// the difficulty name, then the tier-coloured star rating and meter. The meter
+/// truncates at the pane edge in a narrow preview; the `★X.XX` rating always
+/// precedes it, so the essential figure stays visible.
+fn spread_line(diff: &Beatmap, focused: bool) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> =
+        vec![(if focused { "▸ " } else { "  " }).fg(if focused { accent() } else { text_faint() })];
+    spans.push(
+        diff.version
+            .to_string()
+            .fg(if focused { text() } else { text_dim() }),
+    );
+    spans.extend(star_meter_spans(diff.difficulty_rating));
+    Line::from(spans)
+}
+
+/// Append the nzbasic-only combo/hash extras for the recorded diff.
+fn append_recorded_per_diff(rows: &mut Vec<ListItem<'static>>, d: &BeatmapDetails) {
+    if d.max_combo > 0 {
+        rows.push(kv_row("max combo", group_thousands(d.max_combo as u64)));
+    }
+    if !d.hash.is_empty() {
+        rows.push(kv_row("hash", short_hash(&d.hash)));
+    }
+}
+
+/// The core attribute rows shared by both detail sources: bpm + the four
+/// AR/CS/OD/HP bar meters + length/drain. Each is one line.
+fn core_attr_rows(
     bpm: f64,
     ar: f64,
     cs: f64,
@@ -298,50 +388,82 @@ fn diff_rows(
     hp: f64,
     total_length: u32,
     hit_length: u32,
-    diff_count: Option<usize>,
-    details: Option<&BeatmapDetails>,
 ) -> Vec<ListItem<'static>> {
-    let mut rows = Vec::new();
-
-    // Header: difficulty name + tier-colored star rating; `+N more` when the
-    // set carries multiple diffs and the count is known.
-    let mut header: Vec<Span<'static>> = vec![
-        version.to_string().fg(text_dim()).bold(),
-        format!(" ★{stars:.2}").fg(stars_color(stars)),
+    let mut rows = vec![
+        kv_row("bpm", format!("{bpm:.0}")),
+        bar_row("ar", ar),
+        bar_row("cs", cs),
+        bar_row("od", od),
+        bar_row("hp", hp),
     ];
-    if let Some(count) = diff_count
-        && count > 1
-    {
-        header.push(format!(" +{} more", count - 1).fg(text_faint()));
-    }
-    rows.push(ListItem::new(Line::from(header)));
-
-    rows.push(kv_row("bpm", format!("{bpm:.0}")));
-    rows.push(bar_row("ar", ar));
-    rows.push(bar_row("cs", cs));
-    rows.push(bar_row("od", od));
-    rows.push(bar_row("hp", hp));
     if total_length > 0 {
         rows.push(kv_row("length", format_drain(total_length)));
     }
     if hit_length > 0 {
         rows.push(kv_row("drain", format_drain(hit_length)));
     }
+    rows
+}
 
-    // nzbasic-only extras (combo / pass count / short hash) — `Beatmap` does
-    // not carry these, so the osu route omits them.
-    if let Some(d) = details {
-        if d.max_combo > 0 {
-            rows.push(kv_row("max combo", group_thousands(d.max_combo as u64)));
+/// The object-count breakdown row: total, then circles / sliders / spinners.
+/// Styled like a kv row so the column alignment holds across the detail block.
+fn objects_row(circles: u32, sliders: u32, spinners: u32) -> ListItem<'static> {
+    let total = circles + sliders + spinners;
+    ListItem::new(Line::from(vec![
+        format!("{:<width$}  ", "objects", width = KV_WIDTH)
+            .fg(text_dim())
+            .bold(),
+        total.to_string().fg(text()),
+        "  circles ".fg(text_faint()),
+        circles.to_string().fg(text_dim()),
+        "  sliders ".fg(text_faint()),
+        sliders.to_string().fg(text_dim()),
+        "  spinners ".fg(text_faint()),
+        spinners.to_string().fg(text_dim()),
+    ]))
+}
+
+/// A tier-coloured star meter: the `★X.XX` rating followed by a [`BAR_WIDTH`]
+/// cell bar (one cell per star, saturating past 10). Filled cells take the
+/// tier colour; empty cells are faint.
+fn star_meter_spans(stars: f64) -> Vec<Span<'static>> {
+    let filled = stars.round().clamp(0.0, BAR_WIDTH as f64) as usize;
+    let color = stars_color(stars);
+    let mut spans = vec![format!(" ★{stars:.2} ").fg(color)];
+    if filled > 0 {
+        spans.push("█".repeat(filled).fg(color));
+    }
+    if filled < BAR_WIDTH {
+        spans.push("░".repeat(BAR_WIDTH - filled).fg(text_faint()));
+    }
+    spans
+}
+
+/// A success-rate bar row: `success  NN% ██████░░░░`, the fill being
+/// `numerator / denominator`. A zero denominator (no plays recorded) renders the
+/// counts as "no plays" — a beatmap never played has no rate to show.
+fn ratio_bar_row(label: &'static str, numerator: u32, denominator: u32) -> ListItem<'static> {
+    let mut spans: Vec<Span<'static>> = vec![
+        format!("{label:<width$}  ", width = KV_WIDTH)
+            .fg(text_dim())
+            .bold(),
+    ];
+    if denominator == 0 {
+        spans.push("no plays".fg(text_faint()));
+    } else {
+        let pct = (numerator as f64 / denominator as f64 * 100.0)
+            .round()
+            .clamp(0.0, 100.0) as u64;
+        let filled = (pct as f64 / 100.0 * BAR_WIDTH as f64).round() as usize;
+        spans.push(format!("{pct:>3}% ").fg(text()));
+        if filled > 0 {
+            spans.push("█".repeat(filled).fg(success()));
         }
-        if d.pass_count > 0 {
-            rows.push(kv_row("pass count", group_thousands(d.pass_count as u64)));
-        }
-        if !d.hash.is_empty() {
-            rows.push(kv_row("hash", short_hash(&d.hash)));
+        if filled < BAR_WIDTH {
+            spans.push("░".repeat(BAR_WIDTH - filled).fg(text_faint()));
         }
     }
-    rows
+    ListItem::new(Line::from(spans))
 }
 
 /// A bar-meter row for one of AR/CS/OD/HP: label ([`KV_WIDTH`]-aligned,

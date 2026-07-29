@@ -37,7 +37,9 @@ fn meta_val(id: u32, title: &str) -> BeatmapSetMeta {
     BeatmapSetMeta {
         id,
         title: title.to_string(),
+        title_unicode: String::new(),
         artist: "artist".to_string(),
+        artist_unicode: String::new(),
         creator: "mapper".to_string(),
         status: "ranked".to_string(),
         favourite_count: 0,

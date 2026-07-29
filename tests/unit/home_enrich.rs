@@ -1,7 +1,7 @@
 use super::{EnrichEvent, handle_enrich_event};
 use crate::app::{App, BrowseRow, EnrichSink, EnrichTarget};
 use crate::config::Config;
-use osu_downloader::search::{BeatmapRow, BeatmapSetMeta};
+use osu_downloader::search::{Beatmap, BeatmapRow, BeatmapSetMeta};
 use std::collections::HashMap;
 
 fn app() -> App {
@@ -18,13 +18,18 @@ fn diff_seeds(ids: impl IntoIterator<Item = u32>) -> Vec<(u32, Option<u32>)> {
 /// test can assert they survive the fold (the old details path hardcoded false).
 fn beatmap_row(id: u32, set_id: u32, title: &str, nsfw: bool, video: bool) -> BeatmapRow {
     BeatmapRow {
-        id,
-        beatmapset_id: set_id,
-        mode_int: Some(0),
+        beatmap: Beatmap {
+            id,
+            beatmapset_id: set_id,
+            mode_int: 0,
+            ..Beatmap::default()
+        },
         beatmapset: BeatmapSetMeta {
             id: set_id,
             title: title.to_string(),
+            title_unicode: String::new(),
             artist: "artist".to_string(),
+            artist_unicode: String::new(),
             creator: "mapper".to_string(),
             status: "ranked".to_string(),
             favourite_count: 10,
@@ -80,6 +85,12 @@ fn enriched_folds_set_level_meta_first_diff_wins() {
     assert_eq!(
         rows[1].meta.as_ref().map(|m| m.title.as_str()),
         Some("other set")
+    );
+    // The two diffs under set 10 fold into that set's difficulty spread.
+    assert_eq!(
+        rows[0].meta.as_ref().map(|m| m.beatmaps.len()),
+        Some(2),
+        "a set's diffs assemble into its `beatmaps[]` spread"
     );
     // The landed page also feeds the session cache (one write point), so a later
     // reopen / rescan of any browse can reuse it instead of refetching.
@@ -530,7 +541,7 @@ async fn live_batch_omits_holes_and_carries_meta() {
         .await
         .expect("batch call");
 
-    let got: std::collections::HashSet<u32> = rows.iter().map(|r| r.id).collect();
+    let got: std::collections::HashSet<u32> = rows.iter().map(|r| r.beatmap.id).collect();
     assert!(
         got.contains(&75) && got.contains(&129_891),
         "known ids present: {got:?}"
@@ -541,7 +552,7 @@ async fn live_batch_omits_holes_and_carries_meta() {
     );
     let meta = &rows
         .iter()
-        .find(|r| r.id == 75)
+        .find(|r| r.beatmap.id == 75)
         .expect("id 75 present")
         .beatmapset;
     assert!(

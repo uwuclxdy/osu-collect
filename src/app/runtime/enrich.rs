@@ -83,15 +83,16 @@ pub fn handle_enrich_event(event: EnrichEvent, app: &mut App) {
             if enrich_sink_mut(app, target).enrich_generation() != generation {
                 return;
             }
-            // Dedupe to set-level metadata; the first diff of a set wins (title /
-            // artist / creator / status are set-level, and the batch nests each
-            // row's full set). Holes (ids the server omitted) simply contribute no
-            // row, so their sets stay id-only.
+            // Collapse to set-level metadata: the first diff of a set wins the
+            // set's title/artist/creator/status (identical across a set's diffs),
+            // and every row folds its difficulty into the set's `beatmaps[]` so an
+            // id-only browse gains the full difficulty spread. Holes (ids the
+            // server omitted) contribute no row, so their sets stay id-only.
             let mut meta_by_set: HashMap<u32, BeatmapSetMeta> = HashMap::new();
             for row in rows {
-                meta_by_set
-                    .entry(row.beatmapset_id)
-                    .or_insert(row.beatmapset);
+                let set_id = row.beatmap.beatmapset_id;
+                let meta = meta_by_set.entry(set_id).or_insert(row.beatmapset);
+                meta.beatmaps.push(row.beatmap);
             }
             // Every landed page feeds the session cache (cache-miss only, so a
             // title never clobbers; osu search rows feed it separately in

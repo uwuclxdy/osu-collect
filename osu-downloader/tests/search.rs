@@ -351,9 +351,9 @@ fn deserializes_batch_beatmaps_envelope() {
     assert_eq!(response.beatmaps.len(), 2);
 
     let first: &BeatmapRow = &response.beatmaps[0];
-    assert_eq!(first.id, 75);
-    assert_eq!(first.beatmapset_id, 1);
-    assert_eq!(first.mode_int, Some(0));
+    assert_eq!(first.beatmap.id, 75);
+    assert_eq!(first.beatmap.beatmapset_id, 1);
+    assert_eq!(first.beatmap.mode_int, 0);
     assert_eq!(first.beatmapset.title, "DISCO PRINCE");
     assert_eq!(first.beatmapset.creator, "peppy");
     assert_eq!(first.beatmapset.favourite_count, 42);
@@ -361,7 +361,7 @@ fn deserializes_batch_beatmaps_envelope() {
     // Second row omits `mode_int` and the set's optional count/flag fields; they
     // default rather than failing the parse.
     let second: &BeatmapRow = &response.beatmaps[1];
-    assert_eq!(second.mode_int, None);
+    assert_eq!(second.beatmap.mode_int, 0);
     assert_eq!(second.beatmapset.id, 41823);
     assert_eq!(second.beatmapset.play_count, 0);
     assert!(!second.beatmapset.video);

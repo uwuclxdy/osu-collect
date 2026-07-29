@@ -15,7 +15,9 @@ fn sample_meta(id: u32) -> BeatmapSetMeta {
     BeatmapSetMeta {
         id,
         title: "Song Title".to_string(),
+        title_unicode: String::new(),
         artist: "Artist".to_string(),
+        artist_unicode: String::new(),
         creator: "Mapper".to_string(),
         status: "ranked".to_string(),
         favourite_count: 12_345,
@@ -261,10 +263,12 @@ fn osu_route_preview_has_no_detail_columns() {
 }
 
 #[test]
-fn osu_route_beatmaps_render_diff_section() {
-    // An osu-route row whose `beatmaps[]` array carried two diffs: the harder
-    // one wins the representative slot, surfacing its version name, star rating
-    // (tier-coloured), BPM, bar meters, and a `+N more` suffix for the rest.
+fn osu_route_beatmaps_render_diff_spread() {
+    // An osu-route row whose `beatmaps[]` array carries two diffs: the spread
+    // lists both (one line each, star meter), the focused diff defaults to the
+    // hardest (Expert), and its full attribute block renders below — bpm, the
+    // AR/CS/OD/HP bar meters, the object-count breakdown, and the success-rate
+    // bar. No `+N more` hint: every diff is listed.
     let beatmaps = vec![
         Beatmap {
             id: 1,
@@ -279,6 +283,11 @@ fn osu_route_beatmaps_render_diff_section() {
             hp: 4.0,
             total_length: 240,
             hit_length: 200,
+            count_circles: 100,
+            count_sliders: 50,
+            count_spinners: 2,
+            passcount: 80_000,
+            playcount: 100_000,
         },
         Beatmap {
             id: 2,
@@ -293,6 +302,11 @@ fn osu_route_beatmaps_render_diff_section() {
             hp: 6.0,
             total_length: 240,
             hit_length: 200,
+            count_circles: 410,
+            count_sliders: 288,
+            count_spinners: 14,
+            passcount: 45_000,
+            playcount: 70_000,
         },
     ];
     let meta = BeatmapSetMeta {
@@ -304,20 +318,116 @@ fn osu_route_beatmaps_render_diff_section() {
         meta: Some(meta),
     }]);
     let text = render_browse(&browse);
+    // The spread lists every diff.
+    assert!(
+        text.contains("Easy"),
+        "spread lists the easier diff:\n{text}"
+    );
     assert!(
         text.contains("Expert"),
-        "hardest diff name missing:\n{text}"
+        "spread lists the hardest diff:\n{text}"
     );
-    assert!(text.contains("★5.47"), "star rating missing:\n{text}");
+    assert!(
+        text.contains("★5.47"),
+        "focused (hardest) star rating:\n{text}"
+    );
+    assert!(
+        text.contains("★2.00"),
+        "spread shows the easier diff's stars:\n{text}"
+    );
+    assert!(
+        !text.contains("+1 more"),
+        "no count hint — every diff is listed"
+    );
+    // The focused diff's attribute block.
     assert!(text.contains("180"), "bpm value missing:\n{text}");
     assert!(text.contains("█"), "bar meter cells missing:\n{text}");
     assert!(
-        text.contains("+1 more"),
-        "extra-diff count missing:\n{text}"
+        text.contains("objects"),
+        "object-count row missing:\n{text}"
+    );
+    assert!(text.contains("410"), "focused diff's circle count:\n{text}");
+    // 45000/70000 ≈ 64.3% → 64%.
+    assert!(
+        text.contains("64%"),
+        "success-rate bar from passcount/playcount:\n{text}"
     );
     assert!(
         !text.contains("max combo"),
         "combo is nzbasic-only and must not render on the osu route"
+    );
+}
+
+#[test]
+fn unicode_title_and_artist_render_when_distinct() {
+    // Cyrillic is single-cell, so it survives the buffer's per-cell join
+    // unbroken (CJK would be split across two cells and defeat `.contains`).
+    let meta = BeatmapSetMeta {
+        title_unicode: "Песня".to_string(),
+        artist_unicode: "Артист".to_string(),
+        ..sample_meta(7)
+    };
+    let browse = browse_with(vec![BrowseRow {
+        id: 7,
+        meta: Some(meta),
+    }]);
+    let text = render_browse(&browse);
+    assert!(
+        text.contains("Песня"),
+        "unicode title under the romanised lead:\n{text}"
+    );
+    assert!(
+        text.contains("Артист"),
+        "unicode artist beside the romanised one:\n{text}"
+    );
+    // Romanised forms are still present alongside.
+    assert!(text.contains("Song Title"));
+    assert!(text.contains("Artist"));
+}
+
+#[test]
+fn diff_cursor_cycles_the_focused_detail() {
+    // Three diffs with distinct bpm, so the focused detail block is identifiable
+    // by its bpm value. The default focus is the hardest diff (Expert).
+    let make = |version: &str, stars: f64, bpm: f64| Beatmap {
+        beatmapset_id: 7,
+        mode_int: 0,
+        version: version.to_string(),
+        difficulty_rating: stars,
+        bpm,
+        ..Beatmap::default()
+    };
+    let meta = BeatmapSetMeta {
+        beatmaps: vec![
+            make("Easy", 2.0, 120.0),
+            make("Normal", 3.4, 150.0),
+            make("Expert", 5.47, 180.0),
+        ],
+        ..sample_meta(7)
+    };
+    let mut browse = browse_with(vec![BrowseRow {
+        id: 7,
+        meta: Some(meta),
+    }]);
+    browse.descend();
+    browse.focus_preview();
+    let hardest = render_browse(&browse);
+    assert!(
+        hardest.contains("180"),
+        "default focus is the hardest diff (Expert):\n{hardest}"
+    );
+
+    // While the preview owns focus, ↑ steps the difficulty cursor within the
+    // spread rather than scrolling the list.
+    browse.scroll_up();
+    let normal = render_browse(&browse);
+    assert!(
+        normal.contains("150"),
+        "one step up focuses Normal:\n{normal}"
+    );
+    assert!(
+        !normal.contains("180"),
+        "Expert's bpm leaves the detail block once it is no longer focused:\n{normal}"
     );
 }
 

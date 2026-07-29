@@ -11,7 +11,9 @@ fn meta(id: u32) -> BeatmapSetMeta {
     BeatmapSetMeta {
         id,
         title: format!("title {id}"),
+        title_unicode: String::new(),
         artist: "artist".to_string(),
+        artist_unicode: String::new(),
         creator: "mapper".to_string(),
         status: "ranked".to_string(),
         favourite_count: 0,

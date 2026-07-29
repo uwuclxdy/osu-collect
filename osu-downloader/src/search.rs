@@ -334,14 +334,22 @@ pub struct SearchQuery {
 
 /// One normalized result row. A compact subset of the osu! `beatmapsets[]`
 /// element — the set-level fields the download pipeline and preview need.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct BeatmapSetMeta {
     /// Beatmapset id — the id the download pipeline consumes.
     pub id: u32,
     /// Romanised title.
     pub title: String,
+    /// Unicode (original-script) title — empty when the carrier response omits
+    /// it (the `/beatmaps` batch's nested set object carries no unicode fields).
+    #[serde(default)]
+    pub title_unicode: String,
     /// Romanised artist.
     pub artist: String,
+    /// Unicode (original-script) artist. Same absence rule as
+    /// [`Self::title_unicode`].
+    #[serde(default)]
+    pub artist_unicode: String,
     /// Mapper username.
     pub creator: String,
     /// Rank status string (`"ranked"`, `"loved"`, `"graveyard"`, …).
@@ -370,7 +378,7 @@ pub struct BeatmapSetMeta {
 /// under `accuracy`. (The q-DSL *query* parameter for HP is the separate key
 /// `dr` — see [`build_q`]; these are two different names for the same
 /// attribute across the request/response split.)
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Beatmap {
     /// Beatmap (difficulty) id.
     #[serde(default)]
@@ -408,6 +416,23 @@ pub struct Beatmap {
     /// Drain time in seconds.
     #[serde(default)]
     pub hit_length: u32,
+    /// Circle (`hitCircle`) object count. Zero when the carrier response omits
+    /// it (the nested search `beatmaps[]` carries these; some responses do not).
+    #[serde(default)]
+    pub count_circles: u32,
+    /// Slider object count. Zero when omitted.
+    #[serde(default)]
+    pub count_sliders: u32,
+    /// Spinner object count. Zero when omitted.
+    #[serde(default)]
+    pub count_spinners: u32,
+    /// Number of score submissions that passed. Zero when omitted. Together
+    /// with [`Self::playcount`] this drives a success-rate ratio.
+    #[serde(default)]
+    pub passcount: u32,
+    /// Total play count. Zero when omitted.
+    #[serde(default)]
+    pub playcount: u32,
 }
 
 /// A deserialized search response. `total` feeds the result count;
@@ -486,14 +511,16 @@ pub const MAX_BATCH_IDS: usize = 50;
 /// its parent set's metadata.
 #[derive(Debug, Clone, Deserialize)]
 pub struct BeatmapRow {
-    /// Beatmap (difficulty) id.
-    pub id: u32,
-    /// Parent beatmapset id — the id the download pipeline consumes.
-    pub beatmapset_id: u32,
-    /// Game mode as an integer (`0` osu … `3` mania); defensively optional.
-    #[serde(default)]
-    pub mode_int: Option<u8>,
+    /// This row's difficulty. The osu API v2 `/beatmaps` response places the
+    /// per-difficulty attributes flat at the row's top level (alongside
+    /// `beatmapset`), so [`serde(flatten)`] captures them onto a [`Beatmap`]
+    /// without a separate wire key. Grouping these rows by
+    /// [`Beatmap::beatmapset_id`] reassembles a set's full difficulty spread.
+    #[serde(flatten)]
+    pub beatmap: Beatmap,
     /// The parent set's metadata (title, artist, creator, status, counts, flags).
+    /// Carries no `beatmaps[]` array — the spread is assembled caller-side from
+    /// the flattened [`Self::beatmap`] of every row sharing the set id.
     pub beatmapset: BeatmapSetMeta,
 }
 
@@ -568,7 +595,7 @@ impl SearchClient {
     ///
     /// The server silently omits unknown, deleted, or restricted ids, so the
     /// result may be shorter than `ids` and in any order: callers must tolerate
-    /// holes and key rows by [`BeatmapRow::beatmapset_id`], never by position.
+    /// holes and key rows by [`Beatmap::beatmapset_id`], never by position.
     /// An empty `ids` slice short-circuits to an empty vec without a request.
     pub async fn beatmaps(&self, token: &str, ids: &[u32]) -> Result<Vec<BeatmapRow>> {
         if ids.is_empty() {
