@@ -189,18 +189,11 @@ fn render_preview(frame: &mut Frame, area: Rect, row: &DownloadsRow<'_>, tick: u
 fn render_record_preview(frame: &mut Frame, area: Rect, record: &HistoryRecord) {
     // Static kv key column: TEXT_DIM + bold (cloudy-tui static key:value rows).
     let key_style = Style::default().fg(text_dim()).bold();
-    let label_width = [
-        "status",
-        "downloaded",
-        "skipped",
-        "failed",
-        "output",
-        "when",
-    ]
-    .iter()
-    .map(|l| l.chars().count())
-    .max()
-    .unwrap_or(0);
+    let label_width = ["status", "downloaded", "skipped", "failed", "output"]
+        .iter()
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(0);
     let kv = |key: &str, value: Span<'static>| {
         Line::from(vec![
             Span::styled(widgets::label_cell(key, label_width), key_style),
@@ -235,12 +228,11 @@ fn render_record_preview(frame: &mut Frame, area: Rect, record: &HistoryRecord) 
             crate::utils::pretty_path(dir).into_owned().fg(text_dim()),
         ));
     }
-    lines.push(kv("when", age_label(record.finished_at).fg(text_dim())));
-
     let title = format!(" {} ", record.title.to_uppercase());
+    let age = Line::from(age_label(record.finished_at).fg(text_dim()));
     frame.render_widget(
         Paragraph::new(lines)
-            .block(widgets::panel_block(title, None, false, false))
+            .block(widgets::panel_block(title, Some(age), false, false))
             .wrap(Wrap { trim: true }),
         area,
     );

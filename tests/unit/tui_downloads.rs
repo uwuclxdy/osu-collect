@@ -100,7 +100,14 @@ fn record_preview_shows_summary_kv_rows() {
     );
     assert!(output.contains("cancelled"), "stage pill renders");
     assert!(output.contains("12/40"), "downloaded ratio renders");
-    assert!(output.contains("just now"), "age renders");
+    assert!(
+        output.contains("just now"),
+        "age renders in the title border: {output}"
+    );
+    assert!(
+        !output.contains("when"),
+        "the `when` kv row is dropped from the body: {output}"
+    );
 }
 
 #[test]
