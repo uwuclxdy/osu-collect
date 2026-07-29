@@ -466,6 +466,66 @@ fn spread_star_ratings_align_in_one_column() {
 }
 
 #[test]
+fn detail_bar_meters_align_across_value_widths() {
+    // AR/OD at 10.0 (a 4-char value) and CS/HP below 10 (3-char) must still
+    // start their bar cells in one column, lined up with the success bar.
+    let diff = Beatmap {
+        beatmapset_id: 7,
+        mode_int: 0,
+        version: "X".to_string(),
+        difficulty_rating: 5.0,
+        bpm: 180.0,
+        ar: 10.0,
+        cs: 4.0,
+        od: 10.0,
+        hp: 6.0,
+        total_length: 100,
+        hit_length: 80,
+        count_circles: 1,
+        count_sliders: 1,
+        count_spinners: 1,
+        passcount: 1,
+        playcount: 2,
+        ..Beatmap::default()
+    };
+    let meta = BeatmapSetMeta {
+        beatmaps: vec![diff],
+        ..sample_meta(7)
+    };
+    let browse = browse_with(vec![BrowseRow {
+        id: 7,
+        meta: Some(meta),
+    }]);
+    let buf = render_grid(&browse, None, 90, 30);
+    let area = *buf.area();
+    // Collect the first bar-cell column of every labeled detail row (ar/cs/od/
+    // hp/success). kv-only rows (bpm/length/…) and the objects row have no bar
+    // cells, so they contribute nothing; spread lines start with a caret.
+    let mut bar_cols: std::collections::HashSet<u16> = std::collections::HashSet::new();
+    for y in 0..area.height {
+        let labeled = buf[(PREVIEW_X, y)]
+            .symbol()
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase());
+        if !labeled {
+            continue;
+        }
+        for x in PREVIEW_X..area.width {
+            let s = buf[(x, y)].symbol();
+            if s == "█" || s == "░" {
+                bar_cols.insert(x);
+                break;
+            }
+        }
+    }
+    assert!(
+        bar_cols.len() == 1,
+        "AR/CS/OD/HP/success bar cells share one column: {bar_cols:?}"
+    );
+}
+
+#[test]
 fn record_details_keeps_hardest_diff_per_set() {
     let mut browse = browse_with(vec![BrowseRow { id: 42, meta: None }]);
     let mut first = sample_details(42);

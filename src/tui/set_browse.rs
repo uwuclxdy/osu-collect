@@ -479,10 +479,11 @@ fn ratio_bar_row(label: &'static str, numerator: u32, denominator: u32) -> ListI
 }
 
 /// A bar-meter row for one of AR/CS/OD/HP: label ([`KV_WIDTH`]-aligned,
-/// matching [`kv_row`]), then the numeric value, then a [`BAR_WIDTH`]-cell
-/// bar trailing as a visual supplement. Filled cells in `accent`, empty in
-/// `text_faint`. No brackets — numeric values stay column-aligned across all
-/// preview rows (kv and bar).
+/// matching [`kv_row`]), then the numeric value right-aligned in a 4-char
+/// field, then a [`BAR_WIDTH`]-cell bar. Right-aligning the value (so `9.0`
+/// and `10.0` occupy the same width) keeps the bar cells in one column across
+/// rows and lined up with [`ratio_bar_row`]'s matching 5-char value field.
+/// Filled cells in `accent`, empty in `text_faint`.
 fn bar_row(label: &'static str, value: f64) -> ListItem<'static> {
     let filled = (value / 10.0 * BAR_WIDTH as f64)
         .round()
@@ -491,7 +492,7 @@ fn bar_row(label: &'static str, value: f64) -> ListItem<'static> {
         format!("{label:<width$}  ", width = KV_WIDTH)
             .fg(text_dim())
             .bold(),
-        format!("{value:.1} ").fg(text()),
+        format!("{value:>4.1} ").fg(text()),
     ];
     if filled > 0 {
         spans.push("█".repeat(filled).fg(accent()));
