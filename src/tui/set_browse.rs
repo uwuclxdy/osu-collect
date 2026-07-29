@@ -233,7 +233,7 @@ fn meta_field_rows(
 /// Append the nzbasic-only SET-level extra columns to the preview:
 /// tags/source/genre/language (each skipped when the field is blank) then
 /// ranked/updated dates on their separate millis/seconds formatters. Per-diff
-/// figures live in [`diff_section_rows`], not here.
+/// figures live in [`diff_block_rows`], not here.
 fn append_set_extras(rows: &mut Vec<ListItem<'static>>, d: &BeatmapDetails) {
     for (key, value) in [
         ("tags", d.tags.trim()),
@@ -289,9 +289,16 @@ fn spread_rows(
     details: Option<&BeatmapDetails>,
 ) -> Vec<ListItem<'static>> {
     let focused = focused.min(beatmaps.len() - 1);
+    // Pad every diff name to the spread's widest so the star ratings and meters
+    // share a column across the list (display-width-aware for CJK names).
+    let name_w = beatmaps
+        .iter()
+        .map(|b| display_width(&b.version))
+        .max()
+        .unwrap_or(0);
     let mut rows: Vec<ListItem<'static>> = Vec::new();
     for (i, b) in beatmaps.iter().enumerate() {
-        rows.push(ListItem::new(spread_line(b, i == focused)));
+        rows.push(ListItem::new(spread_line(b, i == focused, name_w)));
     }
     rows.push(ListItem::new(Line::default()));
     rows.extend(beat_attr_rows(&beatmaps[focused]));
@@ -303,22 +310,12 @@ fn spread_rows(
     rows
 }
 
-/// The focused diff's attribute block (from a [`Beatmap`]): name + star meter
-/// header, the core attribute rows, the object-count breakdown, then the
-/// success-rate bar.
+/// The focused diff's attribute block (from a [`Beatmap`]): the core attribute
+/// rows, the object-count breakdown, then the success-rate bar. No header — the
+/// focused diff's `▸` spread line already names it and shows its star meter, so
+/// a repeated header would only misalign with the kv/bar rows below.
 fn beat_attr_rows(b: &Beatmap) -> Vec<ListItem<'static>> {
-    let mut header = vec![b.version.to_string().fg(text_dim()).bold()];
-    header.extend(star_meter_spans(b.difficulty_rating));
-    let mut rows = vec![ListItem::new(Line::from(header))];
-    rows.extend(core_attr_rows(
-        b.bpm,
-        b.ar,
-        b.cs,
-        b.od,
-        b.hp,
-        b.total_length,
-        b.hit_length,
-    ));
+    let mut rows = core_attr_rows(b.bpm, b.ar, b.cs, b.od, b.hp, b.total_length, b.hit_length);
     let objects = b.count_circles + b.count_sliders + b.count_spinners;
     if objects > 0 {
         rows.push(objects_row(
@@ -353,19 +350,34 @@ fn recorded_diff_rows(d: &BeatmapDetails) -> Vec<ListItem<'static>> {
 }
 
 /// One spread line: a `▸` caret on the focused diff (a blank on the others),
-/// the difficulty name, then the tier-coloured star rating and meter. The meter
-/// truncates at the pane edge in a narrow preview; the `★X.XX` rating always
-/// precedes it, so the essential figure stays visible.
-fn spread_line(diff: &Beatmap, focused: bool) -> Line<'static> {
+/// the difficulty name padded to `name_w`, then the tier-coloured star rating
+/// and meter. Padding the name puts every diff's star rating and meter in one
+/// column. The meter truncates at the pane edge in a narrow preview; the
+/// `★X.XX` rating always precedes it, so the essential figure stays visible.
+fn spread_line(diff: &Beatmap, focused: bool, name_w: usize) -> Line<'static> {
     let mut spans: Vec<Span<'static>> =
         vec![(if focused { "▸ " } else { "  " }).fg(if focused { accent() } else { text_faint() })];
-    spans.push(
-        diff.version
-            .to_string()
-            .fg(if focused { text() } else { text_dim() }),
-    );
+    spans.push(pad_right(&diff.version, name_w).fg(if focused { text() } else { text_dim() }));
     spans.extend(star_meter_spans(diff.difficulty_rating));
     Line::from(spans)
+}
+
+/// Display width of `s` in terminal columns (unicode-aware), via ratatui's own
+/// span measurement so wide (CJK) names pad by cells, not bytes.
+fn display_width(s: &str) -> usize {
+    Span::raw(s).width()
+}
+
+/// `s` right-padded with spaces to `width` display columns. Already-wide or
+/// over-width strings are returned unchanged (a name longer than the spread's
+/// max is not truncated — it just sets the column for the rest).
+fn pad_right(s: &str, width: usize) -> String {
+    let w = display_width(s);
+    if w >= width {
+        s.to_string()
+    } else {
+        format!("{s}{}", " ".repeat(width - w))
+    }
 }
 
 /// Append the nzbasic-only combo/hash extras for the recorded diff.

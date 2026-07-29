@@ -432,6 +432,40 @@ fn diff_cursor_cycles_the_focused_detail() {
 }
 
 #[test]
+fn spread_star_ratings_align_in_one_column() {
+    // Names of differing width ("A" vs "LongerName") must not ragged the star
+    // ratings: every diff's `★` lands in the same column once names are padded.
+    let make = |version: &str, stars: f64| Beatmap {
+        beatmapset_id: 7,
+        mode_int: 0,
+        version: version.to_string(),
+        difficulty_rating: stars,
+        ..Beatmap::default()
+    };
+    let meta = BeatmapSetMeta {
+        beatmaps: vec![make("A", 2.0), make("LongerName", 5.47)],
+        ..sample_meta(7)
+    };
+    let browse = browse_with(vec![BrowseRow {
+        id: 7,
+        meta: Some(meta),
+    }]);
+    let buf = render_grid(&browse, None, 90, 30);
+    let area = *buf.area();
+    let star_cols: std::collections::HashSet<u16> = (0..area.height)
+        .flat_map(|y| {
+            (PREVIEW_X..area.width)
+                .filter(|&x| buf[(x, y)].symbol() == "★")
+                .collect::<Vec<u16>>()
+        })
+        .collect();
+    assert!(
+        star_cols.len() == 1,
+        "all spread star ratings share one column: {star_cols:?}"
+    );
+}
+
+#[test]
 fn record_details_keeps_hardest_diff_per_set() {
     let mut browse = browse_with(vec![BrowseRow { id: 42, meta: None }]);
     let mut first = sample_details(42);
