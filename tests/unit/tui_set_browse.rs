@@ -1,9 +1,12 @@
-//! Set-browse render tests: the nzbasic-only detail columns folded into the
-//! preview, the epoch formatters (millis `approved_date` vs seconds
-//! `last_update`), and the first-diff-per-set fold.
+//! Set-browse render tests: the per-difficulty section (tier-colored star
+//! header + AR/CS/OD/HP bar meters) fed from either the osu route's nested
+//! `beatmaps[]` array or the nzbasic route's `BeatmapDetails`; the epoch
+//! formatters (millis `approved_date` vs seconds `last_update`); and the
+//! hardest-diff-per-set fold.
 
 use super::*;
 use crate::app::covers::Covers;
+use osu_downloader::search::Beatmap;
 use ratatui::style::Color;
 use ratatui::{Terminal, backend::TestBackend};
 use std::collections::HashMap;
@@ -19,6 +22,7 @@ fn sample_meta(id: u32) -> BeatmapSetMeta {
         play_count: 1_234_567,
         nsfw: false,
         video: false,
+        beatmaps: Vec::new(),
     }
 }
 
@@ -228,16 +232,21 @@ fn nzbasic_details_render_extra_columns_with_scale_correct_dates() {
         text.contains("2020-09-19"),
         "updated (seconds) date missing:\n{text}"
     );
-    // Per-diff figures behind the divider.
-    assert!(text.contains("(one diff)"), "diff divider missing");
+    // Per-difficulty section: header (version + tier-colored star), BPM kv
+    // row, AR/CS/OD/HP bar meters, and the nzbasic-only combo/pass/hash rows.
+    assert!(text.contains("Insane"), "difficulty name missing:\n{text}");
+    assert!(text.contains("★5.40"), "star rating missing:\n{text}");
+    assert!(text.contains("█"), "bar meter cells missing:\n{text}");
+    assert!(text.contains("180"), "bpm value missing:\n{text}");
     assert!(text.contains("1:58"), "drain time missing"); // 118s
     assert!(text.contains("abcdef0123…"), "short hash missing");
 }
 
 #[test]
 fn osu_route_preview_has_no_detail_columns() {
-    // A meta'd row with no recorded details (the osu route) shows only the
-    // osu-batch metadata — no divider, no genre.
+    // A meta'd row with no recorded details and no nested beatmaps (the osu
+    // route before the `beatmaps[]` array is captured) shows only the osu-batch
+    // metadata — no diff section, no star rating, no genre.
     let browse = browse_with(vec![BrowseRow {
         id: 7,
         meta: Some(sample_meta(7)),
@@ -247,22 +256,90 @@ fn osu_route_preview_has_no_detail_columns() {
         text.contains("Song Title"),
         "base metadata should still render"
     );
-    assert!(!text.contains("(one diff)"), "no divider without details");
+    assert!(!text.contains("★"), "no star rating without a diff section");
     assert!(!text.contains("genre"), "no genre row without details");
 }
 
 #[test]
-fn record_details_keeps_first_diff_per_set() {
+fn osu_route_beatmaps_render_diff_section() {
+    // An osu-route row whose `beatmaps[]` array carried two diffs: the harder
+    // one wins the representative slot, surfacing its version name, star rating
+    // (tier-coloured), BPM, bar meters, and a `+N more` suffix for the rest.
+    let beatmaps = vec![
+        Beatmap {
+            id: 1,
+            beatmapset_id: 7,
+            mode_int: 0,
+            version: "Easy".to_string(),
+            difficulty_rating: 2.0,
+            bpm: 180.0,
+            ar: 5.0,
+            cs: 3.0,
+            od: 4.0,
+            hp: 4.0,
+            total_length: 240,
+            hit_length: 200,
+        },
+        Beatmap {
+            id: 2,
+            beatmapset_id: 7,
+            mode_int: 0,
+            version: "Expert".to_string(),
+            difficulty_rating: 5.47,
+            bpm: 180.0,
+            ar: 9.0,
+            cs: 4.0,
+            od: 8.0,
+            hp: 6.0,
+            total_length: 240,
+            hit_length: 200,
+        },
+    ];
+    let meta = BeatmapSetMeta {
+        beatmaps,
+        ..sample_meta(7)
+    };
+    let browse = browse_with(vec![BrowseRow {
+        id: 7,
+        meta: Some(meta),
+    }]);
+    let text = render_browse(&browse);
+    assert!(
+        text.contains("Expert"),
+        "hardest diff name missing:\n{text}"
+    );
+    assert!(text.contains("★5.47"), "star rating missing:\n{text}");
+    assert!(text.contains("180"), "bpm value missing:\n{text}");
+    assert!(text.contains("█"), "bar meter cells missing:\n{text}");
+    assert!(
+        text.contains("+1 more"),
+        "extra-diff count missing:\n{text}"
+    );
+    assert!(
+        !text.contains("max combo"),
+        "combo is nzbasic-only and must not render on the osu route"
+    );
+}
+
+#[test]
+fn record_details_keeps_hardest_diff_per_set() {
     let mut browse = browse_with(vec![BrowseRow { id: 42, meta: None }]);
     let mut first = sample_details(42);
+    first.stars = 3.0;
     first.max_combo = 111;
     let mut second = sample_details(42);
+    second.stars = 5.4;
     second.max_combo = 999;
-    browse.record_details(vec![first, second]);
+    // A third diff tied with the second on stars: the first-seen at the top
+    // rating wins (strict `>`), so this one must NOT replace the second.
+    let mut third = sample_details(42);
+    third.stars = 5.4;
+    third.max_combo = 777;
+    browse.record_details(vec![first, second, third]);
     assert_eq!(
         browse.details_for(42).map(|d| d.max_combo),
-        Some(111),
-        "the first diff row for a set wins"
+        Some(999),
+        "the hardest diff (highest stars) for a set wins, first-seen on ties"
     );
     assert!(
         browse.details_for(99).is_none(),

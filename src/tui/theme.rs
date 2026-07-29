@@ -49,6 +49,37 @@ impl Theme {
     }
 }
 
+/// The osu! star-rating difficulty tier color for a given star value. Each band
+/// maps to a fixed RGB triple; the active theme's [`Tier`] decides whether it
+/// reaches the terminal as [`Color::Rgb`] (full truecolor) or
+/// [`Color::Indexed`] (nearest xterm-256, for compatible terminals).
+///
+/// The band edges mirror the in-game difficulty-tier colours so a familiar
+/// reader picks out the tier at a glance.
+pub fn stars_color(stars: f64) -> Color {
+    let (r, g, b) = if stars < 1.5 {
+        (99, 195, 255)
+    } else if stars < 2.0 {
+        (102, 204, 255)
+    } else if stars < 2.7 {
+        (135, 213, 126)
+    } else if stars < 4.0 {
+        (178, 217, 109)
+    } else if stars < 5.3 {
+        (250, 219, 142)
+    } else if stars < 6.5 {
+        (252, 165, 87)
+    } else if stars < 7.5 {
+        (243, 139, 168)
+    } else {
+        (201, 160, 255)
+    };
+    match theme().tier() {
+        Tier::Full => Color::Rgb(r, g, b),
+        Tier::Compatible => Color::Indexed(nearest_xterm256(r, g, b)),
+    }
+}
+
 /// Blend two colors at ratio `t` (0.0 = all `b`, 1.0 = all `a`).
 ///
 /// On the [`Tier::Full`] theme, channels are mixed in RGB and returned as

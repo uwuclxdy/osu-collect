@@ -1,7 +1,7 @@
 use super::{
-    BeatmapRow, BeatmapSetMeta, BeatmapsResponse, Error, MAX_BATCH_IDS, QueryRange, SearchClient,
-    SearchMode, SearchQuery, SearchResults, SearchStatus, SortField, SortOrder, build_query_params,
-    encode_query_string,
+    Beatmap, BeatmapRow, BeatmapSetMeta, BeatmapsResponse, Error, MAX_BATCH_IDS, QueryRange,
+    SearchClient, SearchMode, SearchQuery, SearchResults, SearchStatus, SortField, SortOrder,
+    build_query_params, encode_query_string,
 };
 
 /// The emitted `q` value for a query (always the first param).
@@ -365,6 +365,60 @@ fn deserializes_batch_beatmaps_envelope() {
     assert_eq!(second.beatmapset.id, 41823);
     assert_eq!(second.beatmapset.play_count, 0);
     assert!(!second.beatmapset.video);
+}
+
+#[test]
+fn deserializes_nested_beatmaps_and_renames_drain_accuracy() {
+    // The osu API v2 search response nests a `beatmaps[]` array under each
+    // `beatmapsets[]` element. HP drain arrives under the wire key `drain` and
+    // overall difficulty under `accuracy` — both renamed onto the `hp`/`od`
+    // fields — so this test fails if either rename is dropped or mistyped.
+    let json = r#"{
+        "id": 7,
+        "title": "Song",
+        "artist": "Artist",
+        "creator": "Mapper",
+        "status": "ranked",
+        "beatmaps": [
+            {
+                "id": 100,
+                "beatmapset_id": 7,
+                "mode_int": 0,
+                "version": "Expert",
+                "difficulty_rating": 5.47,
+                "bpm": 180.0,
+                "ar": 9.0,
+                "cs": 4.0,
+                "drain": 6.0,
+                "accuracy": 8.0,
+                "total_length": 240,
+                "hit_length": 200
+            }
+        ]
+    }"#;
+
+    let set: BeatmapSetMeta = serde_json::from_str(json).expect("parse set with beatmaps");
+    assert_eq!(set.beatmaps.len(), 1);
+    let diff: &Beatmap = &set.beatmaps[0];
+    assert_eq!(diff.id, 100);
+    assert_eq!(diff.version, "Expert");
+    assert_eq!(diff.difficulty_rating, 5.47);
+    assert_eq!(diff.bpm, 180.0);
+    assert_eq!(diff.ar, 9.0);
+    assert_eq!(diff.cs, 4.0);
+    assert_eq!(diff.hp, 6.0, "`drain` wire key must map onto `hp`");
+    assert_eq!(diff.od, 8.0, "`accuracy` wire key must map onto `od`");
+    assert_eq!(diff.total_length, 240);
+    assert_eq!(diff.hit_length, 200);
+}
+
+#[test]
+fn beatmaps_default_to_empty_when_absent() {
+    // A pre-`beatmaps[]` search response (the shape every existing fixture
+    // uses) parses with an empty vec rather than failing.
+    let json = r#"{ "id": 7, "title": "Song", "artist": "A", "creator": "M", "status": "ranked" }"#;
+    let set: BeatmapSetMeta = serde_json::from_str(json).expect("parse set without beatmaps");
+    assert!(set.beatmaps.is_empty());
 }
 
 // ── batch guards (return before any network I/O) ────────────────────────────

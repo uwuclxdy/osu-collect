@@ -18,6 +18,7 @@ fn meta(id: u32) -> BeatmapSetMeta {
         play_count: 0,
         nsfw: false,
         video: false,
+        beatmaps: Vec::new(),
     }
 }
 

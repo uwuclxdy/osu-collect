@@ -31,6 +31,7 @@ fn beatmap_row(id: u32, set_id: u32, title: &str, nsfw: bool, video: bool) -> Be
             play_count: 1000,
             nsfw,
             video,
+            beatmaps: Vec::new(),
         },
     }
 }

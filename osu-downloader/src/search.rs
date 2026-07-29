@@ -358,6 +358,56 @@ pub struct BeatmapSetMeta {
     /// Whether any difficulty carries a video.
     #[serde(default)]
     pub video: bool,
+    /// Per-difficulty beatmaps from the search response's nested `beatmaps[]`
+    /// array. Empty when the carrier response omits it.
+    #[serde(default)]
+    pub beatmaps: Vec<Beatmap>,
+}
+
+/// One difficulty (beatmap) nested under a search result's `beatmaps[]` array.
+/// The wire keys mirror the osu! API v2 `beatmaps` element shape; note in
+/// particular that HP drain is carried under `drain` and overall difficulty
+/// under `accuracy`. (The q-DSL *query* parameter for HP is the separate key
+/// `dr` — see [`build_q`]; these are two different names for the same
+/// attribute across the request/response split.)
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Beatmap {
+    /// Beatmap (difficulty) id.
+    #[serde(default)]
+    pub id: u32,
+    /// Parent beatmapset id.
+    #[serde(default)]
+    pub beatmapset_id: u32,
+    /// Game mode as an integer (`0` osu … `3` mania).
+    #[serde(default)]
+    pub mode_int: u32,
+    /// Difficulty name string (`"Expert"`, `"Insane"`, …).
+    #[serde(default)]
+    pub version: String,
+    /// Star rating.
+    #[serde(default)]
+    pub difficulty_rating: f64,
+    /// BPM.
+    #[serde(default)]
+    pub bpm: f64,
+    /// Approach rate.
+    #[serde(default)]
+    pub ar: f64,
+    /// Circle size.
+    #[serde(default)]
+    pub cs: f64,
+    /// HP drain — the osu API v2 wire key is `drain`.
+    #[serde(default, rename = "drain")]
+    pub hp: f64,
+    /// Overall difficulty — the osu API v2 wire key is `accuracy`.
+    #[serde(default, rename = "accuracy")]
+    pub od: f64,
+    /// Total length in seconds.
+    #[serde(default)]
+    pub total_length: u32,
+    /// Drain time in seconds.
+    #[serde(default)]
+    pub hit_length: u32,
 }
 
 /// A deserialized search response. `total` feeds the result count;

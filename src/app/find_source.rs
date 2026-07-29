@@ -227,12 +227,23 @@ impl SetBrowse {
         self.details.clear();
     }
 
-    /// Fold a landed nzbasic details page: the first diff row seen for a set wins
-    /// (set-level columns are identical across a set's diffs; the per-diff stats
-    /// then reflect that representative diff). A set already recorded is left as-is.
+    /// Fold a landed nzbasic details page: the HARDEST diff (highest `stars`)
+    /// seen for a set wins — set-level columns are identical across a set's
+    /// diffs, and the per-diff stats (AR/CS/OD/HP, combo, drain) are most
+    /// informative on the top difficulty. A recorded set is replaced only when
+    /// a strictly harder diff arrives: the first-seen diff at the top rating
+    /// wins ties (strict `>`). The preview's representative-diff picker
+    /// (`diff_section_rows`) matches this tie direction.
     pub(crate) fn record_details(&mut self, rows: Vec<BeatmapDetails>) {
         for row in rows {
-            self.details.entry(row.set_id).or_insert(row);
+            self.details
+                .entry(row.set_id)
+                .and_modify(|existing| {
+                    if row.stars > existing.stars {
+                        *existing = row.clone();
+                    }
+                })
+                .or_insert(row);
         }
     }
 
