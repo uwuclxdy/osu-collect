@@ -18,7 +18,7 @@ Press <kbd>?</kbd> anywhere in the app for this list as an overlay.
 | <kbd>q</kbd> | Back / quit (press twice to confirm; running downloads stop) |
 | <kbd>ctrl</kbd>+<kbd>c</kbd> | Quit immediately from anywhere |
 | <kbd>home</kbd> <kbd>end</kbd> | Jump to the first / last row of a list or form |
-| <kbd>pgup</kbd> <kbd>pgdn</kbd> | Page a list up / down |
+| <kbd>pgup</kbd> <kbd>pgdn</kbd> | Page a list up / down, or scroll a focused browse preview |
 
 ## Get maps tab
 
@@ -26,6 +26,7 @@ Press <kbd>?</kbd> anywhere in the app for this list as an overlay.
 |---|---|
 | <kbd>1</kbd>-<kbd>3</kbd> | Jump straight to a source (find / collection / update) |
 | <kbd>←</kbd> <kbd>→</kbd> | Focus the list / preview pane inside a browse |
+| <kbd>↑</kbd> <kbd>↓</kbd> | Step through the difficulty list in a focused preview |
 | <kbd>s</kbd> | Jump to the last enabled action button (find / scan / view maps / download); cycle the sort in the update browse |
 | <kbd>a</kbd> / <kbd>A</kbd> | Select all / none (update browse) |
 | <kbd>i</kbd> / <kbd>I</kbd> | Mark a set / whole collection as installed (update preview) |
