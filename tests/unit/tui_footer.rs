@@ -395,22 +395,37 @@ fn source_strip_hint_merges_when_focused_standalone_otherwise() {
     );
 }
 
-#[test]
-fn a_focused_set_browse_preview_names_the_difficulty_keys_not_a_scroll() {
+/// A descended find browse with its preview focused, over one row that either
+/// carries a difficulty spread or is still id-only.
+fn app_on_focused_preview(spread: bool) -> App {
     use crate::app::find_source::BrowseRow;
+    use osu_downloader::search::{Beatmap, BeatmapSetMeta};
     use std::collections::HashMap;
 
+    let meta = spread.then(|| BeatmapSetMeta {
+        id: 1,
+        beatmaps: vec![Beatmap {
+            version: "Insane".to_string(),
+            difficulty_rating: 5.4,
+            ..Beatmap::default()
+        }],
+        ..BeatmapSetMeta::default()
+    });
     let mut app = App::new(Config::default());
     app.active_tab = Tab::Home;
     app.home.source = crate::app::home::GetMapsSource::Find;
     app.home
         .find
         .browse
-        .set_rows(vec![BrowseRow { id: 1, meta: None }], &HashMap::new());
+        .set_rows(vec![BrowseRow { id: 1, meta }], &HashMap::new());
     app.home.find.browse.descend();
     app.home.find.browse.focus_preview();
+    app
+}
 
-    let hint = hint_for(&app);
+#[test]
+fn a_focused_set_browse_preview_names_the_difficulty_keys_not_a_scroll() {
+    let hint = hint_for(&app_on_focused_preview(true));
     // `↑↓` steps the highlighted difficulty in a focused preview; the pane's own
     // scroll is on the page keys. Calling it a scroll points at the wrong keys.
     assert!(
@@ -420,5 +435,20 @@ fn a_focused_set_browse_preview_names_the_difficulty_keys_not_a_scroll() {
     assert!(
         !hint.contains("↑↓ scroll"),
         "focused preview must not advertise ↑↓ as the scroll, got: {hint}"
+    );
+}
+
+#[test]
+fn a_preview_with_no_spread_advertises_neither_difficulty_key() {
+    // An id-only row (metadata still paging) has no spread, so `↑↓` and `s` both
+    // do nothing on it — naming them would be the same wrong-key defect.
+    let hint = hint_for(&app_on_focused_preview(false));
+    assert!(
+        !hint.contains("↑↓") && !hint.contains("s sort"),
+        "an id-only preview must advertise no spread keys, got: {hint}"
+    );
+    assert!(
+        hint.contains("← list"),
+        "the way back is still live, got: {hint}"
     );
 }

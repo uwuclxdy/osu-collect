@@ -268,6 +268,12 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
     // scroll target, not a selectable list, so it takes no `bg_hover` selection
     // band even while descended — only a preview that marks a row highlights it.
     let highlight = focused && view.preview_selected.is_some();
+    // A blurred preview is pinned to its top row: it is a read-only detail of
+    // whatever the list highlights, and that highlight moves out from under it.
+    if !focused {
+        view.preview_offset.set(0);
+    }
+    let scrolled = view.preview_offset.get() > 0;
 
     let block = widgets::panel_block(
         view.preview_title.clone(),
@@ -278,102 +284,91 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // The cover belongs to the preview's TOP. It is an overlay pinned to the
-    // pane's first rows and no image protocol clips, so a scrolled preview
-    // renders text-only at the full width instead of sliding rows under
-    // artwork. Every `PreviewWidths` figure is therefore taken at offset 0,
-    // where `seam`, `pushdown` and `below` describe what is on screen.
-    if view.preview_offset.get() > 0 {
-        let items = flat_items(view, inner);
-        if items.len() > inner.height as usize {
-            widgets::render_list(
-                frame,
-                inner,
-                items,
-                view.preview_selected,
-                highlight,
-                view.preview_offset,
-            );
-            return;
-        }
-        // Nothing left to scroll (a taller pane, a shorter row set): settle back
-        // to the top in THIS frame, or the cover waits for whatever redraw comes
-        // next — which on a key-driven loop can be never.
-        view.preview_offset.set(0);
-    }
-
     // A ready cover takes a column at the pane's right edge, the metadata text
     // keeping everything left of it. `cover_layout` prefers the wide variant, then
     // collapses to the smaller square (still shown) to spare the title before it
     // ever wraps — the title wraps to two lines only when even the collapsed
     // column's text can't hold it.
-    if let Some(cover) = view.preview_image
-        && let Some((text_area, cover_area, protocol)) =
-            cover_layout(inner, view.preview_lead.as_ref(), cover.square, cover.wide)
-    {
-        // The lead is built first because its line count is what maps a screen row
-        // to a builder row index (see `PreviewWidths::seam`).
-        let mut items = lead_items(view.preview_lead.as_ref(), text_area.width);
-        let widths = PreviewWidths {
-            beside: text_area.width,
-            full: inner.width,
-            seam: seam_row(cover_area.height, items.len()),
-            below: inner.height.saturating_sub(cover_area.height) as usize,
-        };
-        items.extend((view.preview_items)(widths));
-        // Rows run the pane's full width and the image's own rows are cleared
-        // back to the text column below, so everything under the image reflows
-        // into the space the image never occupied.
-        widgets::render_list(
-            frame,
-            inner,
-            items,
-            view.preview_selected,
-            highlight,
-            view.preview_offset,
-        );
-        // `Clear` alone resets the band to `Color::Reset`, which is the raw
-        // terminal background rather than the app's: `tui::draw` paints the theme
-        // bg over every frame, and the OSC-11 override that would otherwise cover
-        // for it is emitted only for an `Rgb` theme colour. Repainting the band
-        // keeps the gap columns (which the image itself never touches) and a
-        // failed encode from showing through.
-        let band = cover_band(inner, cover_area);
-        frame.render_widget(Clear, band);
-        frame.render_widget(Block::default().bg(super::bg()), band);
-        // `resize_encode_render` mutates the cached protocol, hence the `RefCell`
-        // borrow under this immutable-app draw path.
-        frame.render_stateful_widget(
-            StatefulImage::new(),
-            cover_area,
-            &mut *protocol.borrow_mut(),
-        );
-        return;
-    }
+    let cover = view.preview_image.and_then(|cover| {
+        cover_layout(inner, view.preview_lead.as_ref(), cover.square, cover.wide)
+    });
+    let cover_rows = cover.map_or(0, |(_, cover_area, _)| cover_area.height);
+    let text_width = cover.map_or(inner.width, |(text_area, ..)| text_area.width);
 
-    // Text-only (no cover, or the cover collapsed to spare the title): the title
-    // lead prepended at the full inner width — one line if it fits, two if not.
-    // Mirrors `render_scrollable_panel` (block + `render_list` + scrollbar) minus
-    // the text-cursor pass a read-only preview never needs.
+    let mut items = preview_rows(view, inner, cover_rows, text_width, scrolled);
+    // The row count is the same at every offset (see [`preview_rows`]), so the
+    // clamp is exact here rather than a frame behind — and resolving it BEFORE
+    // the cover decision is what brings the artwork back in the same frame a
+    // taller pane leaves nothing to scroll. A key-driven loop may draw no other.
+    let offset = view
+        .preview_offset
+        .get()
+        .min(items.len().saturating_sub(inner.height as usize));
+    view.preview_offset.set(offset);
+    if scrolled && offset == 0 {
+        // Clamped back to the top, so a cover is drawn after all and the rows it
+        // sits beside have to leave it its column. The only frame built twice.
+        items = preview_rows(view, inner, cover_rows, text_width, false);
+    }
+    let scrolled = offset > 0;
+    // Rows run the pane's full width and the image's own rows are cleared back to
+    // the text column below, so everything under the image reflows into the space
+    // the image never occupied.
     widgets::render_list(
         frame,
         inner,
-        flat_items(view, inner),
+        items,
         view.preview_selected,
         highlight,
         view.preview_offset,
     );
+
+    // The cover belongs to the preview's TOP. It is an overlay pinned to the
+    // pane's first rows and no image protocol clips, so a scrolled preview drops
+    // it rather than sliding rows under artwork.
+    let Some((_, cover_area, protocol)) = cover.filter(|_| !scrolled) else {
+        return;
+    };
+    // `Clear` alone resets the band to `Color::Reset`, which is the raw terminal
+    // background rather than the app's: `tui::draw` paints the theme bg over every
+    // frame, and the OSC-11 override that would otherwise cover for it is emitted
+    // only for an `Rgb` theme colour. Repainting the band keeps the gap columns
+    // (which the image itself never touches) and a failed encode from showing
+    // through.
+    let band = cover_band(inner, cover_area);
+    frame.render_widget(Clear, band);
+    frame.render_widget(Block::default().bg(super::bg()), band);
+    // `resize_encode_render` mutates the cached protocol, hence the `RefCell`
+    // borrow under this immutable-app draw path.
+    frame.render_stateful_widget(
+        StatefulImage::new(),
+        cover_area,
+        &mut *protocol.borrow_mut(),
+    );
 }
 
-/// The preview's rows with no cover column: both bands are the pane's full inner
-/// width and no row is beside an image, so nothing waits for a seam.
-fn flat_items(view: &MasterDetail<'_>, inner: Rect) -> Vec<ListItem<'static>> {
-    let mut items = lead_items(view.preview_lead.as_ref(), inner.width);
+/// The preview's rows for one frame. `scrolled` widens only the rows a cover
+/// would sit beside — the seam, the pushdown and therefore the ROW COUNT are the
+/// cover's geometry at every offset, so scrolling is a pure window move.
+///
+/// A count that shrank once scrolled would strand the rows a [`PreviewWidths::pushdown`]
+/// pad pushes past the bottom edge: the clamp would pull the offset back to
+/// exactly where the pad reappears, and no key could reach them. The lead is
+/// built at the beside-the-cover width for the same reason — a title that wraps
+/// at one width and not the other shifts every row index below it mid-scroll.
+fn preview_rows(
+    view: &MasterDetail<'_>,
+    inner: Rect,
+    cover_rows: u16,
+    text_width: u16,
+    scrolled: bool,
+) -> Vec<ListItem<'static>> {
+    let mut items = lead_items(view.preview_lead.as_ref(), text_width);
     items.extend((view.preview_items)(PreviewWidths {
-        beside: inner.width,
+        beside: if scrolled { inner.width } else { text_width },
         full: inner.width,
-        seam: 0,
-        below: inner.height as usize,
+        seam: seam_row(cover_rows, items.len()),
+        below: inner.height.saturating_sub(cover_rows) as usize,
     }));
     items
 }

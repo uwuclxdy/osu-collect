@@ -1544,11 +1544,12 @@ fn the_spread_keeps_one_rating_column_at_every_scroll_position() {
     // last one must not re-align the rest of the block behind it.
     let mut browse = tall_preview_browse();
     let covers = covers_square_only(7);
-    let mut frames_with_a_rating = 0;
+    let mut offsets_with_a_rating = std::collections::HashSet::new();
     for step in 0..5 {
         let cols = star_columns(&render_grid(&browse, Some(&covers), 90, 30));
         if !cols.is_empty() {
-            frames_with_a_rating += 1;
+            // Read AFTER the render, which is what resolves and writes the clamp.
+            offsets_with_a_rating.insert(browse.preview_offset.get());
             assert_eq!(
                 cols.len(),
                 1,
@@ -1557,9 +1558,12 @@ fn the_spread_keeps_one_rating_column_at_every_scroll_position() {
         }
         browse.page_down();
     }
+    // Counting FRAMES would count five identical unscrolled ones, so the control
+    // counts distinct offsets: the assertion has to have been made at more than
+    // one scroll position for the test to be about scrolling at all.
     assert!(
-        frames_with_a_rating >= 2,
-        "the scroll has to actually pass the spread — only {frames_with_a_rating} frames showed a rating"
+        offsets_with_a_rating.len() >= 2,
+        "the spread must be on screen at more than one offset: {offsets_with_a_rating:?}"
     );
 }
 
@@ -1623,5 +1627,75 @@ fn a_preview_that_fits_its_pane_returns_to_the_top() {
     assert!(
         cover_last_row(&tall).is_some(),
         "the cover returns in the frame the scroll resolves to the top"
+    );
+}
+
+#[test]
+fn the_last_row_is_reachable_at_every_pane_height() {
+    // A scroll is a window move over ONE layout: the cover's seam, and the wait
+    // it makes the spread take, are the same at every offset. Were the row count
+    // to shrink once scrolled, the heights where the wait's pad is what overruns
+    // the pane would strand the tail — the layout fits when scrolled, so the
+    // clamp pulls the offset straight back to 0 where the pad reappears, and no
+    // key reaches the rows it pushed off. That is one narrow band of heights per
+    // set, so the sweep is what finds it.
+    let covers = covers_square_only(7);
+    for height in 14..=44u16 {
+        let mut browse = tall_preview_browse();
+        // Further than any content: the clamp is what stops it on the last row.
+        for _ in 0..8 {
+            browse.page_down();
+        }
+        let buffer = render_grid(&browse, Some(&covers), 90, height);
+        assert!(
+            preview_row_of(&buffer, "updated").is_some(),
+            "at height {height} the preview's last row cannot be reached \
+             (offset settled at {})",
+            browse.preview_offset.get()
+        );
+    }
+}
+
+#[test]
+fn the_edge_keys_jump_a_focused_preview_end_to_end() {
+    let mut browse = tall_preview_browse();
+    let covers = covers_square_only(7);
+
+    browse.scroll_to_edge(false);
+    let bottom = render_grid(&browse, Some(&covers), 90, 30);
+    assert_eq!(
+        preview_row_of(&bottom, "updated"),
+        Some(LAST_PREVIEW_ROW),
+        "`G` lands on the last row rather than past it"
+    );
+
+    browse.scroll_to_edge(true);
+    let top = render_grid(&browse, Some(&covers), 90, 30);
+    assert_eq!(browse.preview_offset.get(), 0);
+    assert!(
+        cover_last_row(&top).is_some(),
+        "`gg` returns to the top, cover and all"
+    );
+}
+
+#[test]
+fn a_blurred_preview_renders_from_its_top_whatever_the_offset_says() {
+    // The offset outlives a focus change: scroll the preview, then leave it. A
+    // read-only detail of whatever the list highlights cannot stay parked
+    // mid-content while the highlight moves out from under it.
+    let mut browse = tall_preview_browse();
+    let covers = covers_square_only(7);
+    browse.page_down();
+    browse.focus_list();
+
+    let buffer = render_grid(&browse, Some(&covers), 90, 30);
+    assert_eq!(
+        browse.preview_offset.get(),
+        0,
+        "the render settles a blurred pane at its top"
+    );
+    assert!(
+        cover_last_row(&buffer).is_some(),
+        "which brings the cover back with it"
     );
 }

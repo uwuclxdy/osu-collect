@@ -424,8 +424,13 @@ fn set_browse_hints(
     // The browse ascends on esc rather than quitting; that back step is left
     // unadvertised (esc-to-go-back is universal), so no trailing key.
     if browse.preview_focused() {
-        // `↑↓` steps the difficulty here; the pane itself scrolls on the page
-        // keys, unadvertised like every other list's paging.
+        // `↑↓` steps the difficulty here and `s` sorts that spread; the pane
+        // itself scrolls on the page keys, unadvertised like every other list's
+        // paging. A row still waiting on its metadata has no spread, so both keys
+        // are dead there and only the way back is worth naming.
+        if browse.focused_diff_index().is_none() {
+            return (vec![HINT_FOCUS_LIST], None);
+        }
         return (vec![HINT_DIFFICULTY, HINT_SORT, HINT_FOCUS_LIST], None);
     }
     let mut segments = vec![

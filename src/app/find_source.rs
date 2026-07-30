@@ -435,11 +435,15 @@ impl SetBrowse {
         scroll_list_clamped(&mut self.list_cursor, self.rows.len(), LIST_PAGE);
     }
 
-    /// Jump the list cursor to the first (`top`) or last row (`gg` / `G`).
-    /// Preview-focused is a no-op: `gg`/`G` jump the list, not the diff cursor
-    /// (j/k or arrows move that). A list jump resets the diff cursor to hardest.
+    /// Jump to the first (`top`) or last row of the focused pane (`gg` / `G`):
+    /// the list cursor, or the preview's scroll. It is the pane that jumps, never
+    /// the difficulty cursor — `j`/`k` and the arrows move that. A list jump
+    /// resets the diff cursor to hardest.
     pub fn scroll_to_edge(&mut self, top: bool) {
         if self.preview_focused {
+            // The bottom is the render's to resolve (it owns the row count), so
+            // `G` asks past any content and keeps what the clamp writes back.
+            self.preview_offset.set(if top { 0 } else { usize::MAX });
             return;
         }
         self.reset_preview();
