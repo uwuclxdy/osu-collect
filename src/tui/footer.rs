@@ -448,6 +448,8 @@ fn set_browse_hints(
             }
             return (segments, None);
         }
+        // `m` is deliberately not repeated here: on an enriched row it pages the
+        // LIST the user just left, which is where it is advertised.
         return (vec![HINT_DIFFICULTY, HINT_SORT, HINT_FOCUS_LIST], None);
     }
     let mut segments = vec![

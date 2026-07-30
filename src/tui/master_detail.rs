@@ -318,7 +318,13 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
         // sits beside have to leave it its column. The only frame built twice.
         let narrow = preview_rows(view, inner, cover_rows, text_width, false);
         // Both builds exist only here, so this is the one place the count
-        // invariance `preview_rows` rests on can be checked at all.
+        // invariance `preview_rows` rests on can be checked directly. Dev-only:
+        // no `cfg(debug_assertions)` appears in this crate, so `cargo.sh`'s
+        // self-gated debug leg never runs and every other leg is `--release`,
+        // where this expands to nothing. What holds the invariant in the gate is
+        // the consequence, not the assert — `the_last_row_is_reachable_at_every_pane_height`
+        // sweeps the pane heights where a count that moved with the offset
+        // strands the tail.
         debug_assert_eq!(
             narrow.len(),
             items.len(),

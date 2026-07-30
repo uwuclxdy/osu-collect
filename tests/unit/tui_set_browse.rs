@@ -1747,6 +1747,19 @@ fn a_scroll_the_clamp_undoes_renders_like_one_that_never_happened() {
     // A taller pane holds every row, so the offset resolves back to 0.
     let clamped = render_grid(&scrolled, Some(&covers), 105, 40);
     let never = render_grid(&spread_only_browse(21), Some(&covers), 105, 40);
+    // The two builds only differ while the block stays in the narrow band, which
+    // holds by one row here (the spread is one taller than the room under the
+    // cover). A row added to the block anywhere flips it to waiting, both builds
+    // agree, and this test would pass with the rebuild deleted — so pin that the
+    // block is NOT waiting: with no pad the eyebrow sits one separator below the
+    // last core row.
+    let plays = preview_row_of(&never, "plays").expect("core rows render");
+    assert_eq!(
+        preview_row_of(&never, "DIFFICULTIES"),
+        Some(plays + 2),
+        "the spread must still decline to wait for the cover, or the two builds \
+         agree and nothing here can fail"
+    );
     assert_eq!(
         scrolled.preview_offset.get(),
         0,
