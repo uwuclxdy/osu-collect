@@ -1,7 +1,10 @@
 use super::messages::{AppMessage, clear_app_message};
 
-/// Cursor step for a list page-scroll (`Ctrl+d` / `Ctrl+u`).
-pub(crate) const LIST_PAGE: i64 = 10;
+/// Rows a page key moves (`Ctrl+d` / `Ctrl+u`, `PageDown` / `PageUp`): the step
+/// for a cursor list, and the same distance for a pane that scrolls by offset.
+pub(crate) const PAGE_ROWS: usize = 10;
+/// [`PAGE_ROWS`] as the signed step the cursor helpers take.
+pub(crate) const LIST_PAGE: i64 = PAGE_ROWS as i64;
 use super::find_source::{EnrichPager, EnrichSink, pruned_diff_ids};
 use crate::osu_db::{LocalBeatmapset, LocalCollection, Md5};
 use osu_downloader::search::BeatmapSetMeta;

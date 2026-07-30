@@ -1131,3 +1131,49 @@ fn releasing_a_settled_probe_never_reopens_it() {
     );
     assert_eq!(find.checked_known_bytes(), 4 * 1024 * 1024);
 }
+
+#[test]
+fn paging_a_focused_preview_scrolls_it_instead_of_the_list() {
+    let mut browse = SetBrowse::new();
+    browse.set_rows(rows(&[1, 2, 3]), &HashMap::new());
+    browse.descend();
+    browse.focus_preview();
+
+    browse.page_down();
+    assert_eq!(
+        browse.preview_offset.get(),
+        10,
+        "a focused preview pages by the same LIST_PAGE rows the list does"
+    );
+    assert_eq!(
+        browse.list_cursor(),
+        Some(0),
+        "the list never moves under a focused preview"
+    );
+
+    browse.page_up();
+    assert_eq!(browse.preview_offset.get(), 0);
+    browse.page_up();
+    assert_eq!(
+        browse.preview_offset.get(),
+        0,
+        "the top clamps here; only the render knows where the bottom is"
+    );
+}
+
+#[test]
+fn moving_the_list_cursor_returns_the_preview_to_the_top() {
+    let mut browse = SetBrowse::new();
+    browse.set_rows(rows(&[1, 2, 3]), &HashMap::new());
+    browse.descend();
+    browse.focus_preview();
+    browse.page_down();
+
+    browse.focus_list();
+    browse.scroll_down();
+    assert_eq!(
+        browse.preview_offset.get(),
+        0,
+        "another row is another preview, read from its top"
+    );
+}

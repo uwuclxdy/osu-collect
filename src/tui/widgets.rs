@@ -109,8 +109,9 @@ impl<T: Copy + PartialEq> FormItems<T> {
 /// row, then draws the overflow [`render_scrollbar`] in the panel's right
 /// padding column.
 ///
-/// `focused` is the row to scroll into view (`None` for panels with no cursor —
-/// e.g. the blurred collection list). The scroll target is decoupled from the
+/// `focused` is the row to scroll into view; `None` is a cursorless list (a
+/// read-only preview), which renders the seeded offset as given so a scroll
+/// nothing selects still holds. The scroll target is decoupled from the
 /// highlight: when `highlight` is `false` (the focused row styles itself — the
 /// CTA button, the auth chip) the row is still scrolled into view but the
 /// `bg_hover` bar is suppressed so the row's own styling shows through.
@@ -144,7 +145,11 @@ pub(crate) fn render_list(
     let max_offset = total.saturating_sub(inner.height as usize);
     let mut state = ListState::default().with_offset(offset.get().min(max_offset));
     // Always scroll the focused row into view; only the highlight bar is gated.
-    state.select(focused);
+    // `ListState::select(None)` zeroes the offset, so a cursorless list keeps its
+    // seed by leaving the (already `None`) selection alone.
+    if focused.is_some() {
+        state.select(focused);
+    }
     // A self-styling focused row (CTA / auth chip) keeps its own styling by
     // rendering a neutral highlight that leaves the row's spans untouched.
     let row_style = if highlight {
@@ -191,13 +196,7 @@ pub(crate) fn render_windowed_list(
     // ratatui pulls an out-of-range cursor back onto the last row rather than
     // dropping the highlight, so the window's own mapping has to do it too.
     let focused = focused.map(|row| row.min(total.saturating_sub(1)));
-    // `ListState::select(None)` zeroes the offset, and `render_list` selects
-    // after seeding, so a cursorless panel drops to the top there as well.
-    let seed = if focused.is_some() {
-        offset.get().min(max_offset)
-    } else {
-        0
-    };
+    let seed = offset.get().min(max_offset);
     let start = resolve_list_offset(total, visible, focused, seed);
     let end = (start + visible).min(total);
     // A window of at most `visible` one-line rows seeded at offset 0 leaves

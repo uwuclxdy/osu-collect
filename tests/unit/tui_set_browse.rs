@@ -1473,3 +1473,155 @@ fn a_title_too_long_for_even_the_collapsed_column_wraps_to_two_lines() {
         "an over-column title wraps to two lines, pushing artist down two rows"
     );
 }
+
+/// A preview whose rows outrun a 30-row pane: ten difficulties (a spread line
+/// each) over the focused diff's attribute block, tailed by the nzbasic
+/// METADATA section. Descended with the preview focused, the state the scroll
+/// keys act in.
+///
+/// The names deliberately vary in width: a spread of equal-width names pads to
+/// one column whether or not the block shares one, which would leave the
+/// alignment assertions unable to fail.
+fn tall_preview_browse() -> SetBrowse {
+    const NAMES: [&str; 10] = [
+        "E",
+        "Normal",
+        "Hard",
+        "Insane",
+        "Another",
+        "Extra",
+        "X",
+        "Black Another",
+        "Beginner",
+        "Ultimate",
+    ];
+    let meta = BeatmapSetMeta {
+        beatmaps: NAMES
+            .iter()
+            .enumerate()
+            .map(|(i, name)| spread_diff(name, 2.0 + i as f64 * 0.5))
+            .collect(),
+        ..sample_meta(7)
+    };
+    let mut browse = browse_with(vec![BrowseRow {
+        id: 7,
+        meta: Some(meta),
+    }]);
+    browse.record_details(vec![sample_details(7)]);
+    browse.descend();
+    browse.focus_preview();
+    browse
+}
+
+/// Last inner row of a 30-row render: one border row at each end.
+const LAST_PREVIEW_ROW: usize = 28;
+
+#[test]
+fn a_focused_preview_pages_down_to_its_last_row() {
+    let mut browse = tall_preview_browse();
+    let top = render_grid(&browse, None, 90, 30);
+    assert!(
+        preview_row_of(&top, "updated").is_none(),
+        "the tail row starts past the pane's bottom edge"
+    );
+
+    // Paging further than the content is what pins the clamp: the last row has
+    // to land ON the pane's last row, not scroll off it into blank space.
+    for _ in 0..4 {
+        browse.page_down();
+    }
+    let scrolled = render_grid(&browse, None, 90, 30);
+    assert_eq!(
+        preview_row_of(&scrolled, "updated"),
+        Some(LAST_PREVIEW_ROW),
+        "the last row is reachable and the scroll stops on it"
+    );
+}
+
+#[test]
+fn the_spread_keeps_one_rating_column_at_every_scroll_position() {
+    // The block sizes off its FIRST row's band, so a row crossing the cover's
+    // last one must not re-align the rest of the block behind it.
+    let mut browse = tall_preview_browse();
+    let covers = covers_square_only(7);
+    let mut frames_with_a_rating = 0;
+    for step in 0..5 {
+        let cols = star_columns(&render_grid(&browse, Some(&covers), 90, 30));
+        if !cols.is_empty() {
+            frames_with_a_rating += 1;
+            assert_eq!(
+                cols.len(),
+                1,
+                "step {step}: every visible rating shares one column: {cols:?}"
+            );
+        }
+        browse.page_down();
+    }
+    assert!(
+        frames_with_a_rating >= 2,
+        "the scroll has to actually pass the spread — only {frames_with_a_rating} frames showed a rating"
+    );
+}
+
+#[test]
+fn a_scrolled_preview_drops_the_cover() {
+    let mut browse = tall_preview_browse();
+    let covers = covers_square_only(7);
+    assert!(
+        cover_last_row(&render_grid(&browse, Some(&covers), 90, 30)).is_some(),
+        "the cover renders while the preview sits at its top"
+    );
+
+    browse.page_down();
+    assert!(
+        cover_last_row(&render_grid(&browse, Some(&covers), 90, 30)).is_none(),
+        "the artwork is pinned to the pane's top rows and cannot clip, so a \
+         scrolled preview is text-only at the full width"
+    );
+}
+
+#[test]
+fn a_blurred_preview_stays_pinned_at_the_top() {
+    let mut browse = tall_preview_browse();
+    browse.focus_list();
+    let covers = covers_square_only(7);
+
+    browse.page_down();
+    let buffer = render_grid(&browse, Some(&covers), 90, 30);
+    assert_eq!(
+        browse.preview_offset.get(),
+        0,
+        "the page keys drive the focused pane, and that is the list"
+    );
+    assert!(
+        cover_last_row(&buffer).is_some(),
+        "a blurred preview never left its top row"
+    );
+}
+
+#[test]
+fn a_preview_that_fits_its_pane_returns_to_the_top() {
+    // A scroll outlives the geometry that justified it: a taller terminal can
+    // leave nothing to scroll. The render settles that in the same frame, so the
+    // cover comes back with the top row rather than a keypress later.
+    let mut browse = tall_preview_browse();
+    let covers = covers_square_only(7);
+    for _ in 0..4 {
+        browse.page_down();
+    }
+    assert!(
+        cover_last_row(&render_grid(&browse, Some(&covers), 90, 30)).is_none(),
+        "the scrolled 30-row render is text-only"
+    );
+
+    let tall = render_grid(&browse, Some(&covers), 90, 60);
+    assert_eq!(
+        browse.preview_offset.get(),
+        0,
+        "a pane with room for every row has nothing to scroll"
+    );
+    assert!(
+        cover_last_row(&tall).is_some(),
+        "the cover returns in the frame the scroll resolves to the top"
+    );
+}

@@ -15,7 +15,7 @@
 //! [`SetBrowse`] carries.
 
 use super::home::{FindBackend, InputField};
-use super::update_source::{LIST_PAGE, scroll_list, scroll_list_clamped};
+use super::update_source::{LIST_PAGE, PAGE_ROWS, scroll_list, scroll_list_clamped};
 use osu_downloader::filter::{
     BeatmapDetails, FilterDirection, FilterMode, FilterQuery, FilterRange, FilterSort,
     FilterSpecial, FilterStatus,
@@ -210,6 +210,10 @@ pub struct SetBrowse {
     /// Cursor in the list (a row index into `rows`).
     list_cursor: Option<usize>,
     pub list_offset: Cell<usize>,
+    /// Top row of the preview pane. The page keys raise it while the preview
+    /// owns focus; the render clamps it against the row count and the pane's
+    /// height and writes the resolved value back, so the bottom is settled in
+    /// the one place that knows where it is.
     pub preview_offset: Cell<usize>,
     /// Sort order for the difficulty spread in the preview pane. Defaults to
     /// [`DiffSort::StarsAsc`] so easier diffs list first.
@@ -256,7 +260,7 @@ impl SetBrowse {
         self.selected.retain(|id| present.contains(id));
         self.rows = rows;
         self.list_cursor = Some(0);
-        self.diff_cursor = None;
+        self.reset_preview();
         self.enrich.clear();
         // New identity → any prior nzbasic details are stale; the details path
         // reseeds itself off the fresh enrichment pages under the new generation.
@@ -406,21 +410,28 @@ impl SetBrowse {
         self.scroll_by(1);
     }
 
-    /// Page the list up/down by [`LIST_PAGE`] rows, clamped at the ends (paging
-    /// never wraps — unlike a single [`scroll_up`](Self::scroll_up) step).
+    /// Page the focused pane by [`PAGE_ROWS`] rows: the list cursor, clamped at
+    /// the ends (paging never wraps — unlike a single
+    /// [`scroll_up`](Self::scroll_up) step), or the preview's scroll while it
+    /// holds focus. `↑`/`↓` keep cycling the highlighted difficulty there, so
+    /// the page keys are what reach a preview taller than its pane.
     pub fn page_up(&mut self) {
         if self.preview_focused {
+            self.preview_offset
+                .set(self.preview_offset.get().saturating_sub(PAGE_ROWS));
             return;
         }
-        self.diff_cursor = None;
+        self.reset_preview();
         scroll_list_clamped(&mut self.list_cursor, self.rows.len(), -LIST_PAGE);
     }
 
     pub fn page_down(&mut self) {
         if self.preview_focused {
+            self.preview_offset
+                .set(self.preview_offset.get().saturating_add(PAGE_ROWS));
             return;
         }
-        self.diff_cursor = None;
+        self.reset_preview();
         scroll_list_clamped(&mut self.list_cursor, self.rows.len(), LIST_PAGE);
     }
 
@@ -431,7 +442,7 @@ impl SetBrowse {
         if self.preview_focused {
             return;
         }
-        self.diff_cursor = None;
+        self.reset_preview();
         let len = self.rows.len();
         if len > 0 {
             self.list_cursor = Some(if top { 0 } else { len - 1 });
@@ -445,10 +456,16 @@ impl SetBrowse {
             self.move_diff_cursor(delta);
             return;
         }
-        // Moving the list changes the highlighted row, so the diff cursor
-        // (relative to one row's spread) resets to hardest.
-        self.diff_cursor = None;
+        self.reset_preview();
         scroll_list(&mut self.list_cursor, self.rows.len(), delta);
+    }
+
+    /// Drop what is read RELATIVE to the highlighted row: the difficulty cursor
+    /// (back to hardest) and the preview's scroll. Every list-cursor move lands
+    /// on another row, and another row is another preview, read from its top.
+    fn reset_preview(&mut self) {
+        self.diff_cursor = None;
+        self.preview_offset.set(0);
     }
 
     // ── difficulty cursor ─────────────────────────────────────────────────────

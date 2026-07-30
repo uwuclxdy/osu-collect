@@ -15,6 +15,10 @@
 //! spends the columns the image left behind instead of a budget it no longer
 //! pays for. A multi-row block that would straddle that index waits for it
 //! instead ([`PreviewWidths::pushdown`]).
+//!
+//! The cover is drawn only while the preview sits at its top row. No image
+//! protocol clips, so a scrolled pane cannot slide text under pinned artwork:
+//! it renders text-only at the full width until it is scrolled back up.
 
 use ratatui::{
     Frame,
@@ -107,10 +111,10 @@ impl PreviewWidths {
     /// waiting would win.
     ///
     /// The fit it checks is the BLOCK's. Rows the caller pushes after the block
-    /// move down by the return value too, and a preview already overrunning its
-    /// pane loses that many more off the bottom (it cannot scroll). Guarding the
-    /// whole tail instead would forfeit the width on exactly the previews that are
-    /// overrunning anyway, where the rows are lost with or without the wait.
+    /// move down by the return value too, so an already-overrunning preview puts
+    /// that many more rows past its bottom edge — a page key away, not lost.
+    /// Guarding the whole tail instead would forfeit the width on exactly the
+    /// previews that are overrunning anyway.
     pub fn pushdown(self, start: usize, rows: usize) -> usize {
         if start >= self.seam || rows > self.below {
             return 0;
@@ -264,7 +268,6 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
     // scroll target, not a selectable list, so it takes no `bg_hover` selection
     // band even while descended — only a preview that marks a row highlights it.
     let highlight = focused && view.preview_selected.is_some();
-    let selected = view.preview_selected.unwrap_or(0);
 
     let block = widgets::panel_block(
         view.preview_title.clone(),
@@ -273,6 +276,31 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
         false,
     );
     let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // The cover belongs to the preview's TOP. It is an overlay pinned to the
+    // pane's first rows and no image protocol clips, so a scrolled preview
+    // renders text-only at the full width instead of sliding rows under
+    // artwork. Every `PreviewWidths` figure is therefore taken at offset 0,
+    // where `seam`, `pushdown` and `below` describe what is on screen.
+    if view.preview_offset.get() > 0 {
+        let items = flat_items(view, inner);
+        if items.len() > inner.height as usize {
+            widgets::render_list(
+                frame,
+                inner,
+                items,
+                view.preview_selected,
+                highlight,
+                view.preview_offset,
+            );
+            return;
+        }
+        // Nothing left to scroll (a taller pane, a shorter row set): settle back
+        // to the top in THIS frame, or the cover waits for whatever redraw comes
+        // next — which on a key-driven loop can be never.
+        view.preview_offset.set(0);
+    }
 
     // A ready cover takes a column at the pane's right edge, the metadata text
     // keeping everything left of it. `cover_layout` prefers the wide variant, then
@@ -283,14 +311,13 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
         && let Some((text_area, cover_area, protocol)) =
             cover_layout(inner, view.preview_lead.as_ref(), cover.square, cover.wide)
     {
-        frame.render_widget(block, area);
         // The lead is built first because its line count is what maps a screen row
         // to a builder row index (see `PreviewWidths::seam`).
         let mut items = lead_items(view.preview_lead.as_ref(), text_area.width);
         let widths = PreviewWidths {
             beside: text_area.width,
             full: inner.width,
-            seam: seam_row(cover_area.height, view.preview_offset.get(), items.len()),
+            seam: seam_row(cover_area.height, items.len()),
             below: inner.height.saturating_sub(cover_area.height) as usize,
         };
         items.extend((view.preview_items)(widths));
@@ -301,7 +328,7 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
             frame,
             inner,
             items,
-            Some(selected),
+            view.preview_selected,
             highlight,
             view.preview_offset,
         );
@@ -324,11 +351,23 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
         return;
     }
 
-    // Text-only (no cover, or the cover collapsed to spare the title): same block,
-    // the title lead prepended at the full inner width — one line if it fits, two
-    // if not. Mirrors `render_scrollable_panel` (block + `render_list` + scrollbar)
-    // minus the text-cursor pass a read-only preview never needs.
-    frame.render_widget(block, area);
+    // Text-only (no cover, or the cover collapsed to spare the title): the title
+    // lead prepended at the full inner width — one line if it fits, two if not.
+    // Mirrors `render_scrollable_panel` (block + `render_list` + scrollbar) minus
+    // the text-cursor pass a read-only preview never needs.
+    widgets::render_list(
+        frame,
+        inner,
+        flat_items(view, inner),
+        view.preview_selected,
+        highlight,
+        view.preview_offset,
+    );
+}
+
+/// The preview's rows with no cover column: both bands are the pane's full inner
+/// width and no row is beside an image, so nothing waits for a seam.
+fn flat_items(view: &MasterDetail<'_>, inner: Rect) -> Vec<ListItem<'static>> {
     let mut items = lead_items(view.preview_lead.as_ref(), inner.width);
     items.extend((view.preview_items)(PreviewWidths {
         beside: inner.width,
@@ -336,14 +375,7 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
         seam: 0,
         below: inner.height as usize,
     }));
-    widgets::render_list(
-        frame,
-        inner,
-        items,
-        Some(selected),
-        highlight,
-        view.preview_offset,
-    );
+    items
 }
 
 /// The columns the cover owns for the rows it spans: the gap plus the image
@@ -369,17 +401,15 @@ fn title_fits_one_line(lead: Option<&PreviewLead>, width: u16) -> bool {
 }
 
 /// The builder-row index where the cover's band ends: the image spans
-/// `cover_rows` screen rows down from the pane's top, `offset` rows have scrolled
-/// off above it, and `lead_rows` of what's left belong to the title rather than
-/// to the builder. Saturating, so a cover shorter than the lead leaves the
-/// builder no beside-the-cover rows at all.
+/// `cover_rows` screen rows down from the pane's top, and `lead_rows` of them
+/// belong to the title rather than to the builder. Saturating, so a cover
+/// shorter than the lead leaves the builder no beside-the-cover rows at all.
 ///
-/// `offset` is the one render_list seeds itself with. A preview holding a cover
-/// selects item 0 (see the `preview_selected` contract), so ratatui pins it at 0
-/// and the seam is exact; were one ever scrolled, this trails by a frame rather
-/// than going wrong.
-fn seam_row(cover_rows: u16, offset: usize, lead_rows: usize) -> usize {
-    (cover_rows as usize + offset).saturating_sub(lead_rows)
+/// There is no scroll term: a cover is drawn only while the pane sits at offset
+/// 0 (see [`render_preview_pane`]), so a screen row and a builder row differ by
+/// the lead alone.
+fn seam_row(cover_rows: u16, lead_rows: usize) -> usize {
+    (cover_rows as usize).saturating_sub(lead_rows)
 }
 
 /// The title lead's rows, wrapped to at most [`MAX_TITLE_LINES`] lines at

@@ -101,18 +101,13 @@ fn the_preview_row_builder_is_called_with_the_pane_text_width() {
 }
 
 #[test]
-fn the_seam_discounts_the_scroll_offset_and_the_title_lead() {
+fn the_seam_discounts_the_title_lead() {
     // The image spans 5 screen rows from the pane's top; the lead owns the first,
     // so the builder's rows 0..4 are the ones beside it.
-    assert_eq!(seam_row(5, 0, 1), 4, "one lead line shifts the seam up one");
-    assert_eq!(seam_row(5, 0, 2), 3, "a wrapped lead shifts it up two");
+    assert_eq!(seam_row(5, 1), 4, "one lead line shifts the seam up one");
+    assert_eq!(seam_row(5, 2), 3, "a wrapped lead shifts it up two");
     assert_eq!(
-        seam_row(5, 3, 1),
-        7,
-        "rows scrolled off above the pane push the seam down"
-    );
-    assert_eq!(
-        seam_row(1, 0, 2),
+        seam_row(1, 2),
         0,
         "a cover shorter than the lead leaves no beside-the-cover rows"
     );
