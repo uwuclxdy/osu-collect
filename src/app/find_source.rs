@@ -172,6 +172,32 @@ pub struct BrowseRow {
 /// Shared by the find-results browse ([`FindSource::browse`]) and the collection
 /// browse&pick surface (`HomeTab::collection_browse`); each consumer owns its own
 /// instance so keep-both persistence holds across source switches.
+/// Sort order for the difficulty spread in the preview pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DiffSort {
+    /// Stars ascending — easiest difficulties first (default).
+    #[default]
+    StarsAsc,
+    /// Stars descending — hardest first.
+    StarsDesc,
+}
+
+impl DiffSort {
+    const ALL: &[Self] = &[Self::StarsAsc, Self::StarsDesc];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::StarsAsc => "stars ↑",
+            Self::StarsDesc => "stars ↓",
+        }
+    }
+
+    fn cycle(&mut self) {
+        let idx = Self::ALL.iter().position(|s| s == self).unwrap_or(0);
+        *self = Self::ALL[(idx + 1) % Self::ALL.len()];
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SetBrowse {
     pub rows: Vec<BrowseRow>,
@@ -185,6 +211,9 @@ pub struct SetBrowse {
     list_cursor: Option<usize>,
     pub list_offset: Cell<usize>,
     pub preview_offset: Cell<usize>,
+    /// Sort order for the difficulty spread in the preview pane. Defaults to
+    /// [`DiffSort::StarsAsc`] so easier diffs list first.
+    pub diff_sort: DiffSort,
     /// Cursor into the highlighted row's `beatmaps[]`: which difficulty the
     /// preview's detail block renders. `None` resolves to the hardest diff
     /// (first-seen on ties, matching [`Self::record_details`]'s strict-`>` fold).
@@ -275,6 +304,13 @@ impl SetBrowse {
         } else {
             self.selected.clear();
         }
+    }
+
+    /// Cycle the difficulty spread sort order (`s` in the preview). Resets the
+    /// diff cursor so the detail block follows the hardest diff to its new position.
+    pub fn cycle_diff_sort(&mut self) {
+        self.diff_sort.cycle();
+        self.diff_cursor = None;
     }
 
     // ── descend / ascend / focus ──────────────────────────────────────────────

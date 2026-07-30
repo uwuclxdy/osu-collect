@@ -421,7 +421,7 @@ fn set_browse_hints(
     // The browse ascends on esc rather than quitting; that back step is left
     // unadvertised (esc-to-go-back is universal), so no trailing key.
     if browse.preview_focused() {
-        return (vec![HINT_SCROLL, HINT_FOCUS_LIST], None);
+        return (vec![HINT_SCROLL, HINT_SORT, HINT_FOCUS_LIST], None);
     }
     let mut segments = vec![
         HINT_SCROLL,

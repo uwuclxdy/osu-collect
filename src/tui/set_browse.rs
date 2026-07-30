@@ -9,7 +9,7 @@
 
 use crate::app::EnrichSink;
 use crate::app::covers::Covers;
-use crate::app::find_source::{BrowseRow, SetBrowse, hardest_beatmap_index};
+use crate::app::find_source::{BrowseRow, DiffSort, SetBrowse};
 use osu_downloader::filter::BeatmapDetails;
 use osu_downloader::search::{Beatmap, BeatmapSetMeta};
 use ratatui::{
@@ -98,6 +98,7 @@ pub fn render(
             row,
             browse.details_for(row.id),
             browse.focused_diff_index(),
+            browse.diff_sort,
             enriching,
             tick,
         ),
@@ -174,6 +175,7 @@ fn preview_lead_and_items(
     row: &BrowseRow,
     details: Option<&BeatmapDetails>,
     focused_idx: Option<usize>,
+    diff_sort: DiffSort,
     enriching: bool,
     tick: u64,
 ) -> (Option<PreviewLead>, Vec<ListItem<'static>>) {
@@ -183,7 +185,7 @@ fn preview_lead_and_items(
                 text: meta.title.clone(),
                 style: Style::new().fg(accent()).bold(),
             }),
-            meta_field_rows(meta, details, focused_idx),
+            meta_field_rows(meta, details, focused_idx, diff_sort),
         ),
         None => {
             let id_line = ListItem::new(Line::from(format!("#{}", row.id).fg(text())));
@@ -208,6 +210,7 @@ fn meta_field_rows(
     meta: &BeatmapSetMeta,
     details: Option<&BeatmapDetails>,
     focused_idx: Option<usize>,
+    diff_sort: DiffSort,
 ) -> Vec<ListItem<'static>> {
     let mut rows = Vec::new();
     // Unicode (original-script) title under the romanised lead, when it differs
@@ -250,7 +253,7 @@ fn meta_field_rows(
     // The difficulty spread is the most scannable beatmap data, so it sits right
     // after the core metadata behind a separator. Secondary set-level extras
     // (tags/genre/dates, nzbasic only) follow below.
-    let diff = diff_block_rows(meta, details, focused_idx);
+    let diff = diff_block_rows(meta, details, focused_idx, diff_sort);
     if !diff.is_empty() {
         rows.push(ListItem::new(Line::default()));
         rows.push(eyebrow_row("DIFFICULTIES"));
@@ -294,18 +297,20 @@ fn append_set_extras(rows: &mut Vec<ListItem<'static>>, d: &BeatmapDetails) {
 
 /// Build the difficulty section. When the row carries a `beatmaps[]` spread
 /// (every route once enriched), render a one-line-per-diff list with per-diff
-/// star meters above the focused diff's full attribute block. Otherwise fall
-/// back to the single recorded diff ([`BeatmapDetails`], the nzbasic path while
-/// a set's spread has not populated). Empty when neither source has data.
+/// star meters above the focused diff's full attribute block, sorted by
+/// `diff_sort`. Otherwise fall back to the single recorded diff
+/// ([`BeatmapDetails`], the nzbasic path while a set's spread has not
+/// populated). Empty when neither source has data.
 fn diff_block_rows(
     meta: &BeatmapSetMeta,
     details: Option<&BeatmapDetails>,
     focused_idx: Option<usize>,
+    diff_sort: DiffSort,
 ) -> Vec<ListItem<'static>> {
     if let Some(focused) = focused_idx
         && !meta.beatmaps.is_empty()
     {
-        spread_rows(&meta.beatmaps, focused, details)
+        spread_rows(&meta.beatmaps, focused, details, diff_sort)
     } else if let Some(d) = details {
         recorded_diff_rows(d)
     } else {
@@ -315,32 +320,63 @@ fn diff_block_rows(
 
 /// The full difficulty spread: one line per diff (name + tier-coloured star
 /// meter, the focused diff marked `▸`), a separator, then the focused diff's
-/// attribute block. The nzbasic-only combo/hash extras append only when the
-/// focused diff is the recorded representative (the hardest) — they are
-/// recorded for that diff alone, so rendering them under a different diff would
-/// mislabel.
+/// attribute block. Diffs are sorted by `sort` so the easier end lists first by
+/// default. The nzbasic-only combo/hash extras append only when the focused
+/// diff is the recorded representative (the hardest) — they are recorded for
+/// that diff alone, so rendering them under a different diff would mislabel.
 fn spread_rows(
     beatmaps: &[Beatmap],
     focused: usize,
     details: Option<&BeatmapDetails>,
+    sort: DiffSort,
 ) -> Vec<ListItem<'static>> {
-    let focused = focused.min(beatmaps.len() - 1);
+    let focused = focused.min(beatmaps.len().saturating_sub(1));
+    // Build sorted indices from the original array — tracking by original index
+    // is id-independent, so tests with defaulted ids don't collapse.
+    let mut indices: Vec<usize> = (0..beatmaps.len()).collect();
+    match sort {
+        DiffSort::StarsAsc => indices.sort_by(|&a, &b| {
+            beatmaps[a]
+                .difficulty_rating
+                .partial_cmp(&beatmaps[b].difficulty_rating)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+        DiffSort::StarsDesc => indices.sort_by(|&a, &b| {
+            beatmaps[b]
+                .difficulty_rating
+                .partial_cmp(&beatmaps[a].difficulty_rating)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+    }
+    let focused = indices
+        .iter()
+        .position(|&i| i == focused)
+        .unwrap_or(focused);
     // Pad every diff name to the spread's widest so the star ratings and meters
     // share a column across the list (display-width-aware for CJK names).
-    let name_w = beatmaps
+    let name_w = indices
         .iter()
-        .map(|b| display_width(&b.version))
+        .map(|&i| display_width(&beatmaps[i].version))
         .max()
         .unwrap_or(0);
     let mut rows: Vec<ListItem<'static>> = Vec::new();
-    for (i, b) in beatmaps.iter().enumerate() {
-        rows.push(ListItem::new(spread_line(b, i == focused, name_w)));
+    for (pos, &i) in indices.iter().enumerate() {
+        rows.push(ListItem::new(spread_line(
+            &beatmaps[i],
+            pos == focused,
+            name_w,
+        )));
     }
+    let focused_diff = &beatmaps[indices[focused]];
     rows.push(ListItem::new(Line::default()));
-    rows.extend(beat_attr_rows(&beatmaps[focused]));
-    if focused == hardest_beatmap_index(beatmaps)
-        && let Some(d) = details
-    {
+    rows.extend(beat_attr_rows(focused_diff));
+    // The hardest diff is the one with no strictly harder peer (used for the
+    // nzbasic-only combo/hash extras below). Scan the original array — every
+    // diff is present regardless of sort.
+    let is_hardest = !beatmaps
+        .iter()
+        .any(|b| b.difficulty_rating > focused_diff.difficulty_rating);
+    if is_hardest && let Some(d) = details {
         append_recorded_per_diff(&mut rows, d);
     }
     rows

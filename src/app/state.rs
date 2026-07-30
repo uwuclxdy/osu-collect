@@ -1458,6 +1458,14 @@ impl App {
                     return self.find_size_probe_cmd();
                 }
             }
+            // `s` cycles the preview pane's difficulty sort (stars ↑ / ↓).
+            's' => {
+                if let Some(browse) = self.active_set_browse_mut()
+                    && browse.preview_focused()
+                {
+                    browse.cycle_diff_sort();
+                }
+            }
             // Route `m` by the backend that produced the loaded results, not the
             // form chip (a cross-routed run can differ): osu pages the next
             // results page…
