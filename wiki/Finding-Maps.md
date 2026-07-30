@@ -59,7 +59,7 @@ Results open in a two-pane browse: checkbox list left, preview right. Rows that 
 
 The preview shows the highlighted set's title, artist, mapper, status, favourites, and plays. nzbasic-routed results add the tags, source, genre, language, and ranked / updated dates, plus one difficulty's max combo, drain time, pass count, and hash.
 
-On a terminal with graphics support (sixel, kitty, or iterm2, konsole included) the highlighted set's cover art renders against the preview's right edge, the metadata to its left. A roomy pane and a short title get a wide crop; a longer title shrinks the cover to a smaller square so the title still fits on one line, and only a title too long for even that wraps to two lines. Elsewhere it falls back to unicode half-blocks, and a cramped preview drops the image and keeps the text. Covers load in the background a moment after a row settles under the cursor.
+On a terminal with graphics support (sixel, kitty, or iterm2, konsole included) the highlighted set's cover art renders against the preview's right edge, the metadata to its left and across the full pane width once past the bottom of the image. A roomy pane and a short title get a wide crop; a longer title shrinks the cover to a smaller square so the title still fits on one line, and only a title too long for even that wraps to two lines. Elsewhere it falls back to unicode half-blocks, and a cramped preview drops the image and keeps the text. Covers load in the background a moment after a row settles under the cursor.
 
 Checked results show an approximate total size on the download button as sizes load: exact sizes come free with nzbasic responses, the osu! route probes them via Nekoha in the background.
 
