@@ -451,17 +451,99 @@ fn spread_star_ratings_align_in_one_column() {
         meta: Some(meta),
     }]);
     let buf = render_grid(&browse, None, 90, 30);
-    let area = *buf.area();
-    let star_cols: std::collections::HashSet<u16> = (0..area.height)
-        .flat_map(|y| {
-            (PREVIEW_X..area.width)
-                .filter(|&x| buf[(x, y)].symbol() == "★")
-                .collect::<Vec<u16>>()
-        })
-        .collect();
+    let star_cols = star_columns(&buf);
     assert!(
         star_cols.len() == 1,
         "all spread star ratings share one column: {star_cols:?}"
+    );
+}
+
+/// A minimal spread entry: only the fields the spread line reads.
+fn spread_diff(version: &str, stars: f64) -> Beatmap {
+    Beatmap {
+        beatmapset_id: 7,
+        mode_int: 0,
+        version: version.to_string(),
+        difficulty_rating: stars,
+        ..Beatmap::default()
+    }
+}
+
+/// The `★` columns used by every spread row in the preview pane.
+fn star_columns(buffer: &ratatui::buffer::Buffer) -> std::collections::HashSet<u16> {
+    let area = *buffer.area();
+    (0..area.height)
+        .flat_map(|y| {
+            (PREVIEW_X..area.width)
+                .filter(|&x| buffer[(x, y)].symbol() == "★")
+                .collect::<Vec<u16>>()
+        })
+        .collect()
+}
+
+#[test]
+fn spread_meters_spend_one_cell_per_star() {
+    // The meter's length is the rating: 3.0 stars fill 3 of 10 cells, 7.0 fill 7.
+    // A halved scale (or a 5-cell bar) puts both on different counts.
+    let meta = BeatmapSetMeta {
+        beatmaps: vec![spread_diff("Hard", 3.0), spread_diff("Extra", 7.0)],
+        ..sample_meta(7)
+    };
+    let browse = browse_with(vec![BrowseRow {
+        id: 7,
+        meta: Some(meta),
+    }]);
+    let buf = render_grid(&browse, None, 90, 30);
+    let width = buf.area().width;
+    for (rating, filled) in [("★3.00", 3usize), ("★7.00", 7usize)] {
+        let y = preview_row_of(&buf, rating).expect("spread row renders") as u16;
+        let row = preview_text_before(&buf, y, width);
+        assert_eq!(
+            row.matches('█').count(),
+            filled,
+            "{rating} fills one cell per star:\n{row}"
+        );
+        assert_eq!(
+            row.matches('░').count(),
+            10 - filled,
+            "{rating} leaves the rest of a 10-cell meter empty:\n{row}"
+        );
+    }
+}
+
+#[test]
+fn a_sentence_length_diff_name_keeps_its_rating_and_meter_on_screen() {
+    // The real case: one diff name long enough to run past the preview's text
+    // column. Padding every name to the widest used to push the whole `★` block
+    // off the pane, taking every OTHER diff's rating with it.
+    const LONG: &str = "If my voice has a place where it can belong, I wish for it to reach you";
+    let meta = BeatmapSetMeta {
+        beatmaps: vec![spread_diff("Easy", 2.0), spread_diff(LONG, 5.47)],
+        ..sample_meta(7)
+    };
+    let browse = browse_with(vec![BrowseRow {
+        id: 7,
+        meta: Some(meta),
+    }]);
+    let buf = render_grid(&browse, None, 90, 30);
+    let width = buf.area().width;
+
+    let y = preview_row_of(&buf, "★5.47").expect("the long diff keeps its rating") as u16;
+    let row = preview_text_before(&buf, y, width);
+    assert_eq!(
+        row.matches('█').count() + row.matches('░').count(),
+        10,
+        "the whole meter stays on screen beside the long name:\n{row}"
+    );
+    assert!(
+        row.contains('…'),
+        "the name gives way to the rating, not the other way round:\n{row}"
+    );
+
+    let star_cols = star_columns(&buf);
+    assert!(
+        star_cols.len() == 1,
+        "both spread rows anchor their rating to one column: {star_cols:?}"
     );
 }
 
@@ -622,6 +704,90 @@ fn ready_cover_paints_a_right_column_beside_the_text() {
         preview_text_before(&with_cover, title_with as u16, COVER_X).contains("Song Title"),
         "the title must render entirely left of the cover column"
     );
+}
+
+#[test]
+fn a_cramped_spread_drops_the_meter_and_keeps_the_name_readable() {
+    // A cover at 90 cols leaves the preview 22 text columns. Spending 10 of them
+    // on a meter left `Se\u{2026}` where the name should be; the `\u{2605}X.XX` rating carries
+    // the figure the meter only illustrates, so the meter is what gives way.
+    let meta = BeatmapSetMeta {
+        beatmaps: vec![spread_diff("Setu's Insane", 5.12)],
+        ..sample_meta(42)
+    };
+    let browse = browse_with(vec![BrowseRow {
+        id: 42,
+        meta: Some(meta),
+    }]);
+
+    let cramped = render_grid(&browse, Some(&covers_both_variants(42)), 90, 30);
+    let width = cramped.area().width;
+    let y = preview_row_of(&cramped, "\u{2605}5.12").expect("the rating survives a cramped pane")
+        as u16;
+    let row = preview_text_before(&cramped, y, width);
+    assert_eq!(
+        row.matches('\u{2588}').count() + row.matches('\u{2591}').count(),
+        0,
+        "a cramped spread drops the meter:\n{row}"
+    );
+    assert!(
+        row.contains("Setu's Insane"),
+        "the columns it frees leave the name readable in full:\n{row}"
+    );
+
+    // Positive control varying the one dimension the subject turns on — the text
+    // width the spread gets — at an identical pane geometry, so `PREVIEW_X` still
+    // scopes the read to the preview.
+    let roomy = render_grid(&browse, None, 90, 30);
+    let width = roomy.area().width;
+    let y = preview_row_of(&roomy, "\u{2605}5.12").expect("spread row renders") as u16;
+    let row = preview_text_before(&roomy, y, width);
+    assert_eq!(
+        row.matches('\u{2588}').count() + row.matches('\u{2591}').count(),
+        10,
+        "a pane with room keeps the whole meter:\n{row}"
+    );
+}
+
+#[test]
+fn rows_below_the_cover_reflow_to_the_full_pane_width() {
+    // The cover reserves its narrow text column for its OWN rows only. An artist
+    // beside the image still stops at that column; the object-count row, further
+    // down than the image reaches, spends the width the image left behind.
+    const ARTIST: &str = "A Very Long Artist Name That Overruns The Column";
+    let diff = Beatmap {
+        count_circles: 410,
+        count_sliders: 288,
+        count_spinners: 14,
+        ..spread_diff("Expert", 5.47)
+    };
+    let meta = BeatmapSetMeta {
+        artist: ARTIST.to_string(),
+        beatmaps: vec![diff],
+        ..sample_meta(42)
+    };
+    let browse = browse_with(vec![BrowseRow {
+        id: 42,
+        meta: Some(meta),
+    }]);
+
+    let buf = render_grid(&browse, Some(&covers_both_variants(42)), 90, 30);
+
+    assert!(
+        preview_row_of(&buf, "sliders 288").is_some(),
+        "the object-count row runs past the cover's text column:\n{}",
+        buffer_text(&buf)
+    );
+
+    let artist_y = preview_row_of(&buf, "A Very Long Artist").expect("artist renders") as u16;
+    let cover_x = cover_start_x(&buf, artist_y).expect("the artist row sits beside the cover");
+    for x in [cover_x - 2, cover_x - 1] {
+        assert_eq!(
+            buf[(x, artist_y)].symbol(),
+            " ",
+            "the gap before the cover stays clear of text at column {x}"
+        );
+    }
 }
 
 #[test]

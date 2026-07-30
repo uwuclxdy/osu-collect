@@ -6,13 +6,20 @@
 //! Pure view: the caller builds every row and owns all state (selection,
 //! scroll offsets, focus); this module only lays out and draws. Narrow
 //! terminals collapse to whichever pane currently holds focus.
+//!
+//! A cover takes a right-hand column for its own rows only: the preview text
+//! stops at that column while the image runs beside it and spans the pane's
+//! full width from the image's last row down. Preview rows are therefore built
+//! by a closure the render calls with the narrower beside-the-cover width, so a
+//! row that anchors a figure to its right edge lands in one stable column
+//! whichever band it falls in.
 
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect, Size},
     style::Style,
     text::{Line, Span},
-    widgets::{ListItem, Paragraph},
+    widgets::{Clear, ListItem, Paragraph},
 };
 use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};
@@ -48,6 +55,12 @@ pub struct PreviewLead {
     pub text: String,
     pub style: Style,
 }
+
+/// Builds the preview's field rows at the pane's text width: the column beside
+/// the cover, or the full inner width when there is none. Deferred rather than
+/// prebuilt because that width is only known once [`cover_layout`] has run,
+/// which needs the geometry the render resolves.
+pub type PreviewItems<'a> = Box<dyn Fn(u16) -> Vec<ListItem<'static>> + 'a>;
 
 /// Below this width a side-by-side split would crush the list column, so the
 /// view falls back to single-pane (mirrors `login_split`'s threshold).
@@ -85,8 +98,9 @@ const MAX_TITLE_LINES: usize = 2;
 /// Titles are `Cow<'static, str>` — a `&'static str` panel constant for a fixed
 /// section title, or an owned `String` for a proper-noun title (the preview
 /// named after the highlighted item). Rows carry `'static` content (built fresh
-/// each frame from owned `String`s, never borrowed). `'a` covers only the
-/// scroll-offset cells, which genuinely borrow the caller's persisted state.
+/// each frame from owned `String`s, never borrowed). `'a` covers the
+/// scroll-offset cells and the [`PreviewItems`] builder, which genuinely borrow
+/// the caller's state.
 ///
 /// Each pane takes an optional title-right `*_meta` line (a short count / state
 /// in the top border break — see [`widgets::panel_block`]).
@@ -99,7 +113,7 @@ pub struct MasterDetail<'a> {
     pub list_offset: &'a Cell<usize>,
     pub preview_title: Cow<'static, str>,
     pub preview_meta: Option<Line<'static>>,
-    pub preview_items: Vec<ListItem<'static>>,
+    pub preview_items: PreviewItems<'a>,
     pub preview_selected: Option<usize>,
     pub preview_offset: &'a Cell<usize>,
     /// The highlighted row's ready cover protocols. `Some` seats a right-hand
@@ -206,16 +220,20 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
         let items = with_lead(
             view.preview_lead.as_ref(),
             text_area.width,
-            &view.preview_items,
+            (view.preview_items)(text_area.width),
         );
+        // Rows run the pane's full width and the image's own rows are cleared
+        // back to the text column below, so everything under the image reflows
+        // into the space the image never occupied.
         widgets::render_list(
             frame,
-            text_area,
+            inner,
             items,
             Some(selected),
             highlight,
             view.preview_offset,
         );
+        frame.render_widget(Clear, cover_band(inner, text_area, cover_area));
         // `resize_encode_render` mutates the cached protocol, hence the `RefCell`
         // borrow under this immutable-app draw path.
         frame.render_stateful_widget(
@@ -231,7 +249,11 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
     // if not. Mirrors `render_scrollable_panel` (block + `render_list` + scrollbar)
     // minus the text-cursor pass a read-only preview never needs.
     frame.render_widget(block, area);
-    let items = with_lead(view.preview_lead.as_ref(), inner.width, &view.preview_items);
+    let items = with_lead(
+        view.preview_lead.as_ref(),
+        inner.width,
+        (view.preview_items)(inner.width),
+    );
     widgets::render_list(
         frame,
         inner,
@@ -240,6 +262,19 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
         highlight,
         view.preview_offset,
     );
+}
+
+/// The columns the cover owns for the rows it spans: the gap plus the image
+/// itself, from the pane's top down to the image's last row. Wiping it is what
+/// keeps a row that overruns the text column from running under the image while
+/// rows below the image keep the full width.
+fn cover_band(inner: Rect, text_area: Rect, cover_area: Rect) -> Rect {
+    Rect {
+        x: text_area.right(),
+        y: inner.y,
+        width: inner.width - text_area.width,
+        height: cover_area.height,
+    }
 }
 
 /// Whether the title lead fits on a single line at `width` (so the cover may
@@ -253,15 +288,14 @@ fn title_fits_one_line(lead: Option<&PreviewLead>, width: u16) -> bool {
 fn with_lead(
     lead: Option<&PreviewLead>,
     width: u16,
-    items: &[ListItem<'static>],
+    items: Vec<ListItem<'static>>,
 ) -> Vec<ListItem<'static>> {
+    let Some(lead) = lead else { return items };
     let mut out = Vec::with_capacity(items.len() + MAX_TITLE_LINES);
-    if let Some(lead) = lead {
-        for line in wrap_to_lines(&lead.text, width as usize, MAX_TITLE_LINES) {
-            out.push(ListItem::new(Line::from(Span::styled(line, lead.style))));
-        }
+    for line in wrap_to_lines(&lead.text, width as usize, MAX_TITLE_LINES) {
+        out.push(ListItem::new(Line::from(Span::styled(line, lead.style))));
     }
-    out.extend(items.iter().cloned());
+    out.extend(items);
     out
 }
 
@@ -305,6 +339,12 @@ fn cover_layout<'a>(
 /// Fit `protocol` into a right-anchored column of at most `allowance` width,
 /// returning `(text, cover)` — the text taking everything left of the fitted
 /// image. `None` if the image rounds away to nothing.
+///
+/// The text rect spans the whole pane height while the cover rect stops at the
+/// image's last row: rows past that one are drawn at the pane's full width (see
+/// [`cover_band`]), so the narrow text width bounds the rows beside the image
+/// and the column every edge-anchored figure aligns to, not the pane's text as
+/// a whole.
 ///
 /// The cover rect is sized to what the image will *actually* occupy rather than
 /// the allowance it was offered: [`Resize::Fit`] letterboxes within its area and

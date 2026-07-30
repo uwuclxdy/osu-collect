@@ -938,6 +938,32 @@ pub fn browse_row_label(
     }
 }
 
+/// `head` clipped with a trailing `…` to fit before `trailing`, which lands
+/// flush against the right edge of `max_width` with the gap between them padded.
+/// The trailing block's width is measured at build time, since a `★10.24`
+/// rating runs one cell wider than a `★9.99` one.
+///
+/// Shared by every "label then right-aligned figure" row: the browse list's star
+/// suffix ([`right_aligned_star_spans`]) and the preview spread's star meter.
+pub fn right_aligned_spans(
+    head: &str,
+    head_style: Style,
+    trailing: Vec<Span<'static>>,
+    max_width: u16,
+) -> Vec<Span<'static>> {
+    let trailing_width = trailing.iter().map(Span::width).sum::<usize>() as u16;
+    let head_budget = max_width.saturating_sub(trailing_width);
+    let (truncated, used) = truncate_to_width(head, head_budget);
+    let pad = head_budget.saturating_sub(used);
+    let mut spans = Vec::with_capacity(trailing.len() + 2);
+    spans.push(Span::styled(truncated, head_style));
+    if pad > 0 {
+        spans.push(Span::raw(" ".repeat(pad as usize)));
+    }
+    spans.extend(trailing);
+    spans
+}
+
 /// Title truncated to fit before a right-aligned tier-coloured star suffix.
 /// Star always visible — the title gets clipped with trailing `…` when too
 /// long, and the gap padded so the star lands at the right edge.
@@ -947,17 +973,12 @@ fn right_aligned_star_spans(
     stars: f64,
     max_width: u16,
 ) -> Vec<Span<'static>> {
-    let star_text = format!(" ★{stars:.2}");
-    let star_w = Span::raw(&star_text).width() as u16;
-    let title_budget = max_width.saturating_sub(star_w);
-    let (truncated, used) = truncate_to_width(title, title_budget);
-    let pad = title_budget.saturating_sub(used);
-    let mut spans = vec![Span::styled(truncated, title_style)];
-    if pad > 0 {
-        spans.push(Span::raw(" ".repeat(pad as usize)));
-    }
-    spans.push(star_text.fg(stars_color(stars)));
-    spans
+    right_aligned_spans(
+        title,
+        title_style,
+        vec![format!(" ★{stars:.2}").fg(stars_color(stars))],
+        max_width,
+    )
 }
 
 /// The hardest difficulty's star rating from a set's `beatmaps[]` spread — the

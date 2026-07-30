@@ -155,21 +155,26 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource, tick: u
     let list_meta = (total > 0).then(|| widgets::ratio_line(selected, total));
 
     let preview_entries = form.preview_entries();
-    let mut preview_items: Vec<ListItem<'static>> = Vec::with_capacity(preview_entries.len());
-    for entry in &preview_entries {
-        match entry {
-            PreviewEntry::Marked(idx) => {
-                if let Some(set) = form.selection.marked_installed.get(*idx) {
-                    preview_items.push(preview_row(set, form.set_meta(set.id), true));
+    let preview_len = preview_entries.len();
+    // Missing-set rows are width-independent, so the builder ignores its width.
+    let preview_items = move |_| {
+        let mut items: Vec<ListItem<'static>> = Vec::with_capacity(preview_entries.len());
+        for entry in &preview_entries {
+            match entry {
+                PreviewEntry::Marked(idx) => {
+                    if let Some(set) = form.selection.marked_installed.get(*idx) {
+                        items.push(preview_row(set, form.set_meta(set.id), true));
+                    }
                 }
-            }
-            PreviewEntry::Missing(idx) => {
-                if let Some(set) = form.selection.cached_missing_sets.get(*idx) {
-                    preview_items.push(preview_row(set, form.set_meta(set.id), false));
+                PreviewEntry::Missing(idx) => {
+                    if let Some(set) = form.selection.cached_missing_sets.get(*idx) {
+                        items.push(preview_row(set, form.set_meta(set.id), false));
+                    }
                 }
             }
         }
-    }
+        items
+    };
     // The logical cursor indexes `preview_entries` 1:1; there is no separator
     // row between the marked and missing groups, so no visual shift.
     let preview_selected = form
@@ -177,7 +182,7 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource, tick: u
         .then(|| {
             form.selection
                 .preview_cursor
-                .map(|cursor| cursor.min(preview_items.len().saturating_sub(1)))
+                .map(|cursor| cursor.min(preview_len.saturating_sub(1)))
         })
         .flatten();
 
@@ -207,7 +212,7 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource, tick: u
         list_offset: &form.list_offset,
         preview_title,
         preview_meta,
-        preview_items,
+        preview_items: Box::new(preview_items),
         preview_selected,
         preview_offset: &form.preview_offset,
         // The missing-set preview is a list with no single highlighted set, so

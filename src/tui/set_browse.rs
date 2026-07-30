@@ -20,7 +20,7 @@ use ratatui::{
     widgets::ListItem,
 };
 
-use super::master_detail::{self, MasterDetail, Pane, PreviewCover, PreviewLead};
+use super::master_detail::{self, MasterDetail, Pane, PreviewCover, PreviewItems, PreviewLead};
 use super::theme::stars_color;
 use super::widgets;
 use super::{accent, focused_label, spinner_str, success, text, text_dim, text_faint, warning};
@@ -31,11 +31,16 @@ const KV_WIDTH: usize = "favourites".len();
 /// Cell count of the AR/CS/OD/HP bar meters. Equal to the attributes' max
 /// scale (10), so one cell == one attribute unit.
 const BAR_WIDTH: usize = 10;
-/// Cell count of the spread star meters: half [`BAR_WIDTH`], so each cell
-/// covers two stars (0–10 in 5 cells). The `★X.XX` number already carries the
-/// exact rating; the bar only conveys spread shape, so the coarser resolution
-/// is no loss and the shorter bar truncates less in a narrow preview.
-const SPREAD_BAR_WIDTH: usize = 5;
+/// Cell count of the spread star meters: one cell per star, the star scale's
+/// practical ceiling, so a meter's length reads as the rating itself rather
+/// than a halved rescaling of it.
+const SPREAD_BAR_WIDTH: usize = 10;
+/// Width of the spread's leading focus-caret column (`▸ ` or its blank).
+const SPREAD_CARET_WIDTH: u16 = 2;
+/// Name column a spread row needs before its meter is worth the cells. Under
+/// this the name ellipsises past recognition (`Se…`), so the meter goes and the
+/// `★X.XX` rating it only illustrates stays.
+const SPREAD_NAME_MIN: u16 = 12;
 
 /// Content width available for browse-row label text in the list pane,
 /// computed from the body area. Accounts for the pane border, padding, caret,
@@ -102,7 +107,7 @@ pub fn render(
             enriching,
             tick,
         ),
-        None => (None, Vec::new()),
+        None => (None, Box::new(|_| Vec::new()) as PreviewItems<'_>),
     };
 
     // The highlighted row's two cover variants, once loaded: the square column
@@ -168,35 +173,39 @@ fn list_row(
 
 /// The read-only preview of the highlighted set, split into `(lead, items)`: the
 /// title lead (wrapped to two lines by `master_detail`) over the one-line field
-/// rows. An id-only or still-enriching row has no lead — its id line plus a
-/// `loading metadata…` spinner, or a genuine "no metadata" note once idle, fills
-/// the items.
-fn preview_lead_and_items(
-    row: &BrowseRow,
-    details: Option<&BeatmapDetails>,
+/// rows, the rows deferred until the pane resolves its text width. An id-only or
+/// still-enriching row has no lead — its id line plus a `loading metadata…`
+/// spinner, or a genuine "no metadata" note once idle, fills the items.
+fn preview_lead_and_items<'a>(
+    row: &'a BrowseRow,
+    details: Option<&'a BeatmapDetails>,
     focused_idx: Option<usize>,
     diff_sort: DiffSort,
     enriching: bool,
     tick: u64,
-) -> (Option<PreviewLead>, Vec<ListItem<'static>>) {
+) -> (Option<PreviewLead>, PreviewItems<'a>) {
     match &row.meta {
         Some(meta) => (
             Some(PreviewLead {
                 text: meta.title.clone(),
                 style: Style::new().fg(accent()).bold(),
             }),
-            meta_field_rows(meta, details, focused_idx, diff_sort),
+            Box::new(move |width| meta_field_rows(meta, details, focused_idx, diff_sort, width)),
         ),
         None => {
-            let id_line = ListItem::new(Line::from(format!("#{}", row.id).fg(text())));
-            let note = if enriching {
-                ListItem::new(Line::from(
-                    format!("{} loading metadata…", spinner_str(tick).trim()).fg(text_dim()),
-                ))
-            } else {
-                ListItem::new(Line::from("no metadata available".fg(text_faint())))
+            let id = row.id;
+            let build = move |_| {
+                let id_line = ListItem::new(Line::from(format!("#{id}").fg(text())));
+                let note = if enriching {
+                    ListItem::new(Line::from(
+                        format!("{} loading metadata…", spinner_str(tick).trim()).fg(text_dim()),
+                    ))
+                } else {
+                    ListItem::new(Line::from("no metadata available".fg(text_faint())))
+                };
+                vec![id_line, note]
             };
-            (None, vec![id_line, note])
+            (None, Box::new(build))
         }
     }
 }
@@ -211,6 +220,7 @@ fn meta_field_rows(
     details: Option<&BeatmapDetails>,
     focused_idx: Option<usize>,
     diff_sort: DiffSort,
+    width: u16,
 ) -> Vec<ListItem<'static>> {
     let mut rows = Vec::new();
     // Unicode (original-script) title under the romanised lead, when it differs
@@ -253,7 +263,7 @@ fn meta_field_rows(
     // The difficulty spread is the most scannable beatmap data, so it sits right
     // after the core metadata behind a separator. Secondary set-level extras
     // (tags/genre/dates, nzbasic only) follow below.
-    let diff = diff_block_rows(meta, details, focused_idx, diff_sort);
+    let diff = diff_block_rows(meta, details, focused_idx, diff_sort, width);
     if !diff.is_empty() {
         rows.push(ListItem::new(Line::default()));
         rows.push(eyebrow_row("DIFFICULTIES"));
@@ -306,13 +316,14 @@ fn diff_block_rows(
     details: Option<&BeatmapDetails>,
     focused_idx: Option<usize>,
     diff_sort: DiffSort,
+    width: u16,
 ) -> Vec<ListItem<'static>> {
     if let Some(focused) = focused_idx
         && !meta.beatmaps.is_empty()
     {
-        spread_rows(&meta.beatmaps, focused, details, diff_sort)
+        spread_rows(&meta.beatmaps, focused, details, diff_sort, width)
     } else if let Some(d) = details {
-        recorded_diff_rows(d)
+        recorded_diff_rows(d, width)
     } else {
         Vec::new()
     }
@@ -329,6 +340,7 @@ fn spread_rows(
     focused: usize,
     details: Option<&BeatmapDetails>,
     sort: DiffSort,
+    width: u16,
 ) -> Vec<ListItem<'static>> {
     let focused = focused.min(beatmaps.len().saturating_sub(1));
     // Build sorted indices from the original array — tracking by original index
@@ -352,19 +364,17 @@ fn spread_rows(
         .iter()
         .position(|&i| i == focused)
         .unwrap_or(focused);
-    // Pad every diff name to the spread's widest so the star ratings and meters
-    // share a column across the list (display-width-aware for CJK names).
-    let name_w = indices
-        .iter()
-        .map(|&i| display_width(&beatmaps[i].version))
-        .max()
-        .unwrap_or(0);
+    let meter = spread_shows_meter(
+        width.saturating_sub(SPREAD_CARET_WIDTH),
+        beatmaps.iter().map(|b| b.difficulty_rating),
+    );
     let mut rows: Vec<ListItem<'static>> = Vec::new();
     for (pos, &i) in indices.iter().enumerate() {
         rows.push(ListItem::new(spread_line(
             &beatmaps[i],
             pos == focused,
-            name_w,
+            width,
+            meter,
         )));
     }
     let focused_diff = &beatmaps[indices[focused]];
@@ -402,10 +412,15 @@ fn beat_attr_rows(b: &Beatmap) -> Vec<ListItem<'static>> {
 
 /// The single recorded-diff block (the nzbasic fallback): name + star meter,
 /// core attributes, a success-rate bar from the recorded pass/play counts, then
-/// the combo/hash extras. Used only when a set has no `beatmaps[]` spread.
-fn recorded_diff_rows(d: &BeatmapDetails) -> Vec<ListItem<'static>> {
-    let mut header = vec![d.version.to_string().fg(text_dim()).bold()];
-    header.extend(star_meter_spans(d.stars));
+/// the combo/hash extras. Used only when a set has no `beatmaps[]` spread. The
+/// header takes the same edge-anchored star block as [`spread_line`].
+fn recorded_diff_rows(d: &BeatmapDetails, width: u16) -> Vec<ListItem<'static>> {
+    let header = widgets::right_aligned_spans(
+        &d.version,
+        Style::new().fg(text_dim()).bold(),
+        star_meter_spans(d.stars, spread_shows_meter(width, std::iter::once(d.stars))),
+        width,
+    );
     let mut rows = vec![ListItem::new(Line::from(header))];
     rows.extend(core_attr_rows(
         d.bpm,
@@ -422,34 +437,21 @@ fn recorded_diff_rows(d: &BeatmapDetails) -> Vec<ListItem<'static>> {
 }
 
 /// One spread line: a `▸` caret on the focused diff (a blank on the others),
-/// the difficulty name padded to `name_w`, then the tier-coloured star rating
-/// and meter. Padding the name puts every diff's star rating and meter in one
-/// column. The meter truncates at the pane edge in a narrow preview; the
-/// `★X.XX` rating always precedes it, so the essential figure stays visible.
-fn spread_line(diff: &Beatmap, focused: bool, name_w: usize) -> Line<'static> {
+/// the difficulty name, then the tier-coloured star rating and meter flush
+/// against the right edge of `width`. Anchoring the figure to the edge rather
+/// than to the widest name keeps a sentence-length difficulty name from pushing
+/// the whole rating off the pane; such a name is ellipsised instead. `meter`
+/// comes from [`spread_shows_meter`], one decision for the whole spread.
+fn spread_line(diff: &Beatmap, focused: bool, width: u16, meter: bool) -> Line<'static> {
     let mut spans: Vec<Span<'static>> =
         vec![(if focused { "▸ " } else { "  " }).fg(if focused { accent() } else { text_faint() })];
-    spans.push(pad_right(&diff.version, name_w).fg(if focused { text() } else { text_dim() }));
-    spans.extend(star_meter_spans(diff.difficulty_rating));
+    spans.extend(widgets::right_aligned_spans(
+        &diff.version,
+        Style::new().fg(if focused { text() } else { text_dim() }),
+        star_meter_spans(diff.difficulty_rating, meter),
+        width.saturating_sub(SPREAD_CARET_WIDTH),
+    ));
     Line::from(spans)
-}
-
-/// Display width of `s` in terminal columns (unicode-aware), via ratatui's own
-/// span measurement so wide (CJK) names pad by cells, not bytes.
-fn display_width(s: &str) -> usize {
-    Span::raw(s).width()
-}
-
-/// `s` right-padded with spaces to `width` display columns. Already-wide or
-/// over-width strings are returned unchanged (a name longer than the spread's
-/// max is not truncated — it just sets the column for the rest).
-fn pad_right(s: &str, width: usize) -> String {
-    let w = display_width(s);
-    if w >= width {
-        s.to_string()
-    } else {
-        format!("{s}{}", " ".repeat(width - w))
-    }
 }
 
 /// Append the nzbasic-only combo/hash extras for the recorded diff.
@@ -508,11 +510,16 @@ fn objects_row(circles: u32, sliders: u32, spinners: u32) -> ListItem<'static> {
 }
 
 /// A tier-coloured star meter: the `★X.XX` rating followed by a
-/// [`SPREAD_BAR_WIDTH`] cell bar (one cell per two stars, saturating past 10).
-/// Filled cells take the tier colour; empty cells are faint.
-fn star_meter_spans(stars: f64) -> Vec<Span<'static>> {
-    let filled = (stars / 2.0).round().clamp(0.0, SPREAD_BAR_WIDTH as f64) as usize;
+/// [`SPREAD_BAR_WIDTH`] cell bar (one cell per star, saturating past 10).
+/// Filled cells take the tier colour; empty cells are faint. `meter` off drops
+/// the bar and its separating space, leaving the rating alone — see
+/// [`spread_shows_meter`].
+fn star_meter_spans(stars: f64, meter: bool) -> Vec<Span<'static>> {
     let color = stars_color(stars);
+    if !meter {
+        return vec![format!(" ★{stars:.2}").fg(color)];
+    }
+    let filled = stars.round().clamp(0.0, SPREAD_BAR_WIDTH as f64) as usize;
     let mut spans = vec![format!(" ★{stars:.2} ").fg(color)];
     if filled > 0 {
         spans.push("█".repeat(filled).fg(color));
@@ -521,6 +528,19 @@ fn star_meter_spans(stars: f64) -> Vec<Span<'static>> {
         spans.push("░".repeat(SPREAD_BAR_WIDTH - filled).fg(text_faint()));
     }
     spans
+}
+
+/// Whether a spread whose rows right-align inside `label_width` (the row width
+/// past its caret column) can seat the meter beside a name still worth reading.
+/// Decided once per block off its widest rating (`★10.24` is a cell wider than
+/// `★9.87`) so every row in one spread agrees, rather than one diff dropping its
+/// meter because of its own rating's width.
+fn spread_shows_meter(label_width: u16, ratings: impl Iterator<Item = f64>) -> bool {
+    let rating_w = ratings
+        .map(|stars| Span::raw(format!(" ★{stars:.2} ")).width() as u16)
+        .max()
+        .unwrap_or(0);
+    label_width.saturating_sub(rating_w + SPREAD_BAR_WIDTH as u16) >= SPREAD_NAME_MIN
 }
 
 /// A success-rate bar row: `success  NN% ██████░░░░`, the fill being

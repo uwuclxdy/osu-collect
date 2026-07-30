@@ -43,7 +43,7 @@ fn sample_view<'a>(
         list_offset,
         preview_title: PREVIEW_TITLE.into(),
         preview_meta: None,
-        preview_items: sample_items(2),
+        preview_items: Box::new(|_| sample_items(2)),
         preview_selected: Some(0),
         preview_offset,
         preview_image: None,
@@ -78,6 +78,22 @@ fn narrow_area_shows_only_focused_pane() {
 }
 
 #[test]
+fn the_preview_row_builder_is_called_with_the_pane_text_width() {
+    let list_offset = Cell::new(0);
+    let preview_offset = Cell::new(0);
+    let mut view = sample_view(&list_offset, &preview_offset);
+    view.preview_items = Box::new(|width| vec![ListItem::new(format!("built for {width}"))]);
+
+    // 80 wide → a 32-column list pane, 48 for the preview, 44 inside its border
+    // and padding. No cover, so the whole inner width is the text width.
+    let output = render_to_string(80, 20, &view);
+    assert!(
+        output.contains("built for 44"),
+        "rows are built at the preview's resolved text width:\n{output}"
+    );
+}
+
+#[test]
 fn empty_list_items_does_not_panic() {
     let list_offset = Cell::new(0);
     let preview_offset = Cell::new(0);
@@ -90,7 +106,7 @@ fn empty_list_items_does_not_panic() {
         list_offset: &list_offset,
         preview_title: PREVIEW_TITLE.into(),
         preview_meta: None,
-        preview_items: Vec::new(),
+        preview_items: Box::new(|_| Vec::new()),
         preview_selected: None,
         preview_offset: &preview_offset,
         preview_image: None,
