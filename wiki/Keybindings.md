@@ -17,7 +17,7 @@ Press <kbd>?</kbd> anywhere in the app for this list as an overlay.
 | <kbd>esc</kbd> | Leave edit mode / go back |
 | <kbd>q</kbd> | Back / quit (press twice to confirm; running downloads stop) |
 | <kbd>ctrl</kbd>+<kbd>c</kbd> | Quit immediately from anywhere |
-| <kbd>home</kbd> <kbd>end</kbd> | Jump to the first / last row of a list or form |
+| <kbd>home</kbd> <kbd>end</kbd> | Jump to the first / last row of a list, form, or focused preview |
 | <kbd>pgup</kbd> <kbd>pgdn</kbd> | Page a list up / down, or scroll a focused browse preview |
 
 ## Get maps tab
