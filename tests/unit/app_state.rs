@@ -164,3 +164,28 @@ fn size_probe_cmd_is_none_for_find_with_no_recorded_backend() {
     app.home.source = GetMapsSource::Find;
     assert!(app.find_size_probe_cmd().is_none());
 }
+
+#[test]
+fn page_down_reaches_a_focused_find_browse_preview() {
+    use crate::app::find_source::BrowseRow;
+    use crate::app::home::GetMapsSource;
+    use std::collections::HashMap;
+
+    let mut app = App::new(Config::default());
+    app.active_tab = Tab::Home;
+    app.home.source = GetMapsSource::Find;
+    app.home
+        .find
+        .browse
+        .set_rows(vec![BrowseRow { id: 1, meta: None }], &HashMap::new());
+    app.home.find.browse.descend();
+    app.home.find.browse.focus_preview();
+
+    app.handle_key(key(KeyCode::PageDown));
+
+    assert_eq!(
+        app.home.find.browse.preview_offset.get(),
+        10,
+        "the page key has to reach the browse, not stop at a tab-level handler"
+    );
+}
