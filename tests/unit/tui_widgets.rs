@@ -1,7 +1,7 @@
 use super::{
-    ButtonProminence, button_item, button_item_with_loading_cue, download_button_label_with_size,
-    input_cursor_col, input_item, message_style, render_list, render_scrollbar, set_panel_cursor,
-    truncate_to_width,
+    ButtonProminence, ListRows, button_item, button_item_with_loading_cue,
+    download_button_label_with_size, input_cursor_col, input_item, message_style, render_list,
+    render_scrollbar, render_windowed_list, set_panel_cursor, truncate_to_width,
 };
 use crate::app::InputField;
 use crate::download::BeatmapStage;
@@ -175,6 +175,34 @@ fn truncate_to_width_unicode_safe() {
     assert_eq!(truncate_to_width("こんにちは世界", 7).0, "こんに…");
     // ASCII still works: budget 5 → "hell…"
     assert_eq!(truncate_to_width("hello world", 5).0, "hell…");
+}
+
+#[test]
+fn truncate_to_width_reports_the_width_it_rendered() {
+    use unicode_width::UnicodeWidthStr as _;
+    // Callers pad by `budget - reported` to right-align what follows, so a
+    // reported width the string does not actually occupy lands that suffix off
+    // by a column. A cut landing mid double-width glyph is where the two diverge:
+    // "\u{3053}\u{2026}" occupies 3 of a budget of 4.
+    for (text, budget) in [
+        (
+            "\u{3053}\u{3093}\u{306b}\u{3061}\u{306f}\u{4e16}\u{754c}",
+            4u16,
+        ),
+        (
+            "\u{3053}\u{3093}\u{306b}\u{3061}\u{306f}\u{4e16}\u{754c}",
+            7,
+        ),
+        ("hello world", 5),
+        ("hello", 9),
+    ] {
+        let (out, reported) = truncate_to_width(text, budget);
+        assert_eq!(
+            reported as usize,
+            out.width(),
+            "{text:?} at budget {budget} reports what it rendered ({out:?})"
+        );
+    }
 }
 
 #[test]
@@ -511,4 +539,99 @@ fn download_size_label_renders_gib_at_the_boundary() {
     assert_eq!(gib, "download (5) · ~1.00 GiB");
     let (mib, _) = download_button_label_with_size(5, 1024 * 1024 * 1024 - 1);
     assert_eq!(mib, "download (5) · ~1024.0 MiB");
+}
+
+/// One distinguishable row per index, so a buffer comparison catches a window
+/// slid by even one row.
+fn numbered_row(i: usize) -> ListItem<'static> {
+    ListItem::new(format!("r{i:04}"))
+}
+
+/// Renders `total` rows through [`render_list`] (ratatui resolves the offset
+/// from the full item set) and returns `(resolved offset, buffer)`.
+fn full_list_frame(
+    total: usize,
+    height: u16,
+    selected: Option<usize>,
+    seed: usize,
+) -> (usize, ratatui::buffer::Buffer) {
+    let offset = std::cell::Cell::new(seed);
+    let inner = Rect::new(0, 0, 8, height);
+    let mut terminal = Terminal::new(TestBackend::new(8, height)).expect("test backend");
+    terminal
+        .draw(|frame| {
+            let items: Vec<ListItem<'static>> = (0..total).map(numbered_row).collect();
+            let _ = render_list(frame, inner, items, selected, true, &offset);
+        })
+        .expect("frame renders");
+    (offset.get(), terminal.backend().buffer().clone())
+}
+
+/// The same fixture through [`render_windowed_list`], which resolves the offset
+/// itself and builds only the visible slice.
+fn windowed_list_frame(
+    total: usize,
+    height: u16,
+    selected: Option<usize>,
+    seed: usize,
+) -> (usize, ratatui::buffer::Buffer) {
+    let offset = std::cell::Cell::new(seed);
+    let inner = Rect::new(0, 0, 8, height);
+    let mut terminal = Terminal::new(TestBackend::new(8, height)).expect("test backend");
+    terminal
+        .draw(|frame| {
+            let rows: ListRows<'_> = Box::new(|window| window.map(numbered_row).collect());
+            let _ = render_windowed_list(frame, inner, total, &rows, selected, true, &offset);
+        })
+        .expect("frame renders");
+    (offset.get(), terminal.backend().buffer().clone())
+}
+
+/// The windowed list resolves the scroll offset itself instead of handing
+/// ratatui every row, so its rule has to stay ratatui's rule. Both paths run the
+/// same fixture; a divergence in either the offset or a single rendered cell is
+/// a scroll glitch nobody would trace back to a ratatui bump.
+#[test]
+fn windowed_list_matches_the_full_list() {
+    // Heights spanning under, at, and over twice the scroll padding (3); counts
+    // spanning shorter-than-viewport, exactly-viewport, and far longer; seeds
+    // covering a fresh list, a mid-list page, and a stale over-scrolled offset.
+    for total in [0usize, 1, 4, 7, 8, 9, 40, 500] {
+        for height in [1u16, 4, 7, 8, 20] {
+            for seed in [0usize, 3, 20, 499] {
+                // Every row for the short lists; for the long one the two ends,
+                // the padding band around each seed, and the middle — plus the
+                // no-cursor and past-the-end cases either way.
+                let sampled: Vec<usize> = if total <= 40 {
+                    (0..total).collect()
+                } else {
+                    (0..10)
+                        .chain(total / 2 - 1..total / 2 + 2)
+                        .chain(seed.saturating_sub(4)..(seed + 5).min(total))
+                        .chain(total - 10..total)
+                        .collect()
+                };
+                let cursors =
+                    sampled
+                        .into_iter()
+                        .map(Some)
+                        .chain([None, Some(total), Some(total + 5)]);
+                for selected in cursors {
+                    let (want_offset, want_buffer) = full_list_frame(total, height, selected, seed);
+                    let (got_offset, got_buffer) =
+                        windowed_list_frame(total, height, selected, seed);
+                    assert_eq!(
+                        got_offset, want_offset,
+                        "offset diverged at total={total} height={height} \
+                         seed={seed} selected={selected:?}"
+                    );
+                    assert_eq!(
+                        got_buffer, want_buffer,
+                        "render diverged at total={total} height={height} \
+                         seed={seed} selected={selected:?}"
+                    );
+                }
+            }
+        }
+    }
 }

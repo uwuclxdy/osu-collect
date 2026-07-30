@@ -125,24 +125,25 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource, tick: u
     // existing `N new · M removed` meta instead of decorating each row.
     let enriching = form.is_enriching();
     let list_selected = form.selection.collections_cursor;
-    let list_items: Vec<ListItem<'static>> = form
-        .selection
-        .local_collections
-        .iter()
-        .enumerate()
-        .map(|(i, entry)| {
-            let new = entry
-                .collection_id
-                .map(|id| form.new_count_for(id))
-                .unwrap_or(0);
-            collection_row(
-                entry.selected,
-                &entry.name,
-                new,
-                list_focused && list_selected == Some(i),
-            )
-        })
-        .collect();
+    let list_items: widgets::ListRows<'_> = Box::new(move |window| {
+        let start = window.start;
+        form.selection.local_collections[window]
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| {
+                let new = entry
+                    .collection_id
+                    .map(|id| form.new_count_for(id))
+                    .unwrap_or(0);
+                collection_row(
+                    entry.selected,
+                    &entry.name,
+                    new,
+                    list_focused && list_selected == Some(start + i),
+                )
+            })
+            .collect()
+    });
 
     // Selected/total collections rides the COLLECTIONS panel's title-right meta.
     let total = form.selection.local_collections.len();
@@ -207,6 +208,7 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource, tick: u
         status: None,
         list_title: Cow::Borrowed(LIST_TITLE),
         list_meta,
+        list_len: form.selection.local_collections.len(),
         list_items,
         list_selected,
         list_offset: &form.list_offset,

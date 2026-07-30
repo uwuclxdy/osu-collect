@@ -13,6 +13,9 @@
 //! The fetch itself is fire-and-forget on the runtime side
 //! ([`crate::app::runtime`]); this struct only caches the result and drives the
 //! tick-based prefetch debounce so a fast scroll doesn't fire a request per row.
+//! That same debounce gates the RENDER ([`Covers::is_settled`]): the iTerm2
+//! protocol re-sends the whole base64 image on every render, so a cover drawn
+//! for a highlight still on the move costs a full image per keystroke.
 
 use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
@@ -100,6 +103,17 @@ impl Covers {
     /// prefetch never re-requests a cover already known or in flight.
     fn is_cached(&self, set_id: u32) -> bool {
         self.cache.contains_key(&set_id)
+    }
+
+    /// Whether `set_id` has held the highlight long enough for its cover to be
+    /// worth putting on screen. The same settling signal the fetch debounce
+    /// uses, so a cover appears only where a fetch would also have fired.
+    ///
+    /// Keyed to the id and not to the counter alone: [`Self::stable_ticks`]
+    /// advances only on a `Tick`, and a held key starves ticks, so a bare
+    /// counter reads stale-high for the row the highlight just moved to.
+    pub fn is_settled(&self, set_id: u32) -> bool {
+        self.last_seen == Some(set_id) && self.stable_ticks >= COVER_DEBOUNCE_TICKS
     }
 
     /// Mark a fetch as in flight (claimed by the prefetch before it spawns).

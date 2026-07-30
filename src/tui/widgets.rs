@@ -36,6 +36,10 @@ pub const SEPARATOR: &str = "  ·  ";
 /// Scrollbar track glyph (`LINE`) and thumb glyph (`TEXT_DIM`).
 const SCROLLBAR_TRACK: &str = "┊";
 const SCROLLBAR_THUMB: &str = "┃";
+/// Rows of context ratatui keeps above/below the cursor while it scrolls.
+/// Spacer/hint rows count as context, so a single padded row can read as blank;
+/// three keeps real rows visible past the cursor.
+const SCROLL_PADDING: usize = 3;
 
 /// Selected-row highlight: the edge-to-edge `BG_HOVER` tint only.
 /// Applied by [`render_list`] / [`render_scrollable_panel`] via
@@ -149,7 +153,7 @@ pub(crate) fn render_list(
         Style::default()
     };
     let list = List::new(items)
-        .scroll_padding(3)
+        .scroll_padding(SCROLL_PADDING)
         .highlight_symbol("")
         .highlight_style(row_style);
     frame.render_stateful_widget(list, inner, &mut state);
@@ -157,6 +161,135 @@ pub(crate) fn render_list(
     offset.set(resolved);
     render_scrollbar(frame, inner, resolved, total);
     resolved
+}
+
+/// Builds the `start..end` slice of a windowed list's rows. Called once per
+/// frame with the resolved viewport, so a browse of thousands of rows pays for
+/// the visible handful.
+pub(crate) type ListRows<'a> = Box<dyn Fn(std::ops::Range<usize>) -> Vec<ListItem<'static>> + 'a>;
+
+/// [`render_list`]'s scrolling contract over a list whose rows are too costly to
+/// build in full: resolves the offset from the row COUNT, then builds and
+/// renders only the visible window.
+///
+/// Every row must be exactly one line high — that is what makes the offset
+/// computable without the items (see [`resolve_list_offset`]). Returns the
+/// resolved top offset, same as [`render_list`].
+pub(crate) fn render_windowed_list(
+    frame: &mut Frame,
+    inner: Rect,
+    total: usize,
+    rows: &ListRows<'_>,
+    focused: Option<usize>,
+    highlight: bool,
+    offset: &Cell<usize>,
+) -> usize {
+    let visible = inner.height as usize;
+    // Clamped for the same reason `render_list` clamps: ratatui never pulls a
+    // stale large offset back up when the viewport grows or the content shrinks.
+    let max_offset = total.saturating_sub(visible);
+    // ratatui pulls an out-of-range cursor back onto the last row rather than
+    // dropping the highlight, so the window's own mapping has to do it too.
+    let focused = focused.map(|row| row.min(total.saturating_sub(1)));
+    // `ListState::select(None)` zeroes the offset, and `render_list` selects
+    // after seeding, so a cursorless panel drops to the top there as well.
+    let seed = if focused.is_some() {
+        offset.get().min(max_offset)
+    } else {
+        0
+    };
+    let start = resolve_list_offset(total, visible, focused, seed);
+    let end = (start + visible).min(total);
+    // A window of at most `visible` one-line rows seeded at offset 0 leaves
+    // ratatui nothing to scroll, so it renders the slice as given.
+    let mut state = ListState::default();
+    state.select(
+        focused
+            .filter(|row| (start..end).contains(row))
+            .map(|row| row - start),
+    );
+    let row_style = if highlight {
+        highlight_style()
+    } else {
+        Style::default()
+    };
+    let list = List::new(rows(start..end))
+        .scroll_padding(SCROLL_PADDING)
+        .highlight_symbol("")
+        .highlight_style(row_style);
+    frame.render_stateful_widget(list, inner, &mut state);
+    offset.set(start);
+    render_scrollbar(frame, inner, start, total);
+    start
+}
+
+/// The top offset ratatui's [`List`] resolves for `total` one-line rows in a
+/// `visible`-row viewport, given the previous frame's `offset` and the cursor.
+///
+/// Transcribed from `List`'s own `get_items_bounds` +
+/// `apply_scroll_padding_to_selected_index` with every item height fixed at 1,
+/// which is what lets it run without the items existing. The
+/// `windowed_list_matches_the_full_list` differential test drives both paths
+/// over one fixture, so a divergence from ratatui fails the gate rather than
+/// showing up as a scroll glitch.
+fn resolve_list_offset(
+    total: usize,
+    visible: usize,
+    selected: Option<usize>,
+    offset: usize,
+) -> usize {
+    if total == 0 || visible == 0 {
+        return 0;
+    }
+    let last_valid = total - 1;
+    let mut first = offset.min(last_valid);
+    // Exclusive, matching ratatui's `last_visible_index`.
+    let mut last = (first + visible).min(total);
+    let mut height = last - first;
+
+    let target = match selected {
+        None => first,
+        Some(selected) => {
+            let selected = selected.min(last_valid);
+            // Padding shrinks until the band around the cursor fits the viewport.
+            let mut padding = SCROLL_PADDING;
+            while padding > 0 {
+                let lo = selected.saturating_sub(padding);
+                let hi = selected.saturating_add(padding).min(last_valid);
+                if hi - lo < visible {
+                    break;
+                }
+                padding -= 1;
+            }
+            if selected.saturating_add(padding).min(last_valid) >= last {
+                selected + padding
+            } else if selected.saturating_sub(padding) < first {
+                selected.saturating_sub(padding)
+            } else {
+                selected
+            }
+            .min(last_valid)
+        }
+    };
+
+    while target >= last {
+        height += 1;
+        last += 1;
+        while height > visible {
+            height -= 1;
+            first += 1;
+        }
+    }
+    // Scrolling back up drops rows off the BOTTOM to stay within the viewport;
+    // only `first` is returned, so ratatui's matching `last` decrement is dropped.
+    while target < first {
+        first -= 1;
+        height += 1;
+        while height > visible {
+            height -= 1;
+        }
+    }
+    first
 }
 
 /// Draw a scrollbar in a padded panel's right padding column.
@@ -1239,7 +1372,10 @@ pub fn truncate_to_width(message: &str, budget: u16) -> (String, u16) {
         used += w;
     }
     out.push('…');
-    (out, budget as u16)
+    // `used + 1`, never `budget`: a cut landing mid double-width glyph stops a
+    // column short of the target, and a caller padding by the difference (the
+    // right-aligned star block) would otherwise sit one column off.
+    (out, (used + 1) as u16)
 }
 
 // 101-entry table of " {:>3}%" strings for pct in 0..=100.

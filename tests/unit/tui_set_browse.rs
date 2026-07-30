@@ -109,12 +109,23 @@ fn gradient_cover(w: u32, h: u32) -> image::DynamicImage {
     image::DynamicImage::ImageRgb8(img)
 }
 
+/// Hold `set_id` as the highlight past the render gate's dwell, the state a
+/// session reaches after ~200ms parked on one row. Runs after the variants are
+/// recorded, matching the production order (the prefetch settles first, the
+/// fetch lands second), so the already-cached id is never re-marked `Pending`.
+fn settle(covers: &mut Covers, set_id: u32) {
+    for _ in 0..8 {
+        covers.poll_prefetch(Some(set_id));
+    }
+}
+
 /// A [`Covers`] with only the square variant ready — the wide upgrade never
 /// fires, isolating the square right-hand column geometry.
 fn covers_square_only(set_id: u32) -> Covers {
     let mut covers = Covers::new();
     let square = covers.picker.new_resize_protocol(gradient_cover(300, 300));
     covers.record_ready(set_id, Some(square), None);
+    settle(&mut covers, set_id);
     covers
 }
 
@@ -125,6 +136,7 @@ fn covers_both_variants(set_id: u32) -> Covers {
     let square = covers.picker.new_resize_protocol(gradient_cover(300, 300));
     let wide = covers.picker.new_resize_protocol(gradient_cover(800, 280));
     covers.record_ready(set_id, Some(square), Some(wide));
+    settle(&mut covers, set_id);
     covers
 }
 
@@ -171,13 +183,18 @@ fn preview_row_of(buffer: &ratatui::buffer::Buffer, needle: &str) -> Option<usiz
         .map(|y| y as usize)
 }
 
-/// The leftmost preview-pane column in `row` carrying a real (non-`Reset`)
-/// background — the halfblocks encoder always paints one and nothing else in an
-/// unfocused preview does, so this is where the cover column starts. `None` when
-/// the row holds no cover.
+/// The leftmost preview-pane column in `row` carrying an IMAGE background: one
+/// the halfblocks encoder painted, as opposed to the flat theme fill the cover
+/// band lays over its gap columns or the bare `Reset` of untouched text cells.
+/// Nothing else in an unfocused preview paints a cell background, so this is
+/// where the artwork starts. `None` when the row holds no cover.
 fn cover_start_x(buffer: &ratatui::buffer::Buffer, row: u16) -> Option<u16> {
     let area = *buffer.area();
-    (PREVIEW_X..area.width).find(|&x| buffer[(x, row)].bg != Color::Reset)
+    let band = crate::tui::theme().bg;
+    (PREVIEW_X..area.width).find(|&x| {
+        let bg = buffer[(x, row)].bg;
+        bg != Color::Reset && bg != band
+    })
 }
 
 /// Whether ANY cell in rows `[0, rows)` carries a real background — used on a
@@ -434,7 +451,8 @@ fn diff_cursor_cycles_the_focused_detail() {
 #[test]
 fn spread_star_ratings_align_in_one_column() {
     // Names of differing width ("A" vs "LongerName") must not ragged the star
-    // ratings: every diff's `★` lands in the same column once names are padded.
+    // ratings: the block is anchored to the row's right edge, so the name is what
+    // gives, never the `★` column.
     let make = |version: &str, stars: f64| Beatmap {
         beatmapset_id: 7,
         mode_int: 0,
@@ -703,6 +721,186 @@ fn ready_cover_paints_a_right_column_beside_the_text() {
     assert!(
         preview_text_before(&with_cover, title_with as u16, COVER_X).contains("Song Title"),
         "the title must render entirely left of the cover column"
+    );
+}
+
+/// The list pane only builds the rows the viewport resolves to, so a row's
+/// position in the window is not its position in the browse. A cursor parked
+/// past the first page is the only fixture where the two differ.
+#[test]
+fn a_scrolled_list_keeps_the_caret_and_checkbox_on_the_cursor_row() {
+    let rows: Vec<BrowseRow> = (1..=60u32)
+        .map(|id| BrowseRow {
+            id,
+            meta: Some(BeatmapSetMeta {
+                title: format!("Song {id:03}"),
+                ..sample_meta(id)
+            }),
+        })
+        .collect();
+    let mut browse = browse_with(rows);
+    browse.descend();
+    browse.scroll_to_edge(false);
+    browse.toggle_selected();
+
+    let buffer = render_grid(&browse, None, 90, 30);
+    // The list pane spans x 0..36 at 90 columns; clipping there keeps the
+    // preview's own copy of the title out of the read.
+    let list_rows: Vec<String> = (0..buffer.area().height)
+        .map(|y| (0..36).map(|x| buffer[(x, y)].symbol()).collect())
+        .collect();
+
+    assert!(
+        !list_rows.iter().any(|row| row.contains("Song 001")),
+        "the fixture has to have scrolled off the first page:\n{list_rows:#?}"
+    );
+    let carets: Vec<&String> = list_rows.iter().filter(|row| row.contains('❯')).collect();
+    assert_eq!(
+        carets.len(),
+        1,
+        "exactly one list row carries the caret:\n{list_rows:#?}"
+    );
+    assert!(
+        carets[0].contains("Song 060") && carets[0].contains("[x]"),
+        "caret and checkbox both land on the cursor row: {}",
+        carets[0]
+    );
+}
+
+#[test]
+fn a_cover_is_withheld_until_the_highlight_settles_on_its_row() {
+    let browse = browse_with(vec![BrowseRow {
+        id: 42,
+        meta: Some(sample_meta(42)),
+    }]);
+    // Same geometry as `ready_cover_paints_a_right_column_beside_the_text`.
+    const COVER_X: u16 = 68;
+
+    let mut covers = Covers::new();
+    let square = covers.picker.new_resize_protocol(gradient_cover(300, 300));
+    covers.record_ready(42, Some(square), None);
+
+    // One tick of dwell: the cover is decoded and cached, the highlight has only
+    // just landed.
+    covers.poll_prefetch(Some(42));
+    assert_eq!(
+        cover_start_x(&render_grid(&browse, Some(&covers), 90, 30), 1),
+        None,
+        "a ready cover stays off screen while the highlight is still moving"
+    );
+
+    // Four more ticks parked on the row cross the dwell (the first only armed it).
+    for _ in 0..4 {
+        covers.poll_prefetch(Some(42));
+    }
+    assert_eq!(
+        cover_start_x(&render_grid(&browse, Some(&covers), 90, 30), 1),
+        Some(COVER_X),
+        "the same ready cover paints once the row has held the highlight"
+    );
+
+    // The dwell belongs to the id that earned it. A neighbouring row held long
+    // enough to settle, then a move back before the next tick, leaves the
+    // counter high for the WRONG id — reachable on any up-then-down scroll.
+    for _ in 0..5 {
+        covers.poll_prefetch(Some(43));
+    }
+    assert_eq!(
+        cover_start_x(&render_grid(&browse, Some(&covers), 90, 30), 1),
+        None,
+        "a dwell earned by another row does not license this row's cover"
+    );
+}
+
+#[test]
+fn the_cover_band_carries_the_theme_background() {
+    // The band is wiped so reflowed rows cannot run under the artwork, and the
+    // wipe has to repaint the app's background: `Clear` alone leaves
+    // `Color::Reset`, which is the raw terminal, and the OSC-11 override that
+    // would otherwise hide that is emitted only for an `Rgb` theme colour. The
+    // gap columns are the tell, since the image never repaints those.
+    let browse = browse_with(vec![BrowseRow {
+        id: 42,
+        meta: Some(sample_meta(42)),
+    }]);
+    let buf = render_grid(&browse, Some(&covers_both_variants(42)), 90, 30);
+    let art_x = cover_start_x(&buf, 1).expect("the cover renders on the first row");
+    for x in [art_x - 2, art_x - 1] {
+        assert_eq!(
+            buf[(x, 1)].bg,
+            crate::tui::theme().bg,
+            "the gap column at {x} carries the theme background, not bare terminal"
+        );
+    }
+}
+
+#[test]
+fn a_cover_narrows_the_width_the_preview_rows_build_against() {
+    // The row builder is handed the BESIDE-the-cover width even though the list
+    // renders at the full inner width, so an edge-anchored figure lands in one
+    // column whichever band its row falls in. The spread's star block is that
+    // figure: with a cover it stops at the text column, without one it runs to
+    // the pane edge.
+    let meta = BeatmapSetMeta {
+        beatmaps: vec![spread_diff("Extra", 5.47)],
+        ..sample_meta(42)
+    };
+    let browse = browse_with(vec![BrowseRow {
+        id: 42,
+        meta: Some(meta),
+    }]);
+
+    let with_cover = render_grid(&browse, Some(&covers_both_variants(42)), 90, 30);
+    let without = render_grid(&browse, None, 90, 30);
+    let narrow = star_columns(&with_cover);
+    let full = star_columns(&without);
+    assert!(
+        narrow.len() == 1 && full.len() == 1,
+        "one star column either way: {narrow:?} / {full:?}"
+    );
+    assert!(
+        narrow.iter().next() < full.iter().next(),
+        "a cover pulls the star block left, to the text column: {narrow:?} vs {full:?}"
+    );
+}
+
+#[test]
+fn a_spread_past_ten_stars_keeps_one_star_column() {
+    // `\u{2605}10.24` runs a column wider than `\u{2605}9.87`, so a right-anchored block that
+    // measured each rating raw would step the `\u{2605}` left on the 10+ rows and leave
+    // only the BAR aligned. 10-star diffs are routine, so this is the common
+    // case rather than an edge.
+    let meta = BeatmapSetMeta {
+        beatmaps: vec![
+            spread_diff("Extra", 9.87),
+            spread_diff("Black Another", 10.24),
+        ],
+        ..sample_meta(7)
+    };
+    let browse = browse_with(vec![BrowseRow {
+        id: 7,
+        meta: Some(meta),
+    }]);
+    let buf = render_grid(&browse, None, 90, 30);
+    let star_cols = star_columns(&buf);
+    assert!(
+        star_cols.len() == 1,
+        "a spread straddling ten stars pads the narrow ratings into one `\u{2605}` column: {star_cols:?}"
+    );
+    // Control on the dimension the subject turns on: with no 10+ rating in the
+    // block nothing pads, so the tight rendering must still share one column.
+    let tight = BeatmapSetMeta {
+        beatmaps: vec![spread_diff("Extra", 9.87), spread_diff("Another", 8.12)],
+        ..sample_meta(8)
+    };
+    let tight = browse_with(vec![BrowseRow {
+        id: 8,
+        meta: Some(tight),
+    }]);
+    let tight_cols = star_columns(&render_grid(&tight, None, 90, 30));
+    assert!(
+        tight_cols.len() == 1 && tight_cols != star_cols,
+        "a block with no 10+ rating pads nothing, landing one column right: {tight_cols:?} vs {star_cols:?}"
     );
 }
 

@@ -232,6 +232,41 @@ fn is_konsole_env() -> bool {
     std::env::var("KONSOLE_VERSION").is_ok_and(|version| !version.is_empty())
 }
 
+/// One event off any of the runtime's channels, so a whole queued batch can go
+/// through the same handler between two renders.
+enum LoopEvent {
+    Download(DownloadEvent),
+    Updates(UpdatesEvent),
+    Auth(AuthEvent),
+    Input(InputEvent),
+    HomeResolve(HomeResolveEvent),
+    HomeSearch(HomeSearchEvent),
+    HomeFilter(HomeFilterEvent),
+    HomeEnrich(EnrichEvent),
+    HomeDetails(HomeDetailsEvent),
+    HomeSize(HomeSizeEvent),
+    HomeCover(HomeCoverEvent),
+    MirrorProbe(MirrorProbeEvent),
+    Update(UpdateEvent),
+}
+
+/// The first event already sitting in any of the listed receivers, polled in the
+/// order given (the `select!`'s own arm order) and never awaiting. `None` when
+/// the whole set is momentarily empty, which is the loop's cue to render.
+macro_rules! next_queued {
+    ($($rx:ident => $variant:ident),+ $(,)?) => {{
+        let mut queued: Option<LoopEvent> = None;
+        $(
+            if queued.is_none()
+                && let Ok(event) = $rx.try_recv()
+            {
+                queued = Some(LoopEvent::$variant(event));
+            }
+        )+
+        queued
+    }};
+}
+
 pub async fn run(
     config: Config,
     startup_notice: Option<String>,
@@ -339,123 +374,66 @@ pub async fn run(
     while !should_quit {
         render_frame(&mut terminal, &app)?;
 
-        tokio::select! {
-            Some(event) = download_rx.recv() => {
-                trace!(?event, "Received download event");
-                if let Some(completed_id) = download_finished_id(&event) {
-                    debug!(download_id = completed_id, "Download handle finished; awaiting join");
-                    if let Some(handle) = active_downloads.remove(&completed_id) {
-                        tokio::spawn(async move {
-                            handle.wait().await;
-                        });
-                    }
-                }
-                app.handle_download_event(event);
-            }
-            Some(event) = updates_rx.recv() => {
-                trace!(?event, "Received updates event");
-                // The handler may hand back a follow-up (the auto-fetch of the
-                // missing-set enrichment's first page after a scan lands); run it
-                // through the same dispatch, mirroring the search/filter arms.
-                let follow_up = handle_updates_event(event, &mut app, &updates_tx);
-                should_quit = dispatch_command(
-                    follow_up,
-                    &mut app,
-                    &download_tx,
-                    &updates_tx,
-                    &auth_tx,
-                    &update_tx,
-                    &mut active_downloads,
-                    &mut tasks,
-                );
-            }
-            Some(event) = auth_rx.recv() => {
-                trace!(?event, "Received auth event");
-                // Clear the stored handle once its task reports completion.
-                // Reissue + logout are fire-and-forget (never stored), so a
-                // queued ReissueComplete must not wipe a live login/verify handle.
-                if matches!(
-                    event,
-                    AuthEvent::LazerLoginComplete(_) | AuthEvent::VerificationComplete(_)
-                ) {
-                    tasks.login = None;
-                }
-                handle_auth_event(event, &mut app);
-            }
-            Some(input) = input_rx.recv() => {
-                trace!(?input, "Processing input event");
-                should_quit = handle_input(
-                    input,
-                    &mut app,
-                    &download_tx,
-                    &updates_tx,
-                    &auth_tx,
-                    &update_tx,
-                    &mut active_downloads,
-                    &mut tasks,
-                );
-            }
-            Some(event) = home_resolve_rx.recv() => {
-                trace!(?event, "Received home resolve event");
-                handle_home_resolve_event(event, &mut app.home);
-            }
-            Some(event) = home_search_rx.recv() => {
-                trace!(?event, "Received home search event");
-                // The handler may hand back a follow-up (a size probe of the
-                // checked osu results); run it through the same dispatch.
-                let follow_up = handle_home_search_event(event, &mut app);
-                should_quit = dispatch_command(
-                    follow_up,
-                    &mut app,
-                    &download_tx,
-                    &updates_tx,
-                    &auth_tx,
-                    &update_tx,
-                    &mut active_downloads,
-                    &mut tasks,
-                );
-            }
-            Some(event) = home_filter_rx.recv() => {
-                trace!(?event, "Received home filter event");
-                // The handler may hand back a follow-up command (the auto-fetch
-                // of the first details page); run it through the same dispatch.
-                let follow_up = handle_home_filter_event(event, &mut app);
-                should_quit = dispatch_command(
-                    follow_up,
-                    &mut app,
-                    &download_tx,
-                    &updates_tx,
-                    &auth_tx,
-                    &update_tx,
-                    &mut active_downloads,
-                    &mut tasks,
-                );
-            }
-            Some(event) = home_enrich_rx.recv() => {
-                trace!(?event, "Received home enrich event");
-                handle_enrich_event(event, &mut app);
-            }
-            Some(event) = home_details_rx.recv() => {
-                trace!(?event, "Received home details event");
-                handle_home_details_event(event, &mut app);
-            }
-            Some(event) = home_size_rx.recv() => {
-                trace!(?event, "Received home size event");
-                handle_home_size_event(event, &mut app.home.find);
-            }
-            Some(event) = home_cover_rx.recv() => {
-                trace!(?event, "Received home cover event");
-                handle_home_cover_event(event, &mut app);
-            }
-            Some(event) = mirror_probe_rx.recv() => {
-                trace!(?event, "Received mirror probe event");
-                handle_mirror_probe_event(event, &mut app.home);
-            }
-            Some(event) = update_rx.recv() => {
-                trace!(?event, "Received update event");
-                handle_update_event(event, &mut app);
-            }
+        let event = tokio::select! {
+            Some(event) = download_rx.recv() => LoopEvent::Download(event),
+            Some(event) = updates_rx.recv() => LoopEvent::Updates(event),
+            Some(event) = auth_rx.recv() => LoopEvent::Auth(event),
+            Some(event) = input_rx.recv() => LoopEvent::Input(event),
+            Some(event) = home_resolve_rx.recv() => LoopEvent::HomeResolve(event),
+            Some(event) = home_search_rx.recv() => LoopEvent::HomeSearch(event),
+            Some(event) = home_filter_rx.recv() => LoopEvent::HomeFilter(event),
+            Some(event) = home_enrich_rx.recv() => LoopEvent::HomeEnrich(event),
+            Some(event) = home_details_rx.recv() => LoopEvent::HomeDetails(event),
+            Some(event) = home_size_rx.recv() => LoopEvent::HomeSize(event),
+            Some(event) = home_cover_rx.recv() => LoopEvent::HomeCover(event),
+            Some(event) = mirror_probe_rx.recv() => LoopEvent::MirrorProbe(event),
+            Some(event) = update_rx.recv() => LoopEvent::Update(event),
             else => break,
+        };
+
+        should_quit = apply_event(
+            event,
+            &mut app,
+            &download_tx,
+            &updates_tx,
+            &auth_tx,
+            &update_tx,
+            &mut active_downloads,
+            &mut tasks,
+        );
+
+        // Everything else already queued goes through the same handlers before
+        // the next frame. A key repeat outpacing the frame cost would otherwise
+        // buy a frame per event off unbounded channels, and the backlog keeps
+        // the list moving after the key is released.
+        while !should_quit {
+            let Some(event) = next_queued!(
+                download_rx => Download,
+                updates_rx => Updates,
+                auth_rx => Auth,
+                input_rx => Input,
+                home_resolve_rx => HomeResolve,
+                home_search_rx => HomeSearch,
+                home_filter_rx => HomeFilter,
+                home_enrich_rx => HomeEnrich,
+                home_details_rx => HomeDetails,
+                home_size_rx => HomeSize,
+                home_cover_rx => HomeCover,
+                mirror_probe_rx => MirrorProbe,
+                update_rx => Update,
+            ) else {
+                break;
+            };
+            should_quit = apply_event(
+                event,
+                &mut app,
+                &download_tx,
+                &updates_tx,
+                &auth_tx,
+                &update_tx,
+                &mut active_downloads,
+                &mut tasks,
+            );
         }
     }
 
@@ -513,6 +491,143 @@ pub async fn run(
     // explicit cleanup here keeps it in exactly one place across all exit paths.
 
     Ok(())
+}
+
+/// Apply one [`LoopEvent`], returning `true` only when the app should quit.
+/// Every arm is the loop's own handling for that channel; the loop calls it both
+/// for the event `select!` woke on and for each one already queued behind it.
+#[allow(clippy::too_many_arguments)]
+fn apply_event(
+    event: LoopEvent,
+    app: &mut App,
+    download_tx: &mpsc::UnboundedSender<DownloadEvent>,
+    updates_tx: &mpsc::UnboundedSender<UpdatesEvent>,
+    auth_tx: &mpsc::UnboundedSender<AuthEvent>,
+    update_tx: &mpsc::UnboundedSender<UpdateEvent>,
+    downloads: &mut HashMap<DownloadId, DownloadHandle>,
+    tasks: &mut BackgroundTasks,
+) -> bool {
+    match event {
+        LoopEvent::Download(event) => {
+            trace!(?event, "Received download event");
+            if let Some(completed_id) = download_finished_id(&event) {
+                debug!(
+                    download_id = completed_id,
+                    "Download handle finished; awaiting join"
+                );
+                if let Some(handle) = downloads.remove(&completed_id) {
+                    tokio::spawn(async move {
+                        handle.wait().await;
+                    });
+                }
+            }
+            app.handle_download_event(event);
+        }
+        LoopEvent::Updates(event) => {
+            trace!(?event, "Received updates event");
+            // The handler may hand back a follow-up (the auto-fetch of the
+            // missing-set enrichment's first page after a scan lands); run it
+            // through the same dispatch, mirroring the search/filter arms.
+            let follow_up = handle_updates_event(event, app, updates_tx);
+            return dispatch_command(
+                follow_up,
+                app,
+                download_tx,
+                updates_tx,
+                auth_tx,
+                update_tx,
+                downloads,
+                tasks,
+            );
+        }
+        LoopEvent::Auth(event) => {
+            trace!(?event, "Received auth event");
+            // Clear the stored handle once its task reports completion.
+            // Reissue + logout are fire-and-forget (never stored), so a
+            // queued ReissueComplete must not wipe a live login/verify handle.
+            if matches!(
+                event,
+                AuthEvent::LazerLoginComplete(_) | AuthEvent::VerificationComplete(_)
+            ) {
+                tasks.login = None;
+            }
+            handle_auth_event(event, app);
+        }
+        LoopEvent::Input(input) => {
+            trace!(?input, "Processing input event");
+            return handle_input(
+                input,
+                app,
+                download_tx,
+                updates_tx,
+                auth_tx,
+                update_tx,
+                downloads,
+                tasks,
+            );
+        }
+        LoopEvent::HomeResolve(event) => {
+            trace!(?event, "Received home resolve event");
+            handle_home_resolve_event(event, &mut app.home);
+        }
+        LoopEvent::HomeSearch(event) => {
+            trace!(?event, "Received home search event");
+            // The handler may hand back a follow-up (a size probe of the
+            // checked osu results); run it through the same dispatch.
+            let follow_up = handle_home_search_event(event, app);
+            return dispatch_command(
+                follow_up,
+                app,
+                download_tx,
+                updates_tx,
+                auth_tx,
+                update_tx,
+                downloads,
+                tasks,
+            );
+        }
+        LoopEvent::HomeFilter(event) => {
+            trace!(?event, "Received home filter event");
+            // The handler may hand back a follow-up command (the auto-fetch
+            // of the first details page); run it through the same dispatch.
+            let follow_up = handle_home_filter_event(event, app);
+            return dispatch_command(
+                follow_up,
+                app,
+                download_tx,
+                updates_tx,
+                auth_tx,
+                update_tx,
+                downloads,
+                tasks,
+            );
+        }
+        LoopEvent::HomeEnrich(event) => {
+            trace!(?event, "Received home enrich event");
+            handle_enrich_event(event, app);
+        }
+        LoopEvent::HomeDetails(event) => {
+            trace!(?event, "Received home details event");
+            handle_home_details_event(event, app);
+        }
+        LoopEvent::HomeSize(event) => {
+            trace!(?event, "Received home size event");
+            handle_home_size_event(event, &mut app.home.find);
+        }
+        LoopEvent::HomeCover(event) => {
+            trace!(?event, "Received home cover event");
+            handle_home_cover_event(event, app);
+        }
+        LoopEvent::MirrorProbe(event) => {
+            trace!(?event, "Received mirror probe event");
+            handle_mirror_probe_event(event, &mut app.home);
+        }
+        LoopEvent::Update(event) => {
+            trace!(?event, "Received update event");
+            handle_update_event(event, app);
+        }
+    }
+    false
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -843,6 +958,10 @@ fn download_finished_id(event: &DownloadEvent) -> Option<DownloadId> {
 #[cfg(test)]
 #[path = "../../../tests/unit/runtime_picker.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../tests/unit/runtime_loop.rs"]
+mod loop_tests;
 
 fn signal_abort_downloads(downloads: &mut HashMap<DownloadId, DownloadHandle>) {
     if downloads.is_empty() {

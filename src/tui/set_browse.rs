@@ -81,19 +81,23 @@ pub fn render(
     // preview's id-only detail; list rows themselves stay id-only, no per-row cue.
     let enriching = browse.is_enriching();
     let label_width = list_label_width(area);
-    let list_items: Vec<ListItem<'static>> = browse
-        .rows
-        .iter()
-        .enumerate()
-        .map(|(i, row)| {
-            list_row(
-                row,
-                browse.is_selected(row.id),
-                list_focused && cursor == Some(i),
-                label_width,
-            )
-        })
-        .collect();
+    // Deferred to the resolved viewport: a find page can hold thousands of rows
+    // and every one of them built per frame is the whole idle cost of the tab.
+    let list_items: widgets::ListRows<'_> = Box::new(move |window| {
+        let start = window.start;
+        browse.rows[window]
+            .iter()
+            .enumerate()
+            .map(|(i, row)| {
+                list_row(
+                    row,
+                    browse.is_selected(row.id),
+                    list_focused && cursor == Some(start + i),
+                    label_width,
+                )
+            })
+            .collect()
+    });
 
     // The title rides as the preview's lead (`master_detail` wraps it to two
     // lines beside the cover); the fields fill `preview_items`. An id-only or
@@ -110,11 +114,15 @@ pub fn render(
         None => (None, Box::new(|_| Vec::new()) as PreviewItems<'_>),
     };
 
-    // The highlighted row's two cover variants, once loaded: the square column
-    // and the wide upgrade. Only pass a cover when at least one variant is ready,
-    // so an id-only or unfetched row still reaches the text-only fallthrough.
+    // The highlighted row's two cover variants, once loaded AND once the
+    // highlight has settled on that row (`Covers::is_settled`) — a cover put on
+    // screen while the cursor is still moving costs a full re-send of the image
+    // per keystroke on the iTerm2 protocol. Only pass a cover when at least one
+    // variant is ready, so an id-only or unfetched row still reaches the
+    // text-only fallthrough.
     let preview_image = covers
         .zip(browse.highlighted_row())
+        .filter(|(covers, row)| covers.is_settled(row.id))
         .and_then(|(covers, row)| {
             let cover = PreviewCover {
                 square: covers.square_for(row.id),
@@ -127,6 +135,7 @@ pub fn render(
         status: None,
         list_title: list_title.into(),
         list_meta: Some(widgets::meta_with_loading_cue(list_meta, enriching, tick)),
+        list_len: browse.rows.len(),
         list_items,
         list_selected: cursor,
         list_offset: &browse.list_offset,
@@ -364,7 +373,7 @@ fn spread_rows(
         .iter()
         .position(|&i| i == focused)
         .unwrap_or(focused);
-    let meter = spread_shows_meter(
+    let stars = spread_stars(
         width.saturating_sub(SPREAD_CARET_WIDTH),
         beatmaps.iter().map(|b| b.difficulty_rating),
     );
@@ -374,7 +383,7 @@ fn spread_rows(
             &beatmaps[i],
             pos == focused,
             width,
-            meter,
+            stars,
         )));
     }
     let focused_diff = &beatmaps[indices[focused]];
@@ -418,7 +427,7 @@ fn recorded_diff_rows(d: &BeatmapDetails, width: u16) -> Vec<ListItem<'static>> 
     let header = widgets::right_aligned_spans(
         &d.version,
         Style::new().fg(text_dim()).bold(),
-        star_meter_spans(d.stars, spread_shows_meter(width, std::iter::once(d.stars))),
+        star_meter_spans(d.stars, spread_stars(width, std::iter::once(d.stars))),
         width,
     );
     let mut rows = vec![ListItem::new(Line::from(header))];
@@ -441,14 +450,14 @@ fn recorded_diff_rows(d: &BeatmapDetails, width: u16) -> Vec<ListItem<'static>> 
 /// against the right edge of `width`. Anchoring the figure to the edge rather
 /// than to the widest name keeps a sentence-length difficulty name from pushing
 /// the whole rating off the pane; such a name is ellipsised instead. `meter`
-/// comes from [`spread_shows_meter`], one decision for the whole spread.
-fn spread_line(diff: &Beatmap, focused: bool, width: u16, meter: bool) -> Line<'static> {
+/// `stars` comes from [`spread_stars`], one decision for the whole spread.
+fn spread_line(diff: &Beatmap, focused: bool, width: u16, stars: SpreadStars) -> Line<'static> {
     let mut spans: Vec<Span<'static>> =
         vec![(if focused { "▸ " } else { "  " }).fg(if focused { accent() } else { text_faint() })];
     spans.extend(widgets::right_aligned_spans(
         &diff.version,
         Style::new().fg(if focused { text() } else { text_dim() }),
-        star_meter_spans(diff.difficulty_rating, meter),
+        star_meter_spans(diff.difficulty_rating, stars),
         width.saturating_sub(SPREAD_CARET_WIDTH),
     ));
     Line::from(spans)
@@ -513,14 +522,16 @@ fn objects_row(circles: u32, sliders: u32, spinners: u32) -> ListItem<'static> {
 /// [`SPREAD_BAR_WIDTH`] cell bar (one cell per star, saturating past 10).
 /// Filled cells take the tier colour; empty cells are faint. `meter` off drops
 /// the bar and its separating space, leaving the rating alone — see
-/// [`spread_shows_meter`].
-fn star_meter_spans(stars: f64, meter: bool) -> Vec<Span<'static>> {
+/// [`SpreadStars`], which also carries the columns the rating pads to.
+fn star_meter_spans(stars: f64, cfg: SpreadStars) -> Vec<Span<'static>> {
     let color = stars_color(stars);
-    if !meter {
-        return vec![format!(" ★{stars:.2}").fg(color)];
+    let width = cfg.digit_width;
+    let rating = format!("★{stars:>width$.2}");
+    if !cfg.meter {
+        return vec![format!(" {rating}").fg(color)];
     }
     let filled = stars.round().clamp(0.0, SPREAD_BAR_WIDTH as f64) as usize;
-    let mut spans = vec![format!(" ★{stars:.2} ").fg(color)];
+    let mut spans = vec![format!(" {rating} ").fg(color)];
     if filled > 0 {
         spans.push("█".repeat(filled).fg(color));
     }
@@ -530,17 +541,34 @@ fn star_meter_spans(stars: f64, meter: bool) -> Vec<Span<'static>> {
     spans
 }
 
-/// Whether a spread whose rows right-align inside `label_width` (the row width
-/// past its caret column) can seat the meter beside a name still worth reading.
-/// Decided once per block off its widest rating (`★10.24` is a cell wider than
-/// `★9.87`) so every row in one spread agrees, rather than one diff dropping its
-/// meter because of its own rating's width.
-fn spread_shows_meter(label_width: u16, ratings: impl Iterator<Item = f64>) -> bool {
-    let rating_w = ratings
-        .map(|stars| Span::raw(format!(" ★{stars:.2} ")).width() as u16)
+/// How one spread block lays its star column out. Both calls are per block, off
+/// its widest rating, so every row in one spread agrees rather than each diff
+/// answering for itself.
+#[derive(Clone, Copy)]
+struct SpreadStars {
+    /// Whether the meter fits beside a name still worth reading.
+    meter: bool,
+    /// Columns the rating's DIGITS pad to, between the `★` and the number. The
+    /// right-anchored block already lines the meters up whatever the rating
+    /// costs; only the glyph moves, and it moves because `10.24` runs a column
+    /// wider than `9.87`. Padding here rather than around the whole token is
+    /// what pins the `★`. A block with no 10+ rating pads nothing.
+    digit_width: usize,
+}
+
+/// Resolve [`SpreadStars`] for a block whose rows right-align inside
+/// `label_width` (the row width past its caret column).
+fn spread_stars(label_width: u16, ratings: impl Iterator<Item = f64>) -> SpreadStars {
+    let digit_width = ratings
+        .map(|stars| Span::raw(format!("{stars:.2}")).width())
         .max()
         .unwrap_or(0);
-    label_width.saturating_sub(rating_w + SPREAD_BAR_WIDTH as u16) >= SPREAD_NAME_MIN
+    // A separating space either side of `★` + the digits, then the meter.
+    let block = (2 + 1 + digit_width + SPREAD_BAR_WIDTH) as u16;
+    SpreadStars {
+        meter: label_width.saturating_sub(block) >= SPREAD_NAME_MIN,
+        digit_width,
+    }
 }
 
 /// A success-rate bar row: `success  NN% ██████░░░░`, the fill being

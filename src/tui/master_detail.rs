@@ -17,9 +17,9 @@
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect, Size},
-    style::Style,
+    style::{Style, Stylize},
     text::{Line, Span},
-    widgets::{Clear, ListItem, Paragraph},
+    widgets::{Block, Clear, ListItem, Paragraph},
 };
 use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};
@@ -108,7 +108,11 @@ pub struct MasterDetail<'a> {
     pub status: Option<Line<'static>>,
     pub list_title: Cow<'static, str>,
     pub list_meta: Option<Line<'static>>,
-    pub list_items: Vec<ListItem<'static>>,
+    /// Total row count, and a builder for the slice the viewport resolves to.
+    /// Deferred like [`PreviewItems`], for a different reason: a flat browse can
+    /// hold thousands of rows and only the visible handful reaches the screen.
+    pub list_len: usize,
+    pub list_items: widgets::ListRows<'a>,
     pub list_selected: Option<usize>,
     pub list_offset: &'a Cell<usize>,
     pub preview_title: Cow<'static, str>,
@@ -171,22 +175,28 @@ fn render_panes(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
 
 fn render_list_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
     let focused = view.focused == Pane::List;
-    widgets::render_scrollable_panel(
-        frame,
-        area,
+    let block = widgets::panel_block(
         view.list_title.clone(),
         view.list_meta.clone(),
-        view.list_items.clone(),
-        view.list_selected.unwrap_or(0),
+        focused,
+        true,
+    );
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    // Mirrors `render_scrollable_panel` (block + list + scrollbar) minus the
+    // text-cursor pass a browse list never needs, over the windowed builder.
+    widgets::render_windowed_list(
+        frame,
+        inner,
+        view.list_len,
+        &view.list_items,
+        Some(view.list_selected.unwrap_or(0)),
         // Highlight tint only while this pane owns focus AND a row is actually
         // selected — parked on the action bar (`list_selected == None`) nothing
         // in the list is highlighted, so the tint doesn't double up with the
         // action bar's. The row still scrolls into view either way (see
         // `render_list`'s doc contract).
         focused && view.list_selected.is_some(),
-        None,
-        focused,
-        true,
         view.list_offset,
     );
 }
@@ -233,7 +243,15 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
             highlight,
             view.preview_offset,
         );
-        frame.render_widget(Clear, cover_band(inner, text_area, cover_area));
+        // `Clear` alone resets the band to `Color::Reset`, which is the raw
+        // terminal background rather than the app's: `tui::draw` paints the theme
+        // bg over every frame, and the OSC-11 override that would otherwise cover
+        // for it is emitted only for an `Rgb` theme colour. Repainting the band
+        // keeps the gap columns (which the image itself never touches) and a
+        // failed encode from showing through.
+        let band = cover_band(inner, cover_area);
+        frame.render_widget(Clear, band);
+        frame.render_widget(Block::default().bg(super::bg()), band);
         // `resize_encode_render` mutates the cached protocol, hence the `RefCell`
         // borrow under this immutable-app draw path.
         frame.render_stateful_widget(
@@ -267,13 +285,16 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
 /// The columns the cover owns for the rows it spans: the gap plus the image
 /// itself, from the pane's top down to the image's last row. Wiping it is what
 /// keeps a row that overruns the text column from running under the image while
-/// rows below the image keep the full width.
-fn cover_band(inner: Rect, text_area: Rect, cover_area: Rect) -> Rect {
+/// rows below the image keep the full width. Derived from `cover_area` alone so
+/// the two rects cannot drift apart, and clamped to `inner`: `Clear` intersects
+/// with the whole frame buffer, so an over-tall fitted size would otherwise wipe
+/// the panel's bottom border.
+fn cover_band(inner: Rect, cover_area: Rect) -> Rect {
     Rect {
-        x: text_area.right(),
+        x: cover_area.x.saturating_sub(COVER_GAP),
         y: inner.y,
-        width: inner.width - text_area.width,
-        height: cover_area.height,
+        width: cover_area.width + COVER_GAP,
+        height: cover_area.height.min(inner.height),
     }
 }
 

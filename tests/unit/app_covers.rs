@@ -102,6 +102,28 @@ fn poll_prefetch_fires_once_after_the_debounce_and_then_stops() {
 }
 
 #[test]
+fn is_settled_tracks_the_id_that_earned_the_dwell() {
+    let mut covers = Covers::new();
+    for _ in 0..COVER_DEBOUNCE_TICKS + 2 {
+        covers.poll_prefetch(Some(1));
+    }
+    assert!(covers.is_settled(1), "the dwelt-on id is settled");
+    // A counter-only reading would call 2 settled here: the counter is well past
+    // the threshold, it just belongs to id 1.
+    assert!(
+        !covers.is_settled(2),
+        "a neighbour never held the highlight"
+    );
+
+    covers.poll_prefetch(Some(2));
+    assert!(
+        !covers.is_settled(1),
+        "the move away drops the old id immediately"
+    );
+    assert!(!covers.is_settled(2), "the new id starts its own dwell");
+}
+
+#[test]
 fn poll_prefetch_resets_when_the_highlight_moves() {
     let mut covers = Covers::new();
     covers.poll_prefetch(Some(1));
