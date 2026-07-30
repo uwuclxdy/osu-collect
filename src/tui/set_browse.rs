@@ -149,6 +149,7 @@ pub fn render(
         // selectable list, so no row is marked selected.
         preview_selected: None,
         preview_offset: &browse.preview_offset,
+        preview_max_offset: &browse.preview_max_offset,
         preview_image,
         preview_lead,
         focused: if browse.preview_focused() {

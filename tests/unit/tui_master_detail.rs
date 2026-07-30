@@ -33,6 +33,7 @@ fn sample_items(n: usize) -> Vec<ListItem<'static>> {
 fn sample_view<'a>(
     list_offset: &'a Cell<usize>,
     preview_offset: &'a Cell<usize>,
+    preview_max_offset: &'a Cell<usize>,
 ) -> MasterDetail<'a> {
     MasterDetail {
         status: None,
@@ -47,6 +48,7 @@ fn sample_view<'a>(
         preview_items: Box::new(|_| sample_items(2)),
         preview_selected: Some(0),
         preview_offset,
+        preview_max_offset,
         preview_image: None,
         preview_lead: None,
         focused: Pane::List,
@@ -57,7 +59,8 @@ fn sample_view<'a>(
 fn wide_area_shows_both_panes() {
     let list_offset = Cell::new(0);
     let preview_offset = Cell::new(0);
-    let view = sample_view(&list_offset, &preview_offset);
+    let preview_max = Cell::new(0);
+    let view = sample_view(&list_offset, &preview_offset, &preview_max);
 
     let output = render_to_string(80, 20, &view);
     assert!(output.contains("ITEMS"), "list title should render");
@@ -68,7 +71,8 @@ fn wide_area_shows_both_panes() {
 fn narrow_area_shows_only_focused_pane() {
     let list_offset = Cell::new(0);
     let preview_offset = Cell::new(0);
-    let view = sample_view(&list_offset, &preview_offset);
+    let preview_max = Cell::new(0);
+    let view = sample_view(&list_offset, &preview_offset, &preview_max);
 
     let output = render_to_string(40, 20, &view);
     assert!(output.contains("ITEMS"), "focused list title should render");
@@ -82,7 +86,8 @@ fn narrow_area_shows_only_focused_pane() {
 fn the_preview_row_builder_is_called_with_the_pane_text_width() {
     let list_offset = Cell::new(0);
     let preview_offset = Cell::new(0);
-    let mut view = sample_view(&list_offset, &preview_offset);
+    let preview_max = Cell::new(0);
+    let mut view = sample_view(&list_offset, &preview_offset, &preview_max);
     view.preview_items = Box::new(|w| {
         vec![ListItem::new(format!(
             "built {} {} {}",
@@ -164,6 +169,7 @@ fn a_straddling_block_waits_for_the_seam_only_when_it_fits_below() {
 fn empty_list_items_does_not_panic() {
     let list_offset = Cell::new(0);
     let preview_offset = Cell::new(0);
+    let preview_max_offset = Cell::new(0);
     let view = MasterDetail {
         status: Some(Line::from("0 of 0 selected")),
         list_title: LIST_TITLE.into(),
@@ -177,6 +183,7 @@ fn empty_list_items_does_not_panic() {
         preview_items: Box::new(|_| Vec::new()),
         preview_selected: None,
         preview_offset: &preview_offset,
+        preview_max_offset: &preview_max_offset,
         preview_image: None,
         preview_lead: None,
         focused: Pane::List,
@@ -191,7 +198,8 @@ fn empty_list_items_does_not_panic() {
 fn list_meta_renders_in_top_border() {
     let list_offset = Cell::new(0);
     let preview_offset = Cell::new(0);
-    let mut view = sample_view(&list_offset, &preview_offset);
+    let preview_max = Cell::new(0);
+    let mut view = sample_view(&list_offset, &preview_offset, &preview_max);
     view.list_meta = Some(Line::from("651 new maps"));
 
     let output = render_to_string(80, 20, &view);
@@ -330,7 +338,8 @@ fn wrap_to_lines_is_empty_for_a_zero_budget() {
 fn owned_preview_title_renders() {
     let list_offset = Cell::new(0);
     let preview_offset = Cell::new(0);
-    let mut view = sample_view(&list_offset, &preview_offset);
+    let preview_max = Cell::new(0);
+    let mut view = sample_view(&list_offset, &preview_offset, &preview_max);
     // A proper-noun preview title (original case preserved) — the collection
     // name in the update browse.
     view.preview_title = "AIM GYM MEGAPACK".to_string().into();

@@ -217,6 +217,7 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource, tick: u
         preview_items: Box::new(preview_items),
         preview_selected,
         preview_offset: &form.preview_offset,
+        preview_max_offset: &form.preview_max_offset,
         // The missing-set preview is a list with no single highlighted set, so
         // no cover and no title lead.
         preview_image: None,

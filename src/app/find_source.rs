@@ -215,6 +215,10 @@ pub struct SetBrowse {
     /// height and writes the resolved value back, so the bottom is settled in
     /// the one place that knows where it is.
     pub preview_offset: Cell<usize>,
+    /// The bottom of the preview at the pane's last-rendered size, reported by
+    /// the render. `G` reads it instead of parking a value past the end, which a
+    /// following page key would subtract from and land right back on the bottom.
+    pub preview_max_offset: Cell<usize>,
     /// Sort order for the difficulty spread in the preview pane. Defaults to
     /// [`DiffSort::StarsAsc`] so easier diffs list first.
     pub diff_sort: DiffSort,
@@ -441,9 +445,16 @@ impl SetBrowse {
     /// resets the diff cursor to hardest.
     pub fn scroll_to_edge(&mut self, top: bool) {
         if self.preview_focused {
-            // The bottom is the render's to resolve (it owns the row count), so
-            // `G` asks past any content and keeps what the clamp writes back.
-            self.preview_offset.set(if top { 0 } else { usize::MAX });
+            // The bottom comes from the last frame (`preview_max_offset`), not
+            // from a value past the end: the clamp reads those as the bottom but
+            // a page key does not, so `G` then `PageUp` inside one coalesced
+            // event batch — no frame between them to resolve it — would subtract
+            // a page from the sentinel and stay put.
+            self.preview_offset.set(if top {
+                0
+            } else {
+                self.preview_max_offset.get()
+            });
             return;
         }
         self.reset_preview();

@@ -1660,6 +1660,9 @@ fn the_last_row_is_reachable_at_every_pane_height() {
 fn the_edge_keys_jump_a_focused_preview_end_to_end() {
     let mut browse = tall_preview_browse();
     let covers = covers_square_only(7);
+    // The pane is on screen before any key reaches it, which is what tells the
+    // model where the bottom is.
+    render_grid(&browse, Some(&covers), 90, 30);
 
     browse.scroll_to_edge(false);
     let bottom = render_grid(&browse, Some(&covers), 90, 30);
@@ -1697,5 +1700,61 @@ fn a_blurred_preview_renders_from_its_top_whatever_the_offset_says() {
     assert!(
         cover_last_row(&buffer).is_some(),
         "which brings the cover back with it"
+    );
+}
+
+/// A spread-only browse (no nzbasic details, so no `METADATA` tail), descended
+/// with the preview focused.
+///
+/// The names are long on purpose: a name that fits the beside-the-cover band
+/// renders the same at both widths, which would leave any assertion about WHICH
+/// band a row was built at unable to fail.
+fn spread_only_browse(diffs: usize) -> SetBrowse {
+    let meta = BeatmapSetMeta {
+        beatmaps: (0..diffs)
+            .map(|i| spread_diff(&format!("Extra Stage Difficulty {i}"), 2.0 + i as f64 * 0.5))
+            .collect(),
+        ..sample_meta(7)
+    };
+    let mut browse = browse_with(vec![BrowseRow {
+        id: 7,
+        meta: Some(meta),
+    }]);
+    browse.descend();
+    browse.focus_preview();
+    browse
+}
+
+#[test]
+fn a_scroll_the_clamp_undoes_renders_like_one_that_never_happened() {
+    // Rows the cover sits beside are built narrow to leave it its column. On the
+    // frame where a stale offset clamps back to the top the cover is drawn after
+    // all, so those rows have to be rebuilt at the narrow band — laid out at the
+    // full width instead, the artwork eats their right end.
+    // 105 wide seats an 11-row square cover, and 21 difficulties put the spread
+    // block past the room under it — so the block declines to wait and builds in
+    // the narrow band, which is what the two builds disagree about.
+    let covers = covers_square_only(7);
+    let mut scrolled = spread_only_browse(21);
+    render_grid(&scrolled, Some(&covers), 105, 36);
+    scrolled.page_down();
+    let mid = render_grid(&scrolled, Some(&covers), 105, 36);
+    assert!(
+        scrolled.preview_offset.get() > 0 && cover_last_row(&mid).is_none(),
+        "the fixture has to actually leave the top for the clamp to undo it"
+    );
+
+    // A taller pane holds every row, so the offset resolves back to 0.
+    let clamped = render_grid(&scrolled, Some(&covers), 105, 40);
+    let never = render_grid(&spread_only_browse(21), Some(&covers), 105, 40);
+    assert_eq!(
+        scrolled.preview_offset.get(),
+        0,
+        "the taller pane leaves nothing to scroll"
+    );
+    assert_eq!(
+        buffer_text(&clamped),
+        buffer_text(&never),
+        "a clamped-back frame must be indistinguishable from one never scrolled"
     );
 }

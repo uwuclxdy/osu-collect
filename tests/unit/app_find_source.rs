@@ -1177,3 +1177,26 @@ fn moving_the_list_cursor_returns_the_preview_to_the_top() {
         "another row is another preview, read from its top"
     );
 }
+
+#[test]
+fn a_page_key_after_a_jump_to_the_bottom_steps_back_one_page() {
+    let mut browse = SetBrowse::new();
+    browse.set_rows(rows(&[1]), &HashMap::new());
+    browse.descend();
+    browse.focus_preview();
+    // What the render reports after drawing the pane: 40 rows of content in a
+    // 28-row pane leaves 12 to scroll.
+    browse.preview_max_offset.set(12);
+
+    browse.scroll_to_edge(false);
+    assert_eq!(
+        browse.preview_offset.get(),
+        12,
+        "`G` lands on the bottom row"
+    );
+    // No frame runs between two keys in one coalesced batch, so the page key has
+    // to step back from a real row index — an offset parked past the end would
+    // still read as the bottom after subtracting a page, swallowing this key.
+    browse.page_up();
+    assert_eq!(browse.preview_offset.get(), 2);
+}

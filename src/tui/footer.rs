@@ -421,27 +421,10 @@ fn set_browse_hints(
     form: &HomeTab,
     browse: &crate::app::SetBrowse,
 ) -> (Vec<&'static str>, Option<&'static str>) {
-    // The browse ascends on esc rather than quitting; that back step is left
-    // unadvertised (esc-to-go-back is universal), so no trailing key.
-    if browse.preview_focused() {
-        // `↑↓` steps the difficulty here and `s` sorts that spread; the pane
-        // itself scrolls on the page keys, unadvertised like every other list's
-        // paging. A row still waiting on its metadata has no spread, so both keys
-        // are dead there and only the way back is worth naming.
-        if browse.focused_diff_index().is_none() {
-            return (vec![HINT_FOCUS_LIST], None);
-        }
-        return (vec![HINT_DIFFICULTY, HINT_SORT, HINT_FOCUS_LIST], None);
-    }
-    let mut segments = vec![
-        HINT_SCROLL,
-        HINT_ENTER_TOGGLE,
-        HINT_SELECT_ALL_NONE,
-        HINT_FOCUS_PREVIEW,
-    ];
     // `m` loads more: the next osu results page, or the next osu-batch enrichment
     // page for an id-only browse (nzbasic find results / collection browse&pick)
-    // — matching the `m` key handler.
+    // — matching the `m` key handler, which is gated on the source and the pager
+    // alone, so it fires from either pane.
     let more = match form.source {
         GetMapsSource::Find => match form.find.results_backend() {
             Some(FindBackend::Osu) => form.find.next_cursor.is_some(),
@@ -451,6 +434,28 @@ fn set_browse_hints(
         GetMapsSource::Collection => form.collection_browse.has_more_enrichment(),
         GetMapsSource::Update => false,
     };
+    // The browse ascends on esc rather than quitting; that back step is left
+    // unadvertised (esc-to-go-back is universal), so no trailing key.
+    if browse.preview_focused() {
+        // `↑↓` steps the difficulty here and `s` sorts that spread; the pane
+        // itself scrolls on the page keys, unadvertised like every other list's
+        // paging. A row still waiting on its metadata has no spread, so both keys
+        // are dead there — and `m` is the one that ends that wait.
+        if browse.focused_diff_index().is_none() {
+            let mut segments = vec![HINT_FOCUS_LIST];
+            if more {
+                segments.insert(0, HINT_MORE);
+            }
+            return (segments, None);
+        }
+        return (vec![HINT_DIFFICULTY, HINT_SORT, HINT_FOCUS_LIST], None);
+    }
+    let mut segments = vec![
+        HINT_SCROLL,
+        HINT_ENTER_TOGGLE,
+        HINT_SELECT_ALL_NONE,
+        HINT_FOCUS_PREVIEW,
+    ];
     if more {
         segments.push(HINT_MORE);
     }

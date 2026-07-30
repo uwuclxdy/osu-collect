@@ -224,6 +224,9 @@ pub struct UpdateSource {
     pub list_offset: std::cell::Cell<usize>,
     /// Persisted preview-list scroll offset.
     pub preview_offset: std::cell::Cell<usize>,
+    /// The preview's bottom offset, written by the render. Unused here (this
+    /// preview scrolls by cursor), part of the shared two-pane widget's contract.
+    pub preview_max_offset: std::cell::Cell<usize>,
     /// osu-batch backfill for the missing-set preview: the pager walks one diff
     /// id per missing set, folding the returned set metadata into `meta` (keyed by
     /// set id) so the preview rows read `artist - title` instead of a bare `#id`.
@@ -239,6 +242,7 @@ impl UpdateSource {
             message: None,
             list_offset: std::cell::Cell::new(0),
             preview_offset: std::cell::Cell::new(0),
+            preview_max_offset: std::cell::Cell::new(0),
             enrich: EnrichPager::default(),
             meta: HashMap::new(),
         }

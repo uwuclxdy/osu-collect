@@ -181,6 +181,11 @@ pub struct MasterDetail<'a> {
     pub preview_items: PreviewItems<'a>,
     pub preview_selected: Option<usize>,
     pub preview_offset: &'a Cell<usize>,
+    /// Written by the render: the largest offset `preview_offset` can hold at the
+    /// pane's current size. A caller jumping to the bottom sets the offset from
+    /// this rather than from a value it hopes is past the end, so the next page
+    /// key steps back from a real row index.
+    pub preview_max_offset: &'a Cell<usize>,
     /// The highlighted row's ready cover protocols. `Some` seats a right-hand
     /// image column (square or wide, per pane size) when there's room; `None`
     /// (the default for image-less consumers) renders the preview text-only.
@@ -300,15 +305,27 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
     // clamp is exact here rather than a frame behind — and resolving it BEFORE
     // the cover decision is what brings the artwork back in the same frame a
     // taller pane leaves nothing to scroll. A key-driven loop may draw no other.
-    let offset = view
-        .preview_offset
-        .get()
-        .min(items.len().saturating_sub(inner.height as usize));
+    let max_offset = items.len().saturating_sub(inner.height as usize);
+    let offset = view.preview_offset.get().min(max_offset);
     view.preview_offset.set(offset);
+    // Where the bottom is, for a caller that wants to jump to it. Reported rather
+    // than left for the caller to guess: a sentinel offset "past the end" reads as
+    // the bottom to the clamp but not to a page key, which would then subtract a
+    // page from the sentinel and land back on the bottom.
+    view.preview_max_offset.set(max_offset);
     if scrolled && offset == 0 {
         // Clamped back to the top, so a cover is drawn after all and the rows it
         // sits beside have to leave it its column. The only frame built twice.
-        items = preview_rows(view, inner, cover_rows, text_width, false);
+        let narrow = preview_rows(view, inner, cover_rows, text_width, false);
+        // Both builds exist only here, so this is the one place the count
+        // invariance `preview_rows` rests on can be checked at all.
+        debug_assert_eq!(
+            narrow.len(),
+            items.len(),
+            "a preview row builder changed its ROW COUNT with the width, which \
+             strands the rows a pushdown pad puts past the pane's bottom edge"
+        );
+        items = narrow;
     }
     let scrolled = offset > 0;
     // Rows run the pane's full width and the image's own rows are cleared back to
