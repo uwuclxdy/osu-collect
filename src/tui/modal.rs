@@ -95,6 +95,10 @@ impl HelpRow {
 const GLOBAL: &[HelpRow] = &[
     HelpRow::new("← → / tab", "switch tabs"),
     HelpRow::new("↑ ↓", "move / scroll"),
+    // The only keys that reach a browse preview's lower rows, where `↑ ↓` step
+    // the difficulty instead. Listed here rather than in a footer hint, since
+    // every list in the app pages on them.
+    HelpRow::new("pgup pgdn", "page list / scroll preview"),
     HelpRow::new("↵", "activate / toggle / edit field"),
     HelpRow::new("space", "toggle selection"),
     HelpRow::new("c", "switch osu! client"),

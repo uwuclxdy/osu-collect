@@ -62,3 +62,19 @@ fn unmatched_inline_markers_stay_literal() {
     let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
     assert_eq!(text, "a `b and **c");
 }
+
+#[test]
+fn the_help_overlay_advertises_the_preview_scroll() {
+    // `↑ ↓` step the difficulty in a focused browse preview, so the page keys are
+    // the only way to reach the rows past its bottom edge. With no footer hint
+    // for them, the overlay is where that key is discoverable at all.
+    let global: String = super::build_help_lines(crate::app::Tab::Home, false, false)
+        .iter()
+        .map(joined)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        global.contains("pgup pgdn") && global.contains("scroll preview"),
+        "help must name the keys that scroll a preview:\n{global}"
+    );
+}
