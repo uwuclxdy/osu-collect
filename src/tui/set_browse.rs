@@ -20,7 +20,9 @@ use ratatui::{
     widgets::ListItem,
 };
 
-use super::master_detail::{self, MasterDetail, Pane, PreviewCover, PreviewItems, PreviewLead};
+use super::master_detail::{
+    self, MasterDetail, Pane, PreviewCover, PreviewItems, PreviewLead, PreviewWidths,
+};
 use super::theme::stars_color;
 use super::widgets;
 use super::{accent, focused_label, spinner_str, success, text, text_dim, text_faint, warning};
@@ -37,9 +39,10 @@ const BAR_WIDTH: usize = 10;
 const SPREAD_BAR_WIDTH: usize = 10;
 /// Width of the spread's leading focus-caret column (`▸ ` or its blank).
 const SPREAD_CARET_WIDTH: u16 = 2;
-/// Name column a spread row needs before its meter is worth the cells. Under
-/// this the name ellipsises past recognition (`Se…`), so the meter goes and the
-/// `★X.XX` rating it only illustrates stays.
+/// Name column a spread row needs before its meter is worth the cells, and the
+/// ceiling on what the gate reserves for a block of shorter names. A long name
+/// squeezed under this ellipsises past recognition (`Se…`), so there the meter
+/// goes and the `★X.XX` rating it only illustrates stays.
 const SPREAD_NAME_MIN: u16 = 12;
 
 /// Content width available for browse-row label text in the list pane,
@@ -199,7 +202,7 @@ fn preview_lead_and_items<'a>(
                 text: meta.title.clone(),
                 style: Style::new().fg(accent()).bold(),
             }),
-            Box::new(move |width| meta_field_rows(meta, details, focused_idx, diff_sort, width)),
+            Box::new(move |widths| meta_field_rows(meta, details, focused_idx, diff_sort, widths)),
         ),
         None => {
             let id = row.id;
@@ -229,7 +232,7 @@ fn meta_field_rows(
     details: Option<&BeatmapDetails>,
     focused_idx: Option<usize>,
     diff_sort: DiffSort,
-    width: u16,
+    widths: PreviewWidths,
 ) -> Vec<ListItem<'static>> {
     let mut rows = Vec::new();
     // Unicode (original-script) title under the romanised lead, when it differs
@@ -272,9 +275,32 @@ fn meta_field_rows(
     // The difficulty spread is the most scannable beatmap data, so it sits right
     // after the core metadata behind a separator. Secondary set-level extras
     // (tags/genre/dates, nzbasic only) follow below.
-    let diff = diff_block_rows(meta, details, focused_idx, diff_sort, width);
+    // The block's first line lands two rows down (the separator and the eyebrow
+    // below), and it is that row's width the whole block lays out to — see
+    // `PreviewWidths::at`. Built before the pushdown is resolved because the
+    // pushdown weighs the block's ROW COUNT against the room under the cover, and
+    // the count doesn't move with the width; a block that does get held back is
+    // the one case paying for a second build.
+    let spread_start = rows.len() + 2;
+    let diff = diff_block_rows(
+        meta,
+        details,
+        focused_idx,
+        diff_sort,
+        widths.at(spread_start),
+    );
     if !diff.is_empty() {
-        rows.push(ListItem::new(Line::default()));
+        let pad = widths.pushdown(spread_start, diff.len());
+        let diff = if pad > 0 {
+            diff_block_rows(meta, details, focused_idx, diff_sort, widths.full)
+        } else {
+            diff
+        };
+        // The section's own separator row, then the `pad` the block waits out (0
+        // normally), then the eyebrow — which stays against the rows it labels.
+        for _ in 0..=pad {
+            rows.push(ListItem::new(Line::default()));
+        }
         rows.push(eyebrow_row("DIFFICULTIES"));
         rows.extend(diff);
     }
@@ -338,6 +364,22 @@ fn diff_block_rows(
     }
 }
 
+/// Display columns of the widest name in a block, the figure both the name
+/// column and the meter gate are sized against.
+fn widest_name<'a>(names: impl Iterator<Item = &'a str>) -> u16 {
+    let widest = names.map(|name| Span::raw(name).width()).max().unwrap_or(0);
+    u16::try_from(widest).unwrap_or(u16::MAX)
+}
+
+/// The spread's shared name column: `widest`, capped at what still leaves the
+/// star block inside `label_width`. Sizing it off the names rather than the row's
+/// right edge puts each rating next to the name it rates instead of stranding it
+/// against the border behind a run of padding; a name past the cap is ellipsised,
+/// so a sentence-length one still can't push the block off the pane.
+fn name_column(widest: u16, label_width: u16, stars: SpreadStars) -> u16 {
+    widest.min(label_width.saturating_sub(stars.block_width()))
+}
+
 /// The full difficulty spread: one line per diff (name + tier-coloured star
 /// meter, the focused diff marked `▸`), a separator, then the focused diff's
 /// attribute block. Diffs are sorted by `sort` so the easier end lists first by
@@ -373,16 +415,20 @@ fn spread_rows(
         .iter()
         .position(|&i| i == focused)
         .unwrap_or(focused);
+    let label_width = width.saturating_sub(SPREAD_CARET_WIDTH);
+    let widest = widest_name(beatmaps.iter().map(|b| b.version.as_str()));
     let stars = spread_stars(
-        width.saturating_sub(SPREAD_CARET_WIDTH),
+        label_width,
+        widest,
         beatmaps.iter().map(|b| b.difficulty_rating),
     );
+    let name_col = name_column(widest, label_width, stars);
     let mut rows: Vec<ListItem<'static>> = Vec::new();
     for (pos, &i) in indices.iter().enumerate() {
         rows.push(ListItem::new(spread_line(
             &beatmaps[i],
             pos == focused,
-            width,
+            name_col,
             stars,
         )));
     }
@@ -422,13 +468,16 @@ fn beat_attr_rows(b: &Beatmap) -> Vec<ListItem<'static>> {
 /// The single recorded-diff block (the nzbasic fallback): name + star meter,
 /// core attributes, a success-rate bar from the recorded pass/play counts, then
 /// the combo/hash extras. Used only when a set has no `beatmaps[]` spread. The
-/// header takes the same edge-anchored star block as [`spread_line`].
+/// header takes the same name-column star block as [`spread_line`], off its one
+/// name (no caret column here, so the whole `width` is the label's).
 fn recorded_diff_rows(d: &BeatmapDetails, width: u16) -> Vec<ListItem<'static>> {
-    let header = widgets::right_aligned_spans(
+    let widest = widest_name(std::iter::once(d.version.as_str()));
+    let stars = spread_stars(width, widest, std::iter::once(d.stars));
+    let header = widgets::columned_spans(
         &d.version,
         Style::new().fg(text_dim()).bold(),
-        star_meter_spans(d.stars, spread_stars(width, std::iter::once(d.stars))),
-        width,
+        star_meter_spans(d.stars, stars),
+        name_column(widest, width, stars),
     );
     let mut rows = vec![ListItem::new(Line::from(header))];
     rows.extend(core_attr_rows(
@@ -445,20 +494,18 @@ fn recorded_diff_rows(d: &BeatmapDetails, width: u16) -> Vec<ListItem<'static>> 
     rows
 }
 
-/// One spread line: a `▸` caret on the focused diff (a blank on the others),
-/// the difficulty name, then the tier-coloured star rating and meter flush
-/// against the right edge of `width`. Anchoring the figure to the edge rather
-/// than to the widest name keeps a sentence-length difficulty name from pushing
-/// the whole rating off the pane; such a name is ellipsised instead. `meter`
-/// `stars` comes from [`spread_stars`], one decision for the whole spread.
-fn spread_line(diff: &Beatmap, focused: bool, width: u16, stars: SpreadStars) -> Line<'static> {
+/// One spread line: a `▸` caret on the focused diff (a blank on the others), the
+/// difficulty name padded to `name_col`, then the tier-coloured star rating and
+/// meter. `name_col` and `stars` are both per block ([`name_column`],
+/// [`spread_stars`]), so every row's figure starts in the same column.
+fn spread_line(diff: &Beatmap, focused: bool, name_col: u16, stars: SpreadStars) -> Line<'static> {
     let mut spans: Vec<Span<'static>> =
         vec![(if focused { "▸ " } else { "  " }).fg(if focused { accent() } else { text_faint() })];
-    spans.extend(widgets::right_aligned_spans(
+    spans.extend(widgets::columned_spans(
         &diff.version,
         Style::new().fg(if focused { text() } else { text_dim() }),
         star_meter_spans(diff.difficulty_rating, stars),
-        width.saturating_sub(SPREAD_CARET_WIDTH),
+        name_col,
     ));
     Line::from(spans)
 }
@@ -549,24 +596,60 @@ struct SpreadStars {
     /// Whether the meter fits beside a name still worth reading.
     meter: bool,
     /// Columns the rating's DIGITS pad to, between the `★` and the number. The
-    /// right-anchored block already lines the meters up whatever the rating
-    /// costs; only the glyph moves, and it moves because `10.24` runs a column
-    /// wider than `9.87`. Padding here rather than around the whole token is
-    /// what pins the `★`. A block with no 10+ rating pads nothing.
+    /// shared name column already pins the `★`; what moves without this is the
+    /// METER, since `10.24` runs a column wider than `9.87` and would push the
+    /// bar right on the 10+ rows alone. Padding inside the token rather than
+    /// around it keeps the `★` glyph against the name column either way. A block
+    /// with no 10+ rating pads nothing.
     digit_width: usize,
 }
 
-/// Resolve [`SpreadStars`] for a block whose rows right-align inside
-/// `label_width` (the row width past its caret column).
-fn spread_stars(label_width: u16, ratings: impl Iterator<Item = f64>) -> SpreadStars {
+impl SpreadStars {
+    /// Columns [`star_meter_spans`] renders in, MEASURED off the spans it emits:
+    /// the name column is sized against this figure, and a hand-derived copy of
+    /// the block's shape would drift silently the first time that shape changed.
+    ///
+    /// The `0.0` probe stands in for the block's real ratings because the meter
+    /// always spends [`SPREAD_BAR_WIDTH`] cells, filled or not, and `digit_width`
+    /// is at least the 4 columns `0.00` costs for every FINITE rating, which the
+    /// pad then holds. A block whose every rating is `NaN`/`inf` renders 3, so the
+    /// probe measures one column wide — the harmless direction (a spare column,
+    /// never a clipped meter).
+    fn block_width(self) -> u16 {
+        let width = star_meter_spans(0.0, self)
+            .iter()
+            .map(Span::width)
+            .sum::<usize>();
+        u16::try_from(width).unwrap_or(u16::MAX)
+    }
+}
+
+/// Resolve [`SpreadStars`] for a block whose rows lay out inside `label_width`
+/// (the row width past its caret column), against a widest name of `widest`.
+fn spread_stars(label_width: u16, widest: u16, ratings: impl Iterator<Item = f64>) -> SpreadStars {
     let digit_width = ratings
         .map(|stars| Span::raw(format!("{stars:.2}")).width())
         .max()
         .unwrap_or(0);
-    // A separating space either side of `★` + the digits, then the meter.
-    let block = (2 + 1 + digit_width + SPREAD_BAR_WIDTH) as u16;
+    // Priced WITH the meter: dropping it is what frees the name column, so the
+    // decision has to weigh the block that includes it.
+    let with_meter = SpreadStars {
+        meter: true,
+        digit_width,
+    };
+    // Reserve only what the names actually spend. A block of `Easy`/`Hard` keeps
+    // its meter in a column where a flat SPREAD_NAME_MIN reservation would have
+    // dropped it over room nothing was going to use.
+    let needed = widest.min(SPREAD_NAME_MIN);
+    // `checked_sub`, not saturating: a block of unnamed diffs needs zero name
+    // columns, and a saturated 0 would then clear a `>= 0` gate however far the
+    // block itself overran the row. Both `version` and `difficulty_rating` come
+    // from unvalidated JSON, so neither the name nor the rating's width is bounded
+    // by anything this side of the fetch.
     SpreadStars {
-        meter: label_width.saturating_sub(block) >= SPREAD_NAME_MIN,
+        meter: label_width
+            .checked_sub(with_meter.block_width())
+            .is_some_and(|room| room >= needed),
         digit_width,
     }
 }

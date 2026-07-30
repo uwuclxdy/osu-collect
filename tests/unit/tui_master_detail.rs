@@ -1,6 +1,6 @@
 use super::{
-    COVER_GAP, COVER_WIDTH_MIN, MIN_TEXT_WIDTH, MasterDetail, Pane, render, square_cover_width,
-    wide_cover_width, wrap_to_lines,
+    COVER_GAP, COVER_WIDTH_MIN, MIN_TEXT_WIDTH, MasterDetail, Pane, PreviewWidths, render,
+    seam_row, square_cover_width, wide_cover_width, wrap_to_lines,
 };
 use ratatui::{Terminal, backend::TestBackend, text::Line, widgets::ListItem};
 use std::cell::Cell;
@@ -83,14 +83,85 @@ fn the_preview_row_builder_is_called_with_the_pane_text_width() {
     let list_offset = Cell::new(0);
     let preview_offset = Cell::new(0);
     let mut view = sample_view(&list_offset, &preview_offset);
-    view.preview_items = Box::new(|width| vec![ListItem::new(format!("built for {width}"))]);
+    view.preview_items = Box::new(|w| {
+        vec![ListItem::new(format!(
+            "built {} {} {}",
+            w.beside, w.full, w.seam
+        ))]
+    });
 
     // 80 wide → a 32-column list pane, 48 for the preview, 44 inside its border
-    // and padding. No cover, so the whole inner width is the text width.
+    // and padding. No cover, so both bands are that width and no row is beside
+    // one.
     let output = render_to_string(80, 20, &view);
     assert!(
-        output.contains("built for 44"),
+        output.contains("built 44 44 0"),
         "rows are built at the preview's resolved text width:\n{output}"
+    );
+}
+
+#[test]
+fn the_seam_discounts_the_scroll_offset_and_the_title_lead() {
+    // The image spans 5 screen rows from the pane's top; the lead owns the first,
+    // so the builder's rows 0..4 are the ones beside it.
+    assert_eq!(seam_row(5, 0, 1), 4, "one lead line shifts the seam up one");
+    assert_eq!(seam_row(5, 0, 2), 3, "a wrapped lead shifts it up two");
+    assert_eq!(
+        seam_row(5, 3, 1),
+        7,
+        "rows scrolled off above the pane push the seam down"
+    );
+    assert_eq!(
+        seam_row(1, 0, 2),
+        0,
+        "a cover shorter than the lead leaves no beside-the-cover rows"
+    );
+}
+
+#[test]
+fn preview_widths_size_a_row_by_the_band_it_lands_in() {
+    let widths = PreviewWidths {
+        beside: 20,
+        full: 44,
+        seam: 2,
+        below: 6,
+    };
+    assert_eq!(
+        widths.at(0),
+        20,
+        "the first band row takes the cover column"
+    );
+    assert_eq!(widths.at(1), 20, "so does the last one before the seam");
+    assert_eq!(
+        widths.at(2),
+        44,
+        "the seam row itself is clear of the image"
+    );
+    assert_eq!(widths.at(9), 44, "and everything below it");
+}
+
+#[test]
+fn a_straddling_block_waits_for_the_seam_only_when_it_fits_below() {
+    let widths = PreviewWidths {
+        beside: 20,
+        full: 44,
+        seam: 4,
+        below: 6,
+    };
+    assert_eq!(
+        widths.pushdown(2, 6),
+        2,
+        "a block starting two rows short of the seam waits those two rows out"
+    );
+    assert_eq!(
+        widths.pushdown(4, 6),
+        0,
+        "a block already clear of the image waits for nothing"
+    );
+    assert_eq!(
+        widths.pushdown(2, 7),
+        0,
+        "one row too tall for the space below the cover stays where it is"
     );
 }
 

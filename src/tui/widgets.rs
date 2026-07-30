@@ -1071,23 +1071,21 @@ pub fn browse_row_label(
     }
 }
 
-/// `head` clipped with a trailing `…` to fit before `trailing`, which lands
-/// flush against the right edge of `max_width` with the gap between them padded.
-/// The trailing block's width is measured at build time, since a `★10.24`
-/// rating runs one cell wider than a `★9.99` one.
+/// `head` padded (or clipped with a trailing `…`) to exactly `head_width`
+/// columns, then `trailing`. Whatever the individual heads cost, the figure
+/// starts in one column across every row built to the same `head_width`.
 ///
-/// Shared by every "label then right-aligned figure" row: the browse list's star
-/// suffix ([`right_aligned_star_spans`]) and the preview spread's star meter.
-pub fn right_aligned_spans(
+/// Shared by every "label then figure" row. Where that column comes from is the
+/// caller's call: a content column off the widest head (the preview spread's
+/// names), or the row's own right edge ([`right_aligned_spans`]).
+pub fn columned_spans(
     head: &str,
     head_style: Style,
     trailing: Vec<Span<'static>>,
-    max_width: u16,
+    head_width: u16,
 ) -> Vec<Span<'static>> {
-    let trailing_width = trailing.iter().map(Span::width).sum::<usize>() as u16;
-    let head_budget = max_width.saturating_sub(trailing_width);
-    let (truncated, used) = truncate_to_width(head, head_budget);
-    let pad = head_budget.saturating_sub(used);
+    let (truncated, used) = truncate_to_width(head, head_width);
+    let pad = head_width.saturating_sub(used);
     let mut spans = Vec::with_capacity(trailing.len() + 2);
     spans.push(Span::styled(truncated, head_style));
     if pad > 0 {
@@ -1095,6 +1093,24 @@ pub fn right_aligned_spans(
     }
     spans.extend(trailing);
     spans
+}
+
+/// [`columned_spans`] with the head column taken from the row's right edge, so
+/// `trailing` lands flush against `max_width`. The trailing block's width is
+/// measured at build time, since a `★10.24` rating runs one cell wider than a
+/// `★9.99` one.
+///
+/// Used by the browse list's star suffix ([`right_aligned_star_spans`]), where
+/// every row shares one fixed-width column and the edge IS the column.
+pub fn right_aligned_spans(
+    head: &str,
+    head_style: Style,
+    trailing: Vec<Span<'static>>,
+    max_width: u16,
+) -> Vec<Span<'static>> {
+    let trailing_width = trailing.iter().map(Span::width).sum::<usize>() as u16;
+    let head_width = max_width.saturating_sub(trailing_width);
+    columned_spans(head, head_style, trailing, head_width)
 }
 
 /// Title truncated to fit before a right-aligned tier-coloured star suffix.

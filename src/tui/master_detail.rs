@@ -8,11 +8,13 @@
 //! terminals collapse to whichever pane currently holds focus.
 //!
 //! A cover takes a right-hand column for its own rows only: the preview text
-//! stops at that column while the image runs beside it and spans the pane's
-//! full width from the image's last row down. Preview rows are therefore built
-//! by a closure the render calls with the narrower beside-the-cover width, so a
-//! row that anchors a figure to its right edge lands in one stable column
-//! whichever band it falls in.
+//! stops at that column while the image runs beside it, then spans the pane's
+//! full width from the first row BELOW the image down. Preview rows are
+//! therefore built by a closure the render calls with both widths plus the row
+//! index where the band widens ([`PreviewWidths`]), so a row clear of the image
+//! spends the columns the image left behind instead of a budget it no longer
+//! pays for. A multi-row block that would straddle that index waits for it
+//! instead ([`PreviewWidths::pushdown`]).
 
 use ratatui::{
     Frame,
@@ -56,11 +58,66 @@ pub struct PreviewLead {
     pub style: Style,
 }
 
-/// Builds the preview's field rows at the pane's text width: the column beside
-/// the cover, or the full inner width when there is none. Deferred rather than
-/// prebuilt because that width is only known once [`cover_layout`] has run,
+/// Builds the preview's field rows at the pane's text widths. Deferred rather
+/// than prebuilt because those are only known once [`cover_layout`] has run,
 /// which needs the geometry the render resolves.
-pub type PreviewItems<'a> = Box<dyn Fn(u16) -> Vec<ListItem<'static>> + 'a>;
+pub type PreviewItems<'a> = Box<dyn Fn(PreviewWidths) -> Vec<ListItem<'static>> + 'a>;
+
+/// The two text widths a preview row can have, and the row index where it
+/// changes: rows the cover spans stop at `beside`, the first row BELOW the
+/// image's last one and everything under it get the pane's `full` inner width
+/// (see [`cover_band`]). `seam` counts in the builder's own row indices, the lead
+/// lines already discounted, so a builder can size each row off `rows.len()` as
+/// it pushes.
+///
+/// A pane with no cover reports the same width for both and a `seam` of 0.
+#[derive(Clone, Copy)]
+pub struct PreviewWidths {
+    pub beside: u16,
+    pub full: u16,
+    pub seam: usize,
+    /// Rows between the cover's last one and the pane's bottom: what a block
+    /// [`Self::pushdown`] holds back has to fit into. The whole inner height when
+    /// there is no cover.
+    pub below: usize,
+}
+
+impl PreviewWidths {
+    /// The width the row at builder-local `index` renders in.
+    ///
+    /// A multi-row block that anchors a figure to a shared column must ask for
+    /// its FIRST row: sizing the whole block to one band keeps one column, where
+    /// asking per row would step the figure out mid-block as the band widens.
+    pub fn at(self, index: usize) -> u16 {
+        if index < self.seam {
+            self.beside
+        } else {
+            self.full
+        }
+    }
+
+    /// Blank rows to insert before a `rows`-row block starting at builder-local
+    /// `start`, so it clears the cover and lays out at [`Self::full`] rather than
+    /// squeezing a whole block into the narrow band for the sake of its first row
+    /// or two.
+    ///
+    /// Zero when the block already clears the image, and zero when the held-back
+    /// block would not fit below it: on a pane the cover nearly fills, pushing it
+    /// down costs the rows it was going to be read in, which beats the columns
+    /// waiting would win.
+    ///
+    /// The fit it checks is the BLOCK's. Rows the caller pushes after the block
+    /// move down by the return value too, and a preview already overrunning its
+    /// pane loses that many more off the bottom (it cannot scroll). Guarding the
+    /// whole tail instead would forfeit the width on exactly the previews that are
+    /// overrunning anyway, where the rows are lost with or without the wait.
+    pub fn pushdown(self, start: usize, rows: usize) -> usize {
+        if start >= self.seam || rows > self.below {
+            return 0;
+        }
+        self.seam - start
+    }
+}
 
 /// Below this width a side-by-side split would crush the list column, so the
 /// view falls back to single-pane (mirrors `login_split`'s threshold).
@@ -227,11 +284,16 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
             cover_layout(inner, view.preview_lead.as_ref(), cover.square, cover.wide)
     {
         frame.render_widget(block, area);
-        let items = with_lead(
-            view.preview_lead.as_ref(),
-            text_area.width,
-            (view.preview_items)(text_area.width),
-        );
+        // The lead is built first because its line count is what maps a screen row
+        // to a builder row index (see `PreviewWidths::seam`).
+        let mut items = lead_items(view.preview_lead.as_ref(), text_area.width);
+        let widths = PreviewWidths {
+            beside: text_area.width,
+            full: inner.width,
+            seam: seam_row(cover_area.height, view.preview_offset.get(), items.len()),
+            below: inner.height.saturating_sub(cover_area.height) as usize,
+        };
+        items.extend((view.preview_items)(widths));
         // Rows run the pane's full width and the image's own rows are cleared
         // back to the text column below, so everything under the image reflows
         // into the space the image never occupied.
@@ -267,11 +329,13 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
     // if not. Mirrors `render_scrollable_panel` (block + `render_list` + scrollbar)
     // minus the text-cursor pass a read-only preview never needs.
     frame.render_widget(block, area);
-    let items = with_lead(
-        view.preview_lead.as_ref(),
-        inner.width,
-        (view.preview_items)(inner.width),
-    );
+    let mut items = lead_items(view.preview_lead.as_ref(), inner.width);
+    items.extend((view.preview_items)(PreviewWidths {
+        beside: inner.width,
+        full: inner.width,
+        seam: 0,
+        below: inner.height as usize,
+    }));
     widgets::render_list(
         frame,
         inner,
@@ -304,20 +368,29 @@ fn title_fits_one_line(lead: Option<&PreviewLead>, width: u16) -> bool {
     lead.is_none_or(|lead| display_width(&lead.text) <= width as usize)
 }
 
-/// Prepend the wrapped title lead (at most [`MAX_TITLE_LINES`] lines at `width`)
-/// above the field rows. `None` lead returns the field rows unchanged.
-fn with_lead(
-    lead: Option<&PreviewLead>,
-    width: u16,
-    items: Vec<ListItem<'static>>,
-) -> Vec<ListItem<'static>> {
-    let Some(lead) = lead else { return items };
-    let mut out = Vec::with_capacity(items.len() + MAX_TITLE_LINES);
-    for line in wrap_to_lines(&lead.text, width as usize, MAX_TITLE_LINES) {
-        out.push(ListItem::new(Line::from(Span::styled(line, lead.style))));
-    }
-    out.extend(items);
-    out
+/// The builder-row index where the cover's band ends: the image spans
+/// `cover_rows` screen rows down from the pane's top, `offset` rows have scrolled
+/// off above it, and `lead_rows` of what's left belong to the title rather than
+/// to the builder. Saturating, so a cover shorter than the lead leaves the
+/// builder no beside-the-cover rows at all.
+///
+/// `offset` is the one render_list seeds itself with. A preview holding a cover
+/// selects item 0 (see the `preview_selected` contract), so ratatui pins it at 0
+/// and the seam is exact; were one ever scrolled, this trails by a frame rather
+/// than going wrong.
+fn seam_row(cover_rows: u16, offset: usize, lead_rows: usize) -> usize {
+    (cover_rows as usize + offset).saturating_sub(lead_rows)
+}
+
+/// The title lead's rows, wrapped to at most [`MAX_TITLE_LINES`] lines at
+/// `width`. Empty for no lead (an id-only row), which is also what makes the
+/// caller's `items.len()` a straight lead-line count.
+fn lead_items(lead: Option<&PreviewLead>, width: u16) -> Vec<ListItem<'static>> {
+    let Some(lead) = lead else { return Vec::new() };
+    wrap_to_lines(&lead.text, width as usize, MAX_TITLE_LINES)
+        .into_iter()
+        .map(|line| ListItem::new(Line::from(Span::styled(line, lead.style))))
+        .collect()
 }
 
 /// Resolve the cover layout: `(text, cover, protocol)`, or `None` for text-only
@@ -364,8 +437,7 @@ fn cover_layout<'a>(
 /// The text rect spans the whole pane height while the cover rect stops at the
 /// image's last row: rows past that one are drawn at the pane's full width (see
 /// [`cover_band`]), so the narrow text width bounds the rows beside the image
-/// and the column every edge-anchored figure aligns to, not the pane's text as
-/// a whole.
+/// alone, not the pane's text as a whole.
 ///
 /// The cover rect is sized to what the image will *actually* occupy rather than
 /// the allowance it was offered: [`Resize::Fit`] letterboxes within its area and

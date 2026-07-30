@@ -197,6 +197,29 @@ fn cover_start_x(buffer: &ratatui::buffer::Buffer, row: u16) -> Option<u16> {
     })
 }
 
+/// The last preview row the artwork paints, so an assertion about a reflowed row
+/// can prove it is reading a row BELOW the cover rather than one beside it.
+fn cover_last_row(buffer: &ratatui::buffer::Buffer) -> Option<u16> {
+    let area = *buffer.area();
+    (0..area.height)
+        .rev()
+        .find(|&y| cover_start_x(buffer, y).is_some())
+}
+
+/// [`preview_row_of`] over the WHOLE row width, for a single-pane render where
+/// there is no list pane to the left of `PREVIEW_X` to filter out.
+fn preview_row_of_full(buffer: &ratatui::buffer::Buffer, needle: &str) -> Option<usize> {
+    let area = *buffer.area();
+    (0..area.height)
+        .find(|&y| {
+            (0..area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .contains(needle)
+        })
+        .map(|y| y as usize)
+}
+
 /// Whether ANY cell in rows `[0, rows)` carries a real background — used on a
 /// single-pane preview (no list pane to filter out), so a colored cell there can
 /// only be a cover.
@@ -451,8 +474,8 @@ fn diff_cursor_cycles_the_focused_detail() {
 #[test]
 fn spread_star_ratings_align_in_one_column() {
     // Names of differing width ("A" vs "LongerName") must not ragged the star
-    // ratings: the block is anchored to the row's right edge, so the name is what
-    // gives, never the `★` column.
+    // ratings: every name pads to the block's widest, so the `★` column holds
+    // whatever the individual names cost.
     let make = |version: &str, stars: f64| Beatmap {
         beatmapset_id: 7,
         mode_int: 0,
@@ -532,8 +555,9 @@ fn spread_meters_spend_one_cell_per_star() {
 #[test]
 fn a_sentence_length_diff_name_keeps_its_rating_and_meter_on_screen() {
     // The real case: one diff name long enough to run past the preview's text
-    // column. Padding every name to the widest used to push the whole `★` block
-    // off the pane, taking every OTHER diff's rating with it.
+    // column. Padding to the widest name unconditionally pushed the whole `★`
+    // block off the pane, taking every OTHER diff's rating with it, so the name
+    // column caps at what leaves the block room.
     const LONG: &str = "If my voice has a place where it can belong, I wish for it to reach you";
     let meta = BeatmapSetMeta {
         beatmaps: vec![spread_diff("Easy", 2.0), spread_diff(LONG, 5.47)],
@@ -834,42 +858,26 @@ fn the_cover_band_carries_the_theme_background() {
     }
 }
 
-#[test]
-fn a_cover_narrows_the_width_the_preview_rows_build_against() {
-    // The row builder is handed the BESIDE-the-cover width even though the list
-    // renders at the full inner width, so an edge-anchored figure lands in one
-    // column whichever band its row falls in. The spread's star block is that
-    // figure: with a cover it stops at the text column, without one it runs to
-    // the pane edge.
-    let meta = BeatmapSetMeta {
-        beatmaps: vec![spread_diff("Extra", 5.47)],
-        ..sample_meta(42)
-    };
-    let browse = browse_with(vec![BrowseRow {
-        id: 42,
-        meta: Some(meta),
-    }]);
-
-    let with_cover = render_grid(&browse, Some(&covers_both_variants(42)), 90, 30);
-    let without = render_grid(&browse, None, 90, 30);
-    let narrow = star_columns(&with_cover);
-    let full = star_columns(&without);
-    assert!(
-        narrow.len() == 1 && full.len() == 1,
-        "one star column either way: {narrow:?} / {full:?}"
-    );
-    assert!(
-        narrow.iter().next() < full.iter().next(),
-        "a cover pulls the star block left, to the text column: {narrow:?} vs {full:?}"
-    );
+/// The first meter cell's column on each spread row (one carrying a `\u{2605}`), so an
+/// assertion reads where the bar starts without picking up the AR/CS/OD/HP rows'
+/// own bars.
+fn spread_meter_columns(buffer: &ratatui::buffer::Buffer) -> std::collections::HashSet<u16> {
+    let area = *buffer.area();
+    (0..area.height)
+        .filter(|&y| (PREVIEW_X..area.width).any(|x| buffer[(x, y)].symbol() == "\u{2605}"))
+        .filter_map(|y| {
+            (PREVIEW_X..area.width)
+                .find(|&x| matches!(buffer[(x, y)].symbol(), "\u{2588}" | "\u{2591}"))
+        })
+        .collect()
 }
 
 #[test]
-fn a_spread_past_ten_stars_keeps_one_star_column() {
-    // `\u{2605}10.24` runs a column wider than `\u{2605}9.87`, so a right-anchored block that
-    // measured each rating raw would step the `\u{2605}` left on the 10+ rows and leave
-    // only the BAR aligned. 10-star diffs are routine, so this is the common
-    // case rather than an edge.
+fn a_spread_past_ten_stars_keeps_one_meter_column() {
+    // `\u{2605}10.24` runs a column wider than `\u{2605}9.87`. The shared name column pins the
+    // `\u{2605}` itself, so what a raw per-row rating raggeds is the METER: the 10+ rows
+    // start their bar a column right of everyone else's. 10-star diffs are
+    // routine, so this is the common case rather than an edge.
     let meta = BeatmapSetMeta {
         beatmaps: vec![
             spread_diff("Extra", 9.87),
@@ -881,36 +889,40 @@ fn a_spread_past_ten_stars_keeps_one_star_column() {
         id: 7,
         meta: Some(meta),
     }]);
-    let buf = render_grid(&browse, None, 90, 30);
-    let star_cols = star_columns(&buf);
+    let meters = spread_meter_columns(&render_grid(&browse, None, 90, 30));
     assert!(
-        star_cols.len() == 1,
-        "a spread straddling ten stars pads the narrow ratings into one `\u{2605}` column: {star_cols:?}"
+        meters.len() == 1,
+        "a spread straddling ten stars pads the narrow ratings so every bar starts in one column: {meters:?}"
     );
-    // Control on the dimension the subject turns on: with no 10+ rating in the
-    // block nothing pads, so the tight rendering must still share one column.
+    // Control on the one dimension the subject turns on — the rating widths — with
+    // the names held constant, so nothing but the digit field can move the bar.
     let tight = BeatmapSetMeta {
-        beatmaps: vec![spread_diff("Extra", 9.87), spread_diff("Another", 8.12)],
+        beatmaps: vec![
+            spread_diff("Extra", 9.87),
+            spread_diff("Black Another", 8.12),
+        ],
         ..sample_meta(8)
     };
     let tight = browse_with(vec![BrowseRow {
         id: 8,
         meta: Some(tight),
     }]);
-    let tight_cols = star_columns(&render_grid(&tight, None, 90, 30));
+    let tight_meters = spread_meter_columns(&render_grid(&tight, None, 90, 30));
     assert!(
-        tight_cols.len() == 1 && tight_cols != star_cols,
-        "a block with no 10+ rating pads nothing, landing one column right: {tight_cols:?} vs {star_cols:?}"
+        tight_meters.len() == 1 && tight_meters != meters,
+        "a block with no 10+ rating pads nothing, landing one column left: {tight_meters:?} vs {meters:?}"
     );
 }
 
 #[test]
-fn a_cramped_spread_drops_the_meter_and_keeps_the_name_readable() {
-    // A cover at 90 cols leaves the preview 22 text columns. Spending 10 of them
-    // on a meter left `Se\u{2026}` where the name should be; the `\u{2605}X.XX` rating carries
-    // the figure the meter only illustrates, so the meter is what gives way.
+fn a_spread_clear_of_the_cover_uses_the_full_pane_width() {
+    // The reported case: the cover spans the preview's top rows, the spread starts
+    // below its last one, so every column short of the border is free. Building
+    // those rows at the beside-the-cover width ellipsised names with 40 columns of
+    // room to spare and dropped a meter that fits twice over.
+    const LONG: &str = "Magicannon - Final Spark";
     let meta = BeatmapSetMeta {
-        beatmaps: vec![spread_diff("Setu's Insane", 5.12)],
+        beatmaps: vec![spread_diff("Easy", 1.64), spread_diff(LONG, 4.48)],
         ..sample_meta(42)
     };
     let browse = browse_with(vec![BrowseRow {
@@ -918,16 +930,285 @@ fn a_cramped_spread_drops_the_meter_and_keeps_the_name_readable() {
         meta: Some(meta),
     }]);
 
-    let cramped = render_grid(&browse, Some(&covers_both_variants(42)), 90, 30);
+    let buf = render_grid(&browse, Some(&covers_both_variants(42)), 90, 30);
+    let width = buf.area().width;
+    let y = preview_row_of(&buf, "\u{2605}4.48").expect("the spread renders") as u16;
+    // Pins the fixture's own premise: every assertion below is about a row the
+    // cover has cleared, so a geometry drift that slid the spread back beside the
+    // image fails here rather than silently re-testing the narrow band.
+    let last = cover_last_row(&buf).expect("the cover renders");
+    assert!(
+        y > last,
+        "the spread row under test sits below the cover's last row ({y} vs {last})"
+    );
+
+    let row = preview_text_before(&buf, y, width);
+    assert!(
+        row.contains(LONG),
+        "a reflowed row spends the width it actually has on the name:\n{row}"
+    );
+    assert_eq!(
+        row.matches('\u{2588}').count() + row.matches('\u{2591}').count(),
+        10,
+        "and keeps the whole meter:\n{row}"
+    );
+}
+
+#[test]
+fn the_star_block_follows_the_widest_name_not_the_pane_edge() {
+    // Ratings still share one column, but that column trails the block's longest
+    // name: anchoring it to the row's right edge stranded every rating against the
+    // border behind a run of padding nothing tracks across.
+    let meta = BeatmapSetMeta {
+        beatmaps: vec![spread_diff("Easy", 2.0), spread_diff("LongerName", 5.47)],
+        ..sample_meta(7)
+    };
+    let browse = browse_with(vec![BrowseRow {
+        id: 7,
+        meta: Some(meta),
+    }]);
+    let buf = render_grid(&browse, None, 90, 30);
+
+    let star_cols = star_columns(&buf);
+    assert!(
+        star_cols.len() == 1,
+        "both ratings share one column: {star_cols:?}"
+    );
+    let x = star_cols
+        .into_iter()
+        .next()
+        .expect("the spread renders a rating");
+    // The caret column (2) + `LongerName` (10) + the block's own leading space.
+    assert_eq!(
+        x - PREVIEW_X,
+        13,
+        "the \u{2605} column trails the widest name, not the pane's text edge"
+    );
+}
+
+/// A 2-diff spread beside a square cover on a pane too short to hold the block
+/// below it (`90x16`: a 10-row cover leaves 4 rows under it, the block needs 9),
+/// so the pushdown declines and the block genuinely renders in the narrow band.
+/// The one geometry where the beside-the-cover width is still observable.
+fn cramped_spread(names: [&str; 2]) -> ratatui::buffer::Buffer {
+    let meta = BeatmapSetMeta {
+        beatmaps: vec![spread_diff(names[0], 5.12), spread_diff(names[1], 6.4)],
+        ..sample_meta(42)
+    };
+    let browse = browse_with(vec![BrowseRow {
+        id: 42,
+        meta: Some(meta),
+    }]);
+    render_grid(&browse, Some(&covers_square_only(42)), 90, 16)
+}
+
+#[test]
+fn a_spread_that_would_straddle_the_cover_waits_for_it() {
+    // Held back rather than squeezed: the block's first rows fall beside a 10-row
+    // square cover, so sizing it to that band would cap every name and drop the
+    // meter for the sake of two rows. It waits the cover out instead — blank rows
+    // above the eyebrow — and lays out at the pane's full width. The declining
+    // case is `a_cramped_spread_drops_the_meter_and_keeps_the_name_readable`.
+    let meta = BeatmapSetMeta {
+        beatmaps: vec![
+            spread_diff("Setu's Insane", 5.12),
+            spread_diff("Extra", 6.4),
+        ],
+        ..sample_meta(42)
+    };
+    let browse = browse_with(vec![BrowseRow {
+        id: 42,
+        meta: Some(meta),
+    }]);
+
+    let buf = render_grid(&browse, Some(&covers_square_only(42)), 90, 30);
+    let width = buf.area().width;
+    // The play count, not the `plays` key — `no plays` on the success-rate row
+    // matches that too, and would retarget the gap assertion on a row reorder.
+    let plays = preview_row_of(&buf, "1,234,567").expect("the last metadata row renders") as u16;
+    let eyebrow = preview_row_of(&buf, "DIFFICULTIES").expect("the section renders") as u16;
+    assert_eq!(
+        eyebrow - plays,
+        4,
+        "one separator row plus the two the block waits out"
+    );
+
+    let y = preview_row_of(&buf, "\u{2605}5.12").expect("the spread renders") as u16;
+    let last = cover_last_row(&buf).expect("the cover renders");
+    assert!(
+        y > last,
+        "the block it held back starts below the cover ({y} vs {last})"
+    );
+    let row = preview_text_before(&buf, y, width);
+    assert_eq!(
+        row.matches('\u{2588}').count() + row.matches('\u{2591}').count(),
+        10,
+        "and spends the width it waited for on the meter:\n{row}"
+    );
+}
+
+#[test]
+fn a_block_waits_when_the_room_below_the_cover_exactly_holds_it() {
+    // The boundary of the pushdown's fit rule, which is what pins `below`'s own
+    // arithmetic: at 90x21 the pane's 19 inner rows less the 10-row cover leave
+    // exactly the 9 this block needs, so it waits and takes the full width. A
+    // `below` one row stingier declines and the meter goes — as does a `>=`
+    // comparison in place of the `>`.
+    let cramped = cramped_spread(["Setu's Insane", "Extra"]);
     let width = cramped.area().width;
-    let y = preview_row_of(&cramped, "\u{2605}5.12").expect("the rating survives a cramped pane")
-        as u16;
+    let y = preview_row_of(&cramped, "\u{2605}5.12").expect("the spread renders") as u16;
     let row = preview_text_before(&cramped, y, width);
     assert_eq!(
         row.matches('\u{2588}').count() + row.matches('\u{2591}').count(),
         0,
-        "a cramped spread drops the meter:\n{row}"
+        "the control: four rows under the cover cannot hold a nine-row block:\n{row}"
     );
+
+    let meta = BeatmapSetMeta {
+        beatmaps: vec![
+            spread_diff("Setu's Insane", 5.12),
+            spread_diff("Extra", 6.4),
+        ],
+        ..sample_meta(42)
+    };
+    let browse = browse_with(vec![BrowseRow {
+        id: 42,
+        meta: Some(meta),
+    }]);
+    let exact = render_grid(&browse, Some(&covers_square_only(42)), 90, 21);
+    let width = exact.area().width;
+    let y = preview_row_of(&exact, "\u{2605}5.12").expect("the spread renders") as u16;
+    let row = preview_text_before(&exact, y, width);
+    assert_eq!(
+        row.matches('\u{2588}').count() + row.matches('\u{2591}').count(),
+        10,
+        "room for exactly the block is room enough:\n{row}"
+    );
+}
+
+#[test]
+fn the_band_a_block_takes_turns_on_its_first_row_alone() {
+    // One metadata row decides it. A `title_unicode` row puts the spread's first
+    // line one row short of the cover's last, where the whole block takes the
+    // narrow band; one more row (a `video` flag) lands it exactly clear, where the
+    // block takes the full width. Any drift in the seam arithmetic — the lead-line
+    // discount, the separator/eyebrow offset, the cover's own height — flips one
+    // of these two and not the other.
+    let spread = vec![spread_diff("Setu's Insane", 5.12)];
+    let straddles = BeatmapSetMeta {
+        title_unicode: "\u{904b}\u{547d}".to_string(),
+        beatmaps: spread.clone(),
+        ..sample_meta(42)
+    };
+    let clears = BeatmapSetMeta {
+        video: true,
+        ..straddles.clone()
+    };
+
+    for (meta, meter, why) in [
+        (straddles, 0, "one row short of the seam: the narrow band"),
+        (clears, 10, "one row further down: clear of the image"),
+    ] {
+        let browse = browse_with(vec![BrowseRow {
+            id: 42,
+            meta: Some(meta),
+        }]);
+        // 16 rows tall so the pushdown declines and the seam is what decides.
+        let buf = render_grid(&browse, Some(&covers_square_only(42)), 90, 16);
+        let width = buf.area().width;
+        let y = preview_row_of(&buf, "\u{2605}5.12").expect("the spread renders") as u16;
+        let row = preview_text_before(&buf, y, width);
+        assert_eq!(
+            row.matches('\u{2588}').count() + row.matches('\u{2591}').count(),
+            meter,
+            "{why}:\n{row}"
+        );
+    }
+}
+
+#[test]
+fn a_cramped_spread_keeps_its_meter_when_the_names_are_short() {
+    // The gate reserves what the NAMES spend, not a flat minimum: `Easy`/`Hard`
+    // need 6 columns, so the 26 past the caret seat both them and the 17-column
+    // block. Reserving `SPREAD_NAME_MIN` (12) regardless dropped the meter over
+    // room nothing was going to use — the same defect as capping a name against a
+    // width the row doesn't have.
+    let short = cramped_spread(["Easy", "Hard"]);
+    let width = short.area().width;
+    let y = preview_row_of(&short, "\u{2605}5.12").expect("the spread renders") as u16;
+    let row = preview_text_before(&short, y, width);
+    assert_eq!(
+        row.matches('\u{2588}').count() + row.matches('\u{2591}').count(),
+        10,
+        "short names leave the meter its cells:\n{row}"
+    );
+    // Both names are 4 columns, so the block starts at caret (2) + name (4) + its
+    // own leading space. Padding the column out to the old 12-column reservation
+    // would push it right, which `row.contains("Easy")` alone cannot see.
+    let star_cols = star_columns(&short);
+    assert_eq!(
+        star_cols,
+        std::collections::HashSet::from([PREVIEW_X + 7]),
+        "the column trails the 4-column names, not a reservation: {star_cols:?}"
+    );
+}
+
+#[test]
+fn a_block_wider_than_the_row_drops_its_meter_even_with_no_names() {
+    // `version` is `#[serde(default)]` and `difficulty_rating` is unvalidated, so a
+    // spread of unnamed diffs is a reachable payload. Reserving `min(widest, 12)`
+    // columns for the names then reserves NOTHING, and a saturating gate reads
+    // that as room to spare however far the block overruns the row: the meter
+    // rendered and got clipped mid-bar. A single-pane preview 16 columns wide
+    // leaves 14 past the caret against a 17-column block.
+    let meta = BeatmapSetMeta {
+        beatmaps: vec![spread_diff("", 5.12)],
+        ..sample_meta(42)
+    };
+    let mut browse = browse_with(vec![BrowseRow {
+        id: 42,
+        meta: Some(meta),
+    }]);
+    // Focused so the narrow-terminal fallback renders the preview, not the list.
+    browse.focus_preview();
+
+    let buf = render_grid(&browse, None, 20, 20);
+    let area = *buf.area();
+    let y = preview_row_of_full(&buf, "\u{2605}5.12").expect("the rating still renders") as u16;
+    let row: String = (0..area.width).map(|x| buf[(x, y)].symbol()).collect();
+    assert_eq!(
+        row.matches('\u{2588}').count() + row.matches('\u{2591}').count(),
+        0,
+        "a block that cannot fit the row drops its meter:\n{row}"
+    );
+}
+
+#[test]
+fn a_cramped_spread_drops_the_meter_and_keeps_the_name_readable() {
+    // The block renders in the beside-the-cover band: ~28 columns, 26 of them past
+    // the caret. Spending 10 on a meter left `Se\u{2026}` where the name should be; the
+    // `\u{2605}X.XX` rating carries the figure the meter only illustrates, so the meter is
+    // what gives way. BOTH rows drop it — the block sizes off its FIRST row, so the
+    // one that reflows past the image keeps the column its peers use.
+    let cramped = cramped_spread(["Setu's Insane", "Extra"]);
+    let width = cramped.area().width;
+    let last = cover_last_row(&cramped).expect("the cover renders");
+    let y = preview_row_of(&cramped, "\u{2605}5.12").expect("the rating survives a cramped pane")
+        as u16;
+    assert!(
+        y <= last,
+        "the spread starts beside the cover ({y} vs its last row {last})"
+    );
+    for rating in ["\u{2605}5.12", "\u{2605}6.40"] {
+        let y = preview_row_of(&cramped, rating).expect("both spread rows render") as u16;
+        let row = preview_text_before(&cramped, y, width);
+        assert_eq!(
+            row.matches('\u{2588}').count() + row.matches('\u{2591}').count(),
+            0,
+            "a cramped spread drops the meter on every row, {rating} included:\n{row}"
+        );
+    }
+    let row = preview_text_before(&cramped, y, width);
     assert!(
         row.contains("Setu's Insane"),
         "the columns it frees leave the name readable in full:\n{row}"
@@ -936,7 +1217,21 @@ fn a_cramped_spread_drops_the_meter_and_keeps_the_name_readable() {
     // Positive control varying the one dimension the subject turns on — the text
     // width the spread gets — at an identical pane geometry, so `PREVIEW_X` still
     // scopes the read to the preview.
-    let roomy = render_grid(&browse, None, 90, 30);
+    let roomy = render_grid(
+        &browse_with(vec![BrowseRow {
+            id: 42,
+            meta: Some(BeatmapSetMeta {
+                beatmaps: vec![
+                    spread_diff("Setu's Insane", 5.12),
+                    spread_diff("Extra", 6.4),
+                ],
+                ..sample_meta(42)
+            }),
+        }]),
+        None,
+        90,
+        16,
+    );
     let width = roomy.area().width;
     let y = preview_row_of(&roomy, "\u{2605}5.12").expect("spread row renders") as u16;
     let row = preview_text_before(&roomy, y, width);
