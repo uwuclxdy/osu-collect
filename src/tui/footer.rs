@@ -51,6 +51,8 @@ const HINT_SOURCE_SWITCH: &str = "↵ / 1-3 switch source";
 const HINT_SOURCE_JUMP: &str = "1-3 switch source";
 /// Find form chip (preset / special / mode / status / sort): `space` cycles it.
 const HINT_CYCLE: &str = "space cycle";
+/// Find form's advanced-filters disclosure: `space` expands / collapses it.
+const HINT_DISCLOSE: &str = "space toggle";
 /// Find form's CTA: run the resolved query (osu search or nzbasic filter).
 const HINT_FIND: &str = "↵ find";
 /// Find browse (list pane): load the next page of results.
@@ -460,6 +462,7 @@ fn home_form_hints(form: &HomeTab) -> Vec<&'static str> {
         HomeField::Mirrors => segments.push(HINT_ENTER_OPEN),
         HomeField::FindRun => segments.push(HINT_FIND),
         f if f.is_find_chip() => segments.push(HINT_CYCLE),
+        f if f.is_disclosure() => segments.push(HINT_DISCLOSE),
         f if f.is_stepper() => segments.push(HINT_PLUS_MINUS),
         f if f.is_toggle() => segments.push(HINT_ENTER_TOGGLE),
         f if f.is_text_input() => segments.push(HINT_EDIT),

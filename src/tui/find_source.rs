@@ -13,19 +13,20 @@ use crate::app::{
 };
 use crate::utils::format_bytes;
 use ratatui::{
-    style::Stylize,
+    style::{Style, Stylize},
     text::{Line, Span},
     widgets::ListItem,
 };
 
 use super::widgets;
-use super::{danger, line, spinner_str, text_dim, text_faint, warning};
+use super::{accent, danger, focused_label, line, spinner_str, text_dim, text_faint, warning};
 
 const LABEL_PRESET: &str = "preset";
 const LABEL_SPECIAL: &str = "special";
 const LABEL_MODE: &str = "mode";
 const LABEL_STATUS: &str = "status";
 const LABEL_SORT: &str = "sort";
+const LABEL_ADVANCED: &str = "advanced filters";
 const LABEL_CTA: &str = "find";
 
 /// Shared label width so chips and inputs align their values. The widest label
@@ -115,22 +116,33 @@ pub fn push_form_rows(
     );
     items.push(widgets::spacer());
 
-    for (field, input) in [
-        (HomeField::FindStars, &find.stars),
-        (HomeField::FindAr, &find.ar),
-        (HomeField::FindCs, &find.cs),
-        (HomeField::FindOd, &find.od),
-        (HomeField::FindHp, &find.hp),
-        (HomeField::FindBpm, &find.bpm),
-        (HomeField::FindLength, &find.length),
-        (HomeField::FindKeys, &find.keys),
-        (HomeField::FindFavourites, &find.favourites),
-        (HomeField::FindRanked, &find.ranked),
-        (HomeField::FindArtist, &find.artist),
-        (HomeField::FindCreator, &find.creator),
-        (HomeField::FindTitle, &find.title),
-    ] {
-        push_input(items, field, input, focus, editing, find);
+    // The disclosure gates the 13 per-attribute range inputs. Collapsed by
+    // default so the primary form (query + chips + find) fits on one screen;
+    // `space`/`enter` toggle it (see `is_disclosure` in the key handler).
+    let advanced_focused = focus == HomeField::FindAdvanced;
+    let show_advanced = find.show_advanced_filters() || focus.is_advanced();
+    items.push_focusable(
+        HomeField::FindAdvanced,
+        advanced_filters_item(show_advanced, advanced_focused),
+    );
+    if show_advanced {
+        for (field, input) in [
+            (HomeField::FindStars, &find.stars),
+            (HomeField::FindAr, &find.ar),
+            (HomeField::FindCs, &find.cs),
+            (HomeField::FindOd, &find.od),
+            (HomeField::FindHp, &find.hp),
+            (HomeField::FindBpm, &find.bpm),
+            (HomeField::FindLength, &find.length),
+            (HomeField::FindKeys, &find.keys),
+            (HomeField::FindFavourites, &find.favourites),
+            (HomeField::FindRanked, &find.ranked),
+            (HomeField::FindArtist, &find.artist),
+            (HomeField::FindCreator, &find.creator),
+            (HomeField::FindTitle, &find.title),
+        ] {
+            push_input(items, field, input, focus, editing, find);
+        }
     }
     items.push(widgets::spacer());
 
@@ -321,6 +333,22 @@ fn route_trailing_spans(route: &FindRoute) -> Vec<Span<'static>> {
 /// read-only cue, never a chip).
 fn via_trailing(backend: &str) -> Vec<Span<'static>> {
     vec![" → ".fg(line()), format!("via {backend}").fg(text_dim())]
+}
+
+/// The `advanced filters` disclosure row: `▶` collapsed (TEXT_DIM) / `▼`
+/// expanded (ACCENT), followed by the label. A standalone form row — the
+/// expanded inputs below it column-align at [`LABEL_WIDTH`] on their own.
+fn advanced_filters_item(open: bool, focused: bool) -> ListItem<'static> {
+    let (glyph, glyph_color) = if open {
+        (widgets::EXPANDED, accent())
+    } else {
+        (widgets::COLLAPSED, text_dim())
+    };
+    ListItem::new(Line::from(vec![
+        widgets::focus_span(focused),
+        Span::styled(format!("{glyph} "), Style::default().fg(glyph_color)),
+        Span::styled(LABEL_ADVANCED.to_string(), focused_label(focused)),
+    ]))
 }
 
 /// The inline outcome line beneath the buttons: the nzbasic pre-download size

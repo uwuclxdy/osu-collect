@@ -2431,6 +2431,9 @@ impl App {
                             HomeField::FindRun => return self.dispatch_find_run(),
                             // Find chips step forward on enter (like the source strip).
                             field if field.is_find_chip() => self.cycle_find_chip(true),
+                            field if field.is_disclosure() => {
+                                self.home.find.toggle_advanced_filters()
+                            }
                             field if field.is_toggle() => self.home.toggle_current(),
                             // Text inputs and the threads stepper have nothing to activate.
                             _ => {}
@@ -2508,6 +2511,8 @@ impl App {
                         self.home.cycle_source(true);
                     } else if self.home.focus.is_find_chip() {
                         self.cycle_find_chip(true);
+                    } else if self.home.focus.is_disclosure() {
+                        self.home.find.toggle_advanced_filters();
                     } else if self.home.focus.is_toggle() {
                         self.home.toggle_current();
                     }

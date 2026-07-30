@@ -813,6 +813,10 @@ pub struct FindSource {
     pub favourites: InputField,
     pub ranked: InputField,
     pub status_msg: FindStatusMsg,
+    /// Whether the `advanced filters` disclosure is expanded, showing the 13
+    /// per-attribute range inputs. Collapsed by default so the primary form
+    /// (query + chips + find CTA) fits on one screen.
+    pub advanced_filters_open: bool,
     /// Cursor for the next osu page (`load more`); `None` = first page not yet
     /// run, the last page reached, or the last run was nzbasic (no cursor).
     pub next_cursor: Option<String>,
@@ -862,6 +866,7 @@ impl FindSource {
             favourites: InputField::new("favourites", "", "e.g. 10000+"),
             ranked: InputField::new("ranked", "", "yyyy or 2020..2024"),
             status_msg: FindStatusMsg::Idle,
+            advanced_filters_open: false,
             next_cursor: None,
             login_nudged: false,
             size_cache: HashMap::new(),
@@ -869,6 +874,38 @@ impl FindSource {
             results_backend: None,
             browse: SetBrowse::new(),
         }
+    }
+
+    /// Toggle the `advanced filters` disclosure that gates the 13 per-attribute
+    /// range inputs. Navigation skips the collapsed inputs so the focus path
+    /// stays on the primary form.
+    pub fn toggle_advanced_filters(&mut self) {
+        self.advanced_filters_open = !self.advanced_filters_open;
+    }
+
+    /// Whether the advanced-filter section should render: the user has toggled it
+    /// open, or at least one advanced input has a non-empty value. This
+    /// auto-expands the section when inputs carry data so a live value is never
+    /// silently hidden.
+    pub fn show_advanced_filters(&self) -> bool {
+        self.advanced_filters_open || self.has_any_advanced_input()
+    }
+
+    /// Whether any of the 13 per-attribute range/text inputs has a non-empty value.
+    fn has_any_advanced_input(&self) -> bool {
+        !self.stars.value.is_empty()
+            || !self.ar.value.is_empty()
+            || !self.cs.value.is_empty()
+            || !self.od.value.is_empty()
+            || !self.hp.value.is_empty()
+            || !self.bpm.value.is_empty()
+            || !self.length.value.is_empty()
+            || !self.keys.value.is_empty()
+            || !self.favourites.value.is_empty()
+            || !self.ranked.value.is_empty()
+            || !self.artist.value.is_empty()
+            || !self.creator.value.is_empty()
+            || !self.title.value.is_empty()
     }
 
     // ── presets ───────────────────────────────────────────────────────────────

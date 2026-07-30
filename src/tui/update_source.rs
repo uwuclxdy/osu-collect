@@ -267,7 +267,7 @@ fn preview_row(
     } else {
         Style::default().fg(text_dim())
     };
-    let mut spans = widgets::browse_row_label(set.id, meta, label_style);
+    let mut spans = widgets::browse_row_label(set.id, meta, label_style, None);
     if marked {
         spans.push("  ✓ installed".fg(success()));
     } else if set.previously_deleted {

@@ -439,11 +439,10 @@ fn home_section(field: HomeField) -> &'static str {
         // The download buttons and the source-specific CTA rows render outside
         // the collection/download sections, so they light no header.
         Download | CollectionBrowse | UpdateOsuPath | UpdateScan | UpdateBrowse => SECTION_NONE,
-        FindQuery | FindPreset | FindSpecial | FindMode | FindStatus | FindSort | FindStars
-        | FindAr | FindCs | FindOd | FindHp | FindBpm | FindLength | FindKeys | FindFavourites
-        | FindRanked | FindArtist | FindCreator | FindTitle | FindLimit | FindRun | FindBrowse => {
-            SECTION_NONE
-        }
+        FindQuery | FindPreset | FindSpecial | FindMode | FindStatus | FindSort | FindAdvanced
+        | FindStars | FindAr | FindCs | FindOd | FindHp | FindBpm | FindLength | FindKeys
+        | FindFavourites | FindRanked | FindArtist | FindCreator | FindTitle | FindLimit
+        | FindRun | FindBrowse => SECTION_NONE,
     }
 }
 

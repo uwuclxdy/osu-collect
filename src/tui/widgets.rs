@@ -19,7 +19,7 @@ use std::cell::Cell;
 use std::sync::OnceLock;
 use std::time::Instant;
 
-use super::theme::{Tier, theme};
+use super::theme::{Tier, stars_color, theme};
 use super::{
     FILL_BLOCK, FILL_SHADE, FILL_SPACE, GLYPH_BLOCK, GLYPH_SHADE, GLYPH_SPACE, accent, accent_alt,
     bg, bg_hover, bg_raised, danger, focused_label, glyph_fill, info, line, line_strong,
@@ -901,21 +901,73 @@ pub fn view_browse_button(
 /// beatmaps" surface (find results, collection browse&pick, update missing-sets).
 /// `artist - title` once metadata is folded in, else a bare `#id` — the
 /// enrichment-in-flight state is no longer a per-row concern (it reads from the
-/// owning panel's title-right meta instead, see [`meta_with_loading_cue`]).
+/// owning panel's title-right meta instead, see [`meta_with_loading_cue`]). A
+/// tier-coloured `★X.XX` suffix follows the title when the set carries a
+/// difficulty spread, so the list is scannable without descending into the
+/// preview.
 ///
-/// `style` colors the id/title (the caller owns the cursor/dim treatment).
+/// `style` colors the id/title (the caller owns the cursor/dim treatment); the
+/// star suffix always takes its tier colour regardless of `style`.
+///
+/// `max_width`: when `Some`, the star suffix is right-aligned within this many
+/// cells — the title is truncated with a trailing `…` to fit, and the gap is
+/// padded so the star always stays visible at the right edge. When `None`
+/// (id-only rows, or callers that don't have a pane width), the star simply
+/// trails the title.
 pub fn browse_row_label(
     id: u32,
     meta: Option<&BeatmapSetMeta>,
     style: Style,
+    max_width: Option<u16>,
 ) -> Vec<Span<'static>> {
     match meta {
-        Some(meta) => vec![Span::styled(
-            format!("{} - {}", meta.artist, meta.title),
-            style,
-        )],
+        Some(meta) => {
+            let title = format!("{} - {}", meta.artist, meta.title);
+            if let Some(stars) = representative_stars(meta) {
+                if let Some(max_w) = max_width {
+                    return right_aligned_star_spans(&title, style, stars, max_w);
+                }
+                return vec![
+                    Span::styled(title, style),
+                    format!(" ★{stars:.2}").fg(stars_color(stars)),
+                ];
+            }
+            vec![Span::styled(title, style)]
+        }
         None => vec![Span::styled(format!("#{id}"), style)],
     }
+}
+
+/// Title truncated to fit before a right-aligned tier-coloured star suffix.
+/// Star always visible — the title gets clipped with trailing `…` when too
+/// long, and the gap padded so the star lands at the right edge.
+fn right_aligned_star_spans(
+    title: &str,
+    title_style: Style,
+    stars: f64,
+    max_width: u16,
+) -> Vec<Span<'static>> {
+    let star_text = format!(" ★{stars:.2}");
+    let star_w = Span::raw(&star_text).width() as u16;
+    let title_budget = max_width.saturating_sub(star_w);
+    let (truncated, used) = truncate_to_width(title, title_budget);
+    let pad = title_budget.saturating_sub(used);
+    let mut spans = vec![Span::styled(truncated, title_style)];
+    if pad > 0 {
+        spans.push(Span::raw(" ".repeat(pad as usize)));
+    }
+    spans.push(star_text.fg(stars_color(stars)));
+    spans
+}
+
+/// The hardest difficulty's star rating from a set's `beatmaps[]` spread — the
+/// representative tier a browse-row star suffix uses. `None` when the carrier
+/// response omitted the array (id-only rows still enrich behind it).
+fn representative_stars(meta: &BeatmapSetMeta) -> Option<f64> {
+    meta.beatmaps
+        .iter()
+        .map(|b| b.difficulty_rating)
+        .reduce(f64::max)
 }
 
 /// The enrichment-in-flight cue text (`⠋ loading titles`), dim so it reads as

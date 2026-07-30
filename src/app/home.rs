@@ -254,6 +254,10 @@ pub enum HomeField {
     FindStatus,
     /// The find source's sort chip (curated field+order presets).
     FindSort,
+    /// The find source's `advanced filters` disclosure: expands/collapses the 13
+    /// per-attribute range inputs. `space`/`enter` toggle it; collapsed by
+    /// default so the primary form (query + chips + find) fits on one screen.
+    FindAdvanced,
     /// The find source's min-max range inputs (per-diff attributes).
     FindStars,
     FindAr,
@@ -299,14 +303,15 @@ const COLLECTION_FIELDS: &[HomeField] = &[
 ];
 
 /// Find-source focus order: the strip, the free-text query, the chips (preset →
-/// special → mode → status → sort), the range inputs, the text inputs, the
-/// limit, the `find` / `view N maps` CTAs, then the shared download section
-/// (mirrors / directory / threads / overwrite / video) and its `Download`
-/// button. One union list — the resolved backend is an implementation detail, so
-/// there is no per-backend field split. The download section is the same run
-/// settings every source shares (`self.home.*`), rendered inline on all three.
-/// Descending into the results browse suspends this nav (`SetBrowse::descend`);
-/// the download fires from `Download`.
+/// special → mode → status → sort), the `advanced filters` disclosure, [the 13
+/// per-attribute range inputs when expanded], the limit, the `find` / `view N
+/// maps` CTAs, then the shared download section (mirrors / directory / threads /
+/// overwrite / video) and its `Download` button. One union list — the resolved
+/// backend is an implementation detail, so there is no per-backend field split.
+/// The download section is the same run settings every source shares
+/// (`self.home.*`), rendered inline on all three. Descending into the results
+/// browse suspends this nav (`SetBrowse::descend`); the download fires from
+/// `Download`.
 const FIND_FIELDS: &[HomeField] = &[
     HomeField::Source,
     HomeField::FindQuery,
@@ -315,6 +320,7 @@ const FIND_FIELDS: &[HomeField] = &[
     HomeField::FindMode,
     HomeField::FindStatus,
     HomeField::FindSort,
+    HomeField::FindAdvanced,
     HomeField::FindStars,
     HomeField::FindAr,
     HomeField::FindCs,
@@ -328,6 +334,30 @@ const FIND_FIELDS: &[HomeField] = &[
     HomeField::FindArtist,
     HomeField::FindCreator,
     HomeField::FindTitle,
+    HomeField::FindLimit,
+    HomeField::FindRun,
+    HomeField::FindBrowse,
+    HomeField::Mirrors,
+    HomeField::Directory,
+    HomeField::Threads,
+    HomeField::AutoOverwrite,
+    HomeField::Video,
+    HomeField::Download,
+];
+
+/// Find-source focus order with the `advanced filters` disclosure collapsed:
+/// the 13 per-attribute range inputs are skipped so navigation stays on the
+/// primary form. [`HomeTab::active_fields`] picks between this and
+/// [`FIND_FIELDS`] based on the disclosure state.
+const FIND_FIELDS_COLLAPSED: &[HomeField] = &[
+    HomeField::Source,
+    HomeField::FindQuery,
+    HomeField::FindPreset,
+    HomeField::FindSpecial,
+    HomeField::FindMode,
+    HomeField::FindStatus,
+    HomeField::FindSort,
+    HomeField::FindAdvanced,
     HomeField::FindLimit,
     HomeField::FindRun,
     HomeField::FindBrowse,
@@ -406,6 +436,34 @@ impl HomeField {
                 | HomeField::FindMode
                 | HomeField::FindStatus
                 | HomeField::FindSort
+        )
+    }
+
+    /// Whether this is a disclosure row that `space`/`enter` expand/collapse.
+    pub fn is_disclosure(self) -> bool {
+        matches!(self, HomeField::FindAdvanced)
+    }
+
+    /// Whether this is one of the 13 fields gated behind the `advanced filters`
+    /// disclosure. Drives auto-expand: the section stays open while focus rests
+    /// on an advanced field so the user can never be "stuck" focusing an
+    /// invisible row.
+    pub fn is_advanced(self) -> bool {
+        matches!(
+            self,
+            HomeField::FindStars
+                | HomeField::FindAr
+                | HomeField::FindCs
+                | HomeField::FindOd
+                | HomeField::FindHp
+                | HomeField::FindBpm
+                | HomeField::FindLength
+                | HomeField::FindKeys
+                | HomeField::FindFavourites
+                | HomeField::FindRanked
+                | HomeField::FindArtist
+                | HomeField::FindCreator
+                | HomeField::FindTitle
         )
     }
 
@@ -686,7 +744,13 @@ impl HomeTab {
         match self.source {
             GetMapsSource::Collection => COLLECTION_FIELDS,
             GetMapsSource::Update => UPDATE_FIELDS,
-            GetMapsSource::Find => FIND_FIELDS,
+            GetMapsSource::Find => {
+                if self.find.show_advanced_filters() || self.focus.is_advanced() {
+                    FIND_FIELDS
+                } else {
+                    FIND_FIELDS_COLLAPSED
+                }
+            }
         }
     }
 

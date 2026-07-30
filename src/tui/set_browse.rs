@@ -31,6 +31,28 @@ const KV_WIDTH: usize = "favourites".len();
 /// Cell count of the AR/CS/OD/HP bar meters. Equal to the attributes' max
 /// scale (10), so one cell == one attribute unit.
 const BAR_WIDTH: usize = 10;
+/// Cell count of the spread star meters: half [`BAR_WIDTH`], so each cell
+/// covers two stars (0–10 in 5 cells). The `★X.XX` number already carries the
+/// exact rating; the bar only conveys spread shape, so the coarser resolution
+/// is no loss and the shorter bar truncates less in a narrow preview.
+const SPREAD_BAR_WIDTH: usize = 5;
+
+/// Content width available for browse-row label text in the list pane,
+/// computed from the body area. Accounts for the pane border, padding, caret,
+/// checkbox, and leading space. Returns `None` when the list area is too narrow
+/// to right-align the star suffix usefully.
+fn list_label_width(body_area: Rect) -> Option<u16> {
+    let list_width = if body_area.width >= 60 && body_area.height >= 14 {
+        (body_area.width / 5 * 2).clamp(28, 52)
+    } else {
+        body_area.width
+    };
+    // inner = list_width - 4 (borders 2 + padding.left 1 + padding.right 1)
+    // label = inner - 6 (caret 2 + checkbox 3 + space 1)
+    let label = list_width.saturating_sub(10);
+    // Stars take ~7 cells; need ≥8 more for a readable title prefix.
+    (label >= 15).then_some(label)
+}
 
 /// Render a set browse over the whole body area. `list_title` names the left
 /// pane, `list_meta` renders in the list pane's header border. `covers` supplies
@@ -53,6 +75,7 @@ pub fn render(
     // cue moves into the list pane's title (see `meta_with_loading_cue`) and the
     // preview's id-only detail; list rows themselves stay id-only, no per-row cue.
     let enriching = browse.is_enriching();
+    let label_width = list_label_width(area);
     let list_items: Vec<ListItem<'static>> = browse
         .rows
         .iter()
@@ -62,6 +85,7 @@ pub fn render(
                 row,
                 browse.is_selected(row.id),
                 list_focused && cursor == Some(i),
+                label_width,
             )
         })
         .collect();
@@ -120,8 +144,14 @@ pub fn render(
 
 /// One list row: checkbox plus the set's compact label. Rich when metadata is
 /// present (`artist - title`), else the bare id. Only the cursor row's label
-/// promotes to TEXT + bold.
-fn list_row(row: &BrowseRow, selected: bool, is_cursor: bool) -> ListItem<'static> {
+/// promotes to TEXT + bold. `label_width` right-aligns the star suffix within
+/// the list pane when `Some` (computed from the body area in [`render`]).
+fn list_row(
+    row: &BrowseRow,
+    selected: bool,
+    is_cursor: bool,
+    label_width: Option<u16>,
+) -> ListItem<'static> {
     // caret → checkbox → label (the contract's checkbox-row order).
     let mut spans = vec![widgets::focus_span(is_cursor)];
     spans.extend(widgets::checkbox_spans(selected));
@@ -130,6 +160,7 @@ fn list_row(row: &BrowseRow, selected: bool, is_cursor: bool) -> ListItem<'stati
         row.id,
         row.meta.as_ref(),
         focused_label(is_cursor),
+        label_width,
     ));
     ListItem::new(Line::from(spans))
 }
@@ -222,9 +253,14 @@ fn meta_field_rows(
     let diff = diff_block_rows(meta, details, focused_idx);
     if !diff.is_empty() {
         rows.push(ListItem::new(Line::default()));
+        rows.push(eyebrow_row("DIFFICULTIES"));
         rows.extend(diff);
     }
-    if let Some(details) = details {
+    if let Some(details) = details
+        && has_set_extras(details)
+    {
+        rows.push(ListItem::new(Line::default()));
+        rows.push(eyebrow_row("METADATA"));
         append_set_extras(&mut rows, details);
     }
     rows
@@ -435,18 +471,18 @@ fn objects_row(circles: u32, sliders: u32, spinners: u32) -> ListItem<'static> {
     ]))
 }
 
-/// A tier-coloured star meter: the `★X.XX` rating followed by a [`BAR_WIDTH`]
-/// cell bar (one cell per star, saturating past 10). Filled cells take the
-/// tier colour; empty cells are faint.
+/// A tier-coloured star meter: the `★X.XX` rating followed by a
+/// [`SPREAD_BAR_WIDTH`] cell bar (one cell per two stars, saturating past 10).
+/// Filled cells take the tier colour; empty cells are faint.
 fn star_meter_spans(stars: f64) -> Vec<Span<'static>> {
-    let filled = stars.round().clamp(0.0, BAR_WIDTH as f64) as usize;
+    let filled = (stars / 2.0).round().clamp(0.0, SPREAD_BAR_WIDTH as f64) as usize;
     let color = stars_color(stars);
     let mut spans = vec![format!(" ★{stars:.2} ").fg(color)];
     if filled > 0 {
         spans.push("█".repeat(filled).fg(color));
     }
-    if filled < BAR_WIDTH {
-        spans.push("░".repeat(BAR_WIDTH - filled).fg(text_faint()));
+    if filled < SPREAD_BAR_WIDTH {
+        spans.push("░".repeat(SPREAD_BAR_WIDTH - filled).fg(text_faint()));
     }
     spans
 }
@@ -545,6 +581,23 @@ fn kv_row(key: &str, value: String) -> ListItem<'static> {
             .bold(),
         value.fg(text()),
     ]))
+}
+
+/// A UPPERCASE TRACKED `TEXT_DIM` section label inside the preview — the
+/// contract's eyebrow for internal sections (no bold, no horizontal rule).
+fn eyebrow_row(label: &'static str) -> ListItem<'static> {
+    ListItem::new(Line::from(label.fg(text_dim())))
+}
+
+/// Whether [`append_set_extras`] would push any row for `d`, so the caller can
+/// gate the `METADATA` eyebrow + separator on having content to show.
+fn has_set_extras(d: &BeatmapDetails) -> bool {
+    !d.tags.trim().is_empty()
+        || !d.source.trim().is_empty()
+        || !d.genre.trim().is_empty()
+        || !d.language.trim().is_empty()
+        || d.approved_date > 0
+        || d.last_update > 0
 }
 
 /// `1240` → `"1,240"`. Preview counts are detail-panel figures, so they render at
