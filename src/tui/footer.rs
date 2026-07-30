@@ -42,6 +42,9 @@ const HINT_DROP: &str = "S drop";
 
 const HINT_MOVE: &str = "↑↓ move";
 const HINT_SCROLL: &str = "↑↓ scroll";
+/// A focused set-browse preview: `↑↓` cycles the highlighted difficulty rather
+/// than scrolling, so naming it `scroll` would point at the wrong keys.
+const HINT_DIFFICULTY: &str = "↑↓ difficulty";
 /// ⇧↑↓ reorders the focused built-in mirror row in the Config try-order.
 const HINT_REORDER: &str = "⇧↑↓ reorder";
 /// Source strip focused: `↵` cycles and `1`-`3` jump, both switch source —
@@ -421,7 +424,9 @@ fn set_browse_hints(
     // The browse ascends on esc rather than quitting; that back step is left
     // unadvertised (esc-to-go-back is universal), so no trailing key.
     if browse.preview_focused() {
-        return (vec![HINT_SCROLL, HINT_SORT, HINT_FOCUS_LIST], None);
+        // `↑↓` steps the difficulty here; the pane itself scrolls on the page
+        // keys, unadvertised like every other list's paging.
+        return (vec![HINT_DIFFICULTY, HINT_SORT, HINT_FOCUS_LIST], None);
     }
     let mut segments = vec![
         HINT_SCROLL,

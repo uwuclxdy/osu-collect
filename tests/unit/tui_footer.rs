@@ -394,3 +394,31 @@ fn source_strip_hint_merges_when_focused_standalone_otherwise() {
         "exactly one switch-source hint, got: {focused}"
     );
 }
+
+#[test]
+fn a_focused_set_browse_preview_names_the_difficulty_keys_not_a_scroll() {
+    use crate::app::find_source::BrowseRow;
+    use std::collections::HashMap;
+
+    let mut app = App::new(Config::default());
+    app.active_tab = Tab::Home;
+    app.home.source = crate::app::home::GetMapsSource::Find;
+    app.home
+        .find
+        .browse
+        .set_rows(vec![BrowseRow { id: 1, meta: None }], &HashMap::new());
+    app.home.find.browse.descend();
+    app.home.find.browse.focus_preview();
+
+    let hint = hint_for(&app);
+    // `↑↓` steps the highlighted difficulty in a focused preview; the pane's own
+    // scroll is on the page keys. Calling it a scroll points at the wrong keys.
+    assert!(
+        hint.contains("↑↓ difficulty"),
+        "focused preview must name the difficulty keys, got: {hint}"
+    );
+    assert!(
+        !hint.contains("↑↓ scroll"),
+        "focused preview must not advertise ↑↓ as the scroll, got: {hint}"
+    );
+}
