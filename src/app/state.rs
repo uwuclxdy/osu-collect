@@ -811,6 +811,49 @@ impl App {
         }
     }
 
+    // ── auth transitions ──────────────────────────────────────────────────────
+    //
+    // The four writers of `config.supporter` that production uses. Each pairs the
+    // config-tab half with [`settle_supporter_gate`](Self::settle_supporter_gate),
+    // so the gate closing and the form reacting to it are one event: a settle
+    // deferred to the next keypress leaves a frame where focus sits on a row the
+    // render already dropped, and a settle skipped entirely leaves the six facet
+    // VALUES applying from controls nobody can see.
+
+    pub fn set_login_complete(&mut self, supporter: bool) {
+        self.config.set_login_complete(supporter);
+        self.settle_supporter_gate();
+    }
+
+    pub fn set_login_failed(&mut self) {
+        self.config.set_login_failed();
+        self.settle_supporter_gate();
+    }
+
+    pub fn set_logged_out(&mut self) {
+        self.config.set_logged_out();
+        self.settle_supporter_gate();
+    }
+
+    /// Adopt a confirmed `/me` supporter answer for a still-logged-in session
+    /// (the startup re-probe). Ignored while logged out — see
+    /// [`ConfigTab::set_supporter`](crate::app::ConfigTab::set_supporter).
+    pub fn set_supporter(&mut self, supporter: bool) {
+        self.config.set_supporter(supporter);
+        self.settle_supporter_gate();
+    }
+
+    /// Bring everything gated on osu!supporter back in line with the flag. Only
+    /// the closing direction needs work: opening the gate adds rows at their
+    /// defaults, which needs no cleanup.
+    fn settle_supporter_gate(&mut self) {
+        if self.config.supporter {
+            return;
+        }
+        self.home.find.clear_supporter_facets();
+        self.home.clamp_supporter_focus(self.config.supporter);
+    }
+
     /// Whether a login / verification request is currently in flight.
     fn login_in_flight(&self) -> bool {
         matches!(self.config.login_state, AuthLoginState::InProgress(_))
@@ -832,7 +875,7 @@ impl App {
         if self.login_in_flight() {
             // Drop the in-progress state (phase is preserved, so cancelling a
             // mid-verification request keeps the code field) and abort the task.
-            self.config.set_login_failed();
+            self.set_login_failed();
             self.toast_info("login cancelled");
             return Some(AppCommand::CancelLogin);
         }
@@ -1908,12 +1951,6 @@ impl App {
             return Some(AppCommand::Quit);
         }
 
-        // The supporter gate can close under a focused row at any time (a logout,
-        // a `/me` re-probe that comes back negative), and eight call sites flip
-        // the flag. Re-checking it here instead means the caret cannot still be
-        // parked on a row the next render will not draw.
-        self.home.clamp_supporter_focus(self.config.supporter);
-
         // ctrl+w and ctrl+backspace delete the previous word in the focused text
         // field (no-op elsewhere). Many terminals send ctrl+backspace as ^H
         // (ctrl+h), so both are intercepted early — otherwise they type 'w'/'h'.
@@ -2241,13 +2278,17 @@ impl App {
             // these rows like everywhere else, so the global binding keeps its
             // contract, and ⇧+arrow is the shape this app already uses for a
             // row-local action (the Config tab's ⇧↑/⇧↓ mirror reorder below).
-            // Guarded on the supporter flag as well as the row, so the pair that
-            // renders the rows and the pair that keys them can never disagree.
+            // Focus is the whole gate, as it is for the `space`/`enter` toggle on
+            // these same rows: a supporter row is reachable only through
+            // `HomeTab::active_fields`, which drops it without supporter, and
+            // `settle_supporter_gate` moves focus off it the moment the flag
+            // flips. A second read of the flag here could never be the deciding
+            // one, and having one of the row's two handlers check it invites the
+            // reading that the other forgot to.
             KeyCode::Left | KeyCode::Right
                 if key.modifiers.contains(KeyModifiers::SHIFT)
                     && self.active_tab() == Tab::Home
                     && !self.home_set_browsing()
-                    && self.config.supporter
                     && self.home.focus.is_find_multi_chip() =>
             {
                 self.move_find_chip_cursor(key.code == KeyCode::Right);

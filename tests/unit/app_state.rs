@@ -189,3 +189,106 @@ fn page_down_reaches_a_focused_find_browse_preview() {
         "the page key has to reach the browse, not stop at a tab-level handler"
     );
 }
+
+// ── the supporter gate closing ────────────────────────────────────────────────
+
+/// A supporter mid-edit: `special = farm` (not gated, so it survives) plus a
+/// gated `genre`, with focus parked on the genre row. The pair is the exact
+/// repro — `farm` forces nzbasic and `genre` forces osu, so a `genre` left
+/// standing after the gate closes names a field with no row on screen.
+fn supporter_mid_edit() -> App {
+    use crate::app::{GetMapsSource, HomeField};
+    let mut app = App::new(Config::default());
+    app.active_tab = Tab::Home;
+    app.home.source = GetMapsSource::Find;
+    app.set_login_complete(true);
+    app.home.find.cycle_special(true); // farm — nzbasic forcer, not gated
+    app.home.find.cycle_genre(true); // a gated osu forcer
+    app.home.focus = HomeField::FindGenre;
+    app
+}
+
+/// Positive control for the two tests below: the same fixture, same dimension
+/// (the supporter flag), a transition that LEAVES the gate open. Without this a
+/// clear-on-every-transition would read as a passing gate test.
+#[test]
+fn a_transition_that_keeps_supporter_keeps_the_facets() {
+    use crate::app::{FindRoute, HomeField};
+    let mut app = supporter_mid_edit();
+    app.set_login_complete(true);
+    assert_eq!(app.home.find.genre_label(), "unspecified");
+    assert_eq!(app.home.focus, HomeField::FindGenre);
+    assert!(matches!(
+        app.home.find.resolved_route(),
+        FindRoute::Conflict { .. }
+    ));
+}
+
+/// Both doors that shut the gate must return the six facets to default. A value
+/// left behind applies from a control nobody can see: it forces a route, names
+/// itself in a conflict message, pins the `advanced filters` disclosure open so
+/// `space` on it does nothing, and moves the on-disk folder tag.
+#[test]
+fn the_gate_closing_returns_every_supporter_facet_to_default() {
+    use crate::app::{FindRoute, HomeField};
+    for (door, close) in [
+        ("logout", App::set_logged_out as fn(&mut App)),
+        ("failed login", App::set_login_failed as fn(&mut App)),
+    ] {
+        let plain_tag = {
+            let mut fresh = supporter_mid_edit();
+            fresh.home.find.cycle_genre(false); // back to `any`
+            fresh.home.find.folder_tag()
+        };
+        let mut app = supporter_mid_edit();
+        assert!(
+            app.home.find.show_advanced_filters(),
+            "{door}: precondition"
+        );
+        assert_ne!(
+            app.home.find.folder_tag(),
+            plain_tag,
+            "{door}: precondition"
+        );
+
+        close(&mut app);
+
+        assert_eq!(app.home.find.genre_label(), "any", "{door}");
+        assert!(
+            !app.home.find.show_advanced_filters(),
+            "{door}: the disclosure is stuck open with no row to close it"
+        );
+        assert_eq!(
+            app.home.find.resolved_route(),
+            FindRoute::Nzbasic,
+            "{door}: `farm` alone routes nzbasic; a stray facet turns it into a \
+             conflict naming a field that no longer renders"
+        );
+        assert_eq!(
+            app.home.find.folder_tag(),
+            plain_tag,
+            "{door}: an invisible facet must not keep steering the download dir"
+        );
+        assert_eq!(
+            app.home.focus,
+            HomeField::Source,
+            "{door}: focus must leave a row that stops rendering"
+        );
+    }
+}
+
+/// The settle runs at the FLIP, not at the next keypress. Nothing is pressed
+/// here: the frame right after a logout would otherwise render with focus parked
+/// on a row it does not draw.
+#[test]
+fn the_gate_settles_without_waiting_for_a_keypress() {
+    use crate::app::HomeField;
+    let mut app = supporter_mid_edit();
+    app.set_logged_out();
+    assert_eq!(
+        app.home.focus,
+        HomeField::Source,
+        "no key was pressed; the clamp has to fire where the flag flips"
+    );
+    assert_eq!(app.home.find.genre_label(), "any");
+}

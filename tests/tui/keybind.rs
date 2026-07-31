@@ -1699,13 +1699,33 @@ fn space_and_enter_both_toggle_the_chip_under_the_cursor() {
     }
 }
 
-/// The shifted binding is gated on the supporter flag as well as the row, so the
-/// keys and the render can never disagree about whether the row exists.
+/// Once the gate shuts, the row is gone and `⇧→` is a plain tab switch again.
+///
+/// The close runs through the path production takes (`App::set_logged_out`),
+/// which is what moves focus off the row and drops the picks. Assigning the flag
+/// alone would build a state the app cannot reach — focus parked on a row the
+/// render already dropped — and pin nothing that ships.
 #[test]
 fn shift_arrows_switch_tabs_again_once_the_supporter_gate_closes() {
     use osu_collect::app::{HomeField, Tab};
     let mut app = find_app_on(HomeField::FindExtra);
-    app.config.supporter = false;
+    // The row is live first, so the fall-through below is a change and not the
+    // starting state.
+    app.handle_key(shift(KeyCode::Right));
+    app.handle_key(press(KeyCode::Char(' ')));
+    assert_eq!(app.home.find.extra.cursor(), 1);
+    assert!(app.home.find.extra.contains(1));
+
+    app.set_logged_out();
+    assert_eq!(
+        app.home.focus,
+        HomeField::Source,
+        "the row stops rendering, so focus has to leave it at the flip"
+    );
+    assert!(
+        app.home.find.extra.is_empty() && app.home.find.extra.cursor() == 0,
+        "and the pick goes with it — an invisible chip still rides into the query"
+    );
 
     app.handle_key(shift(KeyCode::Right));
     assert_ne!(
@@ -1714,6 +1734,4 @@ fn shift_arrows_switch_tabs_again_once_the_supporter_gate_closes() {
         "with the gate shut the row is gone, so ⇧→ falls through to the tab switch"
     );
     assert_eq!(app.home.find.extra.cursor(), 0, "and moves no cursor");
-    // The focus clamp fired on the same keypress, so the caret is off the row.
-    assert_eq!(app.home.focus, HomeField::Source);
 }

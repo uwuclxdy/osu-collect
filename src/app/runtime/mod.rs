@@ -24,7 +24,7 @@ pub use resolve::{HomeResolveEvent, handle_home_resolve_event};
 pub use search::{HomeSearchEvent, handle_home_search_event};
 pub use size::{HomeSizeEvent, handle_home_size_event};
 
-use super::{App, AppCommand, EnrichTarget, FindBackend, Tab};
+use super::{App, AppCommand, AuthLoginState, EnrichTarget, FindBackend, Tab};
 use crate::{
     config::Config,
     download::{self, DownloadEvent, DownloadHandle, DownloadId},
@@ -39,7 +39,7 @@ use tracing::{debug, info, trace, warn};
 
 use auth::{
     AuthEvent, handle_auth_event, spawn_lazer_login_task, spawn_logout_task, spawn_reissue_task,
-    spawn_verification_task,
+    spawn_supporter_refresh_task, spawn_verification_task,
 };
 use cover::schedule_cover_fetch;
 use details::{HomeDetailsEvent, handle_home_details_event, schedule_details};
@@ -364,6 +364,14 @@ pub async fn run(
                 &tasks.home_resolve_tx,
             );
         }
+    }
+
+    // A session that was already logged in at startup carries whatever supporter
+    // answer its last login wrote — including none at all, for a token stored
+    // before the flag existed. Re-probe in the background so the supporter-gated
+    // rows appear without a logout/login round trip.
+    if app.config.login_state == AuthLoginState::LoggedIn {
+        spawn_supporter_refresh_task(auth_tx.clone());
     }
 
     // Background self-update check. Auto mode downloads+applies; notify mode only

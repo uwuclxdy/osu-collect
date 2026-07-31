@@ -1727,7 +1727,7 @@ fn multi_select_row_brackets_the_cursor_and_accents_the_picked() {
     // Cursor starts on the first chip, nothing picked.
     let content = render_content(&app, 90, 60);
     assert!(
-        content.contains("[video]"),
+        content.contains("[○video]"),
         "cursor brackets chip 0: {content}"
     );
 
@@ -1749,25 +1749,103 @@ fn multi_select_row_brackets_the_cursor_and_accents_the_picked() {
         .find(|line| line.contains("storyboard"))
         .unwrap_or_else(|| panic!("no extra row: {rows:?}"));
     assert!(
-        row.contains("[storyboard]") && !row.contains("[video]"),
+        row.contains("[○storyboard]") && !row.contains("[●video]"),
         "the bracket follows the cursor, not the pick: {row}"
     );
 
     // The picked chip is the accented one; the cursor chip is not.
     let accent = osu_collect::tui::theme().accent;
-    let picked_at = row.find("video").expect("video on the row") as u16;
+    let picked_at = column_of(row, "video");
     let y = rows.iter().position(|line| line == row).expect("row index") as u16;
     assert_eq!(
         buf[(picked_at, y)].style().fg,
         Some(accent),
         "a picked chip carries the selection colour: {row}"
     );
-    let cursor_at = row.find("[storyboard]").expect("cursor chip") as u16 + 1;
+    // +1 steps past the `[` onto the chip's own first cell.
+    let cursor_at = column_of(row, "[○storyboard]") + 1;
     assert_ne!(
         buf[(cursor_at, y)].style().fg,
         Some(accent),
         "an unpicked chip under the cursor is not accented: {row}"
     );
+}
+
+/// Buffer column of `needle`'s first cell in a rendered row.
+///
+/// `str::find` answers in BYTES, which stops being the column as soon as the row
+/// carries a multi-byte glyph — and every one of these rows opens with `│ ❯`.
+/// The two agreed by luck while the chips were ASCII.
+fn column_of(row: &str, needle: &str) -> u16 {
+    let byte = row
+        .find(needle)
+        .unwrap_or_else(|| panic!("{needle:?} not in {row:?}"));
+    row[..byte].chars().count() as u16
+}
+
+/// The row the states below are read off. Anchored on a picked chip's mark:
+/// `rank ` alone also matches the `ranked` date input two rows down, and the
+/// bare label matches the footer.
+fn rank_row(rows: &[String]) -> String {
+    rows.iter()
+        .find(|line| line.contains("●XH"))
+        .unwrap_or_else(|| panic!("no rank row: {rows:?}"))
+        .trim_end()
+        .to_string()
+}
+
+/// A multi-select chip has four states, and every one has to be readable with
+/// the colour thrown away — on a colourblind palette, a low-contrast theme, or
+/// in a pasted screenshot. The `●`/`○` mark carries pick-ness, the `[brackets]`
+/// carry the cursor, and the two compose. Before this the accent fill was the
+/// only thing saying which chips were on.
+#[test]
+fn every_multi_select_chip_state_reads_without_colour() {
+    use osu_collect::app::HomeField;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = find_app(true);
+    app.home.focus = HomeField::FindRank;
+    // Pick XH, walk to X, pick that too — leaving the cursor on a PICKED chip.
+    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
+    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+
+    let row = rank_row(&render_rows(&app, 90, 60));
+    assert!(
+        row.contains("●XH  [●X]  ○SH  ○S  ○A  ○B  ○C  ○D"),
+        "picked, picked-at-cursor and unpicked must differ in text: {row}"
+    );
+
+    // The fourth state: the cursor moves onto an UNPICKED chip, which keeps its
+    // own mark rather than borrowing the one it is sitting next to.
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
+    let row = rank_row(&render_rows(&app, 90, 60));
+    assert!(
+        row.contains("●XH  ●X  [○SH]  ○S  ○A  ○B  ○C  ○D"),
+        "unpicked-at-cursor must not read as picked: {row}"
+    );
+}
+
+/// The prefix is what separates a multi row from a cycle row: several chips can
+/// be on at once, so the row states each one's answer. A cycle row has exactly
+/// one selection and takes no mark, and losing that distinction is what would
+/// make the two families read alike.
+#[test]
+fn a_cycle_row_carries_no_pick_mark() {
+    use osu_collect::app::HomeField;
+    let mut app = find_app(true);
+    app.home.focus = HomeField::FindGenre;
+    let rows = render_rows(&app, 120, 60);
+    let genre = rows
+        .iter()
+        .find(|line| line.contains("hip hop"))
+        .unwrap_or_else(|| panic!("no genre row: {rows:?}"));
+    assert!(
+        !genre.contains('●') && !genre.contains('○'),
+        "a single-select row must not borrow the multi-select mark: {genre}"
+    );
+    assert!(genre.contains("[any]"), "its cursor is still bracketed");
 }
 
 /// A sub-cursor nobody can find is a sub-cursor nobody uses: the key that moves
@@ -1784,7 +1862,12 @@ fn multi_select_row_advertises_the_chip_cursor_key() {
     );
     // And in place on the row itself, where the user is looking.
     assert!(
-        content.contains("shift+←→"),
+        content.contains("⇧←→ pick a chip"),
         "the row states its own grammar: {content}"
+    );
+    // Both land in the SAME frame, so the app must name the modifier one way.
+    assert!(
+        !content.contains("shift+"),
+        "two spellings of the shift modifier are visible at once: {content}"
     );
 }

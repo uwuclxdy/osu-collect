@@ -18,6 +18,10 @@ pub(super) enum AuthEvent {
     /// Verification-code reissue finished.
     ReissueComplete(Result<(), String>),
     LogoutComplete(Result<(), String>),
+    /// A background `/me` re-probe of an already-stored token answered. Only
+    /// ever sent for a CONFIRMED answer — an unreachable or unauthorized probe
+    /// sends nothing, so a flaky network can never revoke supporter features.
+    SupporterRefreshed(bool),
 }
 
 pub(super) fn handle_auth_event(event: AuthEvent, app: &mut App) {
@@ -33,7 +37,7 @@ pub(super) fn handle_auth_event(event: AuthEvent, app: &mut App) {
             if outcome.needs_verification {
                 // The token is saved but device verification is pending, so it
                 // can't download yet — treat as logged-out until verified.
-                app.config.set_logged_out();
+                app.set_logged_out();
                 // The open panel advances to the verification step and shows the
                 // instruction inline; only toast when it's closed (a login can
                 // finish after the panel was dismissed mid-flight).
@@ -46,7 +50,7 @@ pub(super) fn handle_auth_event(event: AuthEvent, app: &mut App) {
                     );
                 }
             } else {
-                app.config.set_login_complete(outcome.supporter);
+                app.set_login_complete(outcome.supporter);
                 if let Some(login) = app.login.as_mut() {
                     login.enter_logged_in();
                 } else {
@@ -55,14 +59,14 @@ pub(super) fn handle_auth_event(event: AuthEvent, app: &mut App) {
             }
         }
         AuthEvent::LazerLoginComplete(Err(err)) => {
-            app.config.set_login_failed();
+            app.set_login_failed();
             if let Some(login) = app.login.as_mut() {
                 login.reset_credentials();
             }
             app.push_toast(Toast::danger("login failed").with_detail(err));
         }
         AuthEvent::VerificationComplete(Ok(supporter)) => {
-            app.config.set_login_complete(supporter);
+            app.set_login_complete(supporter);
             // The open panel shows the logged-in state inline; only toast when
             // it's closed.
             if let Some(login) = app.login.as_mut() {
@@ -74,7 +78,7 @@ pub(super) fn handle_auth_event(event: AuthEvent, app: &mut App) {
         AuthEvent::VerificationComplete(Err(err)) => {
             // Stay on the verification step (phase unchanged) so the user can
             // re-enter the code; just drop the in-progress status.
-            app.config.set_logged_out();
+            app.set_logged_out();
             app.push_toast(Toast::danger("verification failed").with_detail(err));
         }
         AuthEvent::ReissueComplete(Ok(())) => {
@@ -84,15 +88,18 @@ pub(super) fn handle_auth_event(event: AuthEvent, app: &mut App) {
             app.push_toast(Toast::danger("could not resend code").with_detail(err));
         }
         AuthEvent::LogoutComplete(Ok(())) => {
-            app.config.set_logged_out();
+            app.set_logged_out();
             if let Some(login) = app.login.as_mut() {
                 login.reset_credentials();
             }
             app.toast_ok("logged out");
         }
         AuthEvent::LogoutComplete(Err(err)) => {
-            app.config.set_login_failed();
+            app.set_login_failed();
             app.push_toast(Toast::danger("logout failed").with_detail(err));
+        }
+        AuthEvent::SupporterRefreshed(supporter) => {
+            app.set_supporter(supporter);
         }
     }
 }
@@ -132,6 +139,33 @@ pub(super) fn spawn_reissue_task(tx: mpsc::UnboundedSender<AuthEvent>) {
     });
 }
 
+/// Re-probe `/me` for the supporter flag of a session that was ALREADY logged in
+/// when the app started. Without this the flag is whatever the last completed
+/// login wrote: a token stored before the field existed carries no answer at all
+/// and reads as not-a-supporter forever, and an account that gained or lost
+/// supporter since keeps the stale one — in both cases with no in-app way out
+/// short of a full logout/login.
+///
+/// Fire-and-forget: no stored handle, no await on the startup path, and a probe
+/// that answers nothing sends no event, so startup is unaffected by a failure.
+pub(super) fn spawn_supporter_refresh_task(tx: mpsc::UnboundedSender<AuthEvent>) {
+    tokio::spawn(async move {
+        let Some(mut stored) = auth::load() else {
+            return;
+        };
+        let client = reqwest::Client::new();
+        // `/me` on an expired token 401s and carries no supporter data, so a
+        // session idle past the token lifetime would learn nothing. A refresh
+        // failure is not fatal — the probe below then just answers nothing.
+        if let Err(err) = auth::ensure_valid(&client, &mut stored).await {
+            debug!(error = %err, "token refresh before the supporter probe failed");
+        }
+        if let Some(supporter) = auth::refresh_supporter_status(&client, &mut stored).await {
+            let _ = tx.send(AuthEvent::SupporterRefreshed(supporter));
+        }
+    });
+}
+
 pub(super) fn spawn_logout_task(tx: mpsc::UnboundedSender<AuthEvent>) {
     tokio::task::spawn_blocking(move || {
         let result = auth::delete().map_err(|err| err.to_string());
@@ -147,7 +181,11 @@ async fn submit_verification(code: &str) -> crate::utils::Result<bool> {
         auth::load().ok_or_else(|| AppError::other_dynamic(Box::from("not logged in")))?;
     let client = reqwest::Client::new();
     auth::submit_session_verification(&client, stored.bearer_token(), code).await?;
-    Ok(auth::refresh_supporter_status(&client, &mut stored).await)
+    // An unanswered probe leaves the cached value standing rather than claiming
+    // a status the server never confirmed.
+    Ok(auth::refresh_supporter_status(&client, &mut stored)
+        .await
+        .unwrap_or_else(|| stored.is_supporter()))
 }
 
 /// Load the stored token and ask osu! to re-send the verification code.
@@ -156,3 +194,7 @@ async fn reissue_verification() -> crate::utils::Result<()> {
     let client = reqwest::Client::new();
     auth::reissue_session_verification(&client, stored.bearer_token()).await
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/runtime_auth.rs"]
+mod tests;

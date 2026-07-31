@@ -964,21 +964,33 @@ const _: () = assert!(PLAYED_LABELS.len() == PLAYED_VALUES.len());
 /// Extras chip labels, tracking [`Extra::ALL`] position for position.
 const EXTRA_LABELS: &[&str] = &["video", "storyboard"];
 const _: () = assert!(EXTRA_LABELS.len() == Extra::ALL.len());
+const _: () = assert!(EXTRA_LABELS.len() <= ChipSet::MAX_MEMBERS);
 
 /// Achieved-rank chip labels, tracking [`Rank::ALL`] position for position.
 /// osu!'s own tokens, so they stay uppercase where every other chip is lowercase.
 const RANK_LABELS: &[&str] = &["XH", "X", "SH", "S", "A", "B", "C", "D"];
 const _: () = assert!(RANK_LABELS.len() == Rank::ALL.len());
+/// This row saturates the mask exactly, so a ninth [`Rank`] must widen
+/// [`ChipSet::mask`] before it can be listed here.
+const _: () = assert!(RANK_LABELS.len() <= ChipSet::MAX_MEMBERS);
 
 /// A multi-select chip row (`extra`, `rank`): which members are picked, plus the
 /// chip cursor `⇧←`/`⇧→` walk. One shape for both rows — the library bitset each
 /// converts to at build time is the only difference between them.
 ///
-/// Members are addressed by POSITION in the row's label table, which the const
-/// asserts above bind to the library's own `ALL` order. Nothing here stores a
-/// label, so a reword cannot reach the mask (and through it the folder tag).
+/// Members are addressed by POSITION in the row's label table. The const asserts
+/// above only pin those tables' LENGTH; what binds each position to the library's
+/// own `ALL` order is `every_chip_label_names_its_own_library_variant`, which
+/// compares every label against its variant's own name. Nothing here stores a
+/// label, so a reword cannot reach the mask (and through it the folder tag) — but
+/// a REORDER reaches both, which is what that test exists for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChipSet {
+    /// One bit per member, so the row can hold at most [`Self::MAX_MEMBERS`]
+    /// chips. `RANK_LABELS` already fills it exactly — see the asserts beside
+    /// each label table, which are what turn a ninth variant into a build error
+    /// rather than a `1 << 8` that panics in debug and silently toggles the
+    /// FIRST chip in release.
     mask: u8,
     cursor: usize,
     /// Member count, taken from the row's label table at construction so no
@@ -987,6 +999,9 @@ pub struct ChipSet {
 }
 
 impl ChipSet {
+    /// Chips one [`Self::mask`] can address.
+    pub const MAX_MEMBERS: usize = u8::BITS as usize;
+
     const fn new(len: usize) -> Self {
         Self {
             mask: 0,
@@ -1009,8 +1024,12 @@ impl ChipSet {
         self.cursor
     }
 
+    /// Whether the chip at `idx` is picked. Total: an index past the row's chip
+    /// count reads as unpicked rather than shifting the mask out of range. The
+    /// render passes label-table indices, so the two agree today — the guard is
+    /// what keeps a public method from having a panicking input at all.
     pub fn contains(&self, idx: usize) -> bool {
-        self.mask & (1 << idx) != 0
+        idx < self.len && self.mask & (1 << idx) != 0
     }
 
     /// Whether nothing is picked, i.e. the row emits no parameter.
@@ -1173,9 +1192,14 @@ impl FindSource {
 
     /// Whether any advanced-section control carries a value: the five supporter
     /// facets that live there, or one of the 13 per-attribute range/text inputs.
-    /// A non-supporter can never move a facet off default, so this reduces to the
-    /// inputs there. `explicit` is deliberately absent — it renders in the main
-    /// FILTERS block, not behind the disclosure.
+    /// The facets count unconditionally — a supporter CAN set one and then lose
+    /// the gate, and skipping them here would only swap one stranding for
+    /// another (a live value hidden instead of a disclosure pinned open).
+    /// [`clear_supporter_facets`] is what settles that case, at the flip.
+    /// `explicit` is deliberately absent — it renders in the main FILTERS block,
+    /// not behind the disclosure.
+    ///
+    /// [`clear_supporter_facets`]: Self::clear_supporter_facets
     fn has_any_advanced_input(&self) -> bool {
         self.genre_idx != 0
             || self.language_idx != 0
@@ -1195,6 +1219,25 @@ impl FindSource {
             || !self.artist.value.is_empty()
             || !self.creator.value.is_empty()
             || !self.title.value.is_empty()
+    }
+
+    /// Return the six supporter facets to their defaults.
+    ///
+    /// Run whenever the supporter gate closes, because the rows stop rendering
+    /// but the values do not stop applying: a stray facet keeps forcing the osu
+    /// route, keeps naming itself in a conflict message for a field with no row
+    /// on screen, keeps [`show_advanced_filters`] pinned true so the disclosure
+    /// no longer responds, and keeps riding into the folder tag. Cycling the
+    /// preset chip was the only way out, which nobody would find.
+    ///
+    /// [`show_advanced_filters`]: Self::show_advanced_filters
+    pub fn clear_supporter_facets(&mut self) {
+        self.explicit_idx = 0;
+        self.genre_idx = 0;
+        self.language_idx = 0;
+        self.played_idx = 0;
+        self.extra.clear();
+        self.rank.clear();
     }
 
     // ── presets ───────────────────────────────────────────────────────────────
@@ -1219,12 +1262,7 @@ impl FindSource {
         // The six supporter facets are osu-forcers too, so a leftover one turns
         // a nzbasic-seeding preset (farm, stream) into a routing conflict — the
         // exact failure the reset above exists to prevent.
-        self.explicit_idx = 0;
-        self.genre_idx = 0;
-        self.language_idx = 0;
-        self.played_idx = 0;
-        self.extra.clear();
-        self.rank.clear();
+        self.clear_supporter_facets();
         for field in [
             &mut self.query,
             &mut self.stars,
