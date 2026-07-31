@@ -1784,7 +1784,12 @@ fn multi_select_row_advertises_the_chip_cursor_key() {
     );
     // And in place on the row itself, where the user is looking.
     assert!(
-        content.contains("shift+←→"),
+        content.contains("⇧←→ pick a chip"),
         "the row states its own grammar: {content}"
+    );
+    // Both land in the SAME frame, so the app must name the modifier one way.
+    assert!(
+        !content.contains("shift+"),
+        "two spellings of the shift modifier are visible at once: {content}"
     );
 }
