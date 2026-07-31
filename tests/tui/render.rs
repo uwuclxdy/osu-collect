@@ -553,19 +553,45 @@ fn update_source_shows_client_toggle() {
 
 // ── config view ──────────────────────────────────────────────────────────────
 
+/// One leg per `AuthLoginState` arm, each pinning the literal copy that arm
+/// renders. The state is set explicitly because `ConfigTab::new` seeds it from
+/// `auth::load()` — a real `auth.json` on the developer's box otherwise decides
+/// which arm this renders, and the assertion silently changes meaning with it.
+///
+/// Substring, not equality: the chip's state segment carries suffixes (the
+/// supporter badge) that are not this test's boundary.
 #[test]
 fn config_tab_shows_auth_chip() {
-    let mut app = make_app();
-    app.next_tab();
-    app.next_tab(); // home → downloads → config
-    let content = render_content(&app, 120, 40);
-    assert!(
-        content.contains("signed out")
-            || content.contains("signed in")
-            || content.contains("log in")
-            || content.contains("login unavailable"),
-        "auth chip must render a visible auth state: {content}"
-    );
+    use osu_collect::app::AuthLoginState;
+
+    for (state, expect_label, expect_action, forbid) in [
+        (AuthLoginState::LoggedOut, " logged out", "log in", "manage"),
+        (
+            AuthLoginState::InProgress(String::new()),
+            " logging in…",
+            "view",
+            "manage",
+        ),
+        (AuthLoginState::LoggedIn, " logged in", "manage", "log in"),
+    ] {
+        let mut app = make_app();
+        app.next_tab();
+        app.next_tab(); // home → downloads → config
+        app.config.login_state = state.clone();
+        let content = render_content(&app, 120, 40);
+        assert!(
+            content.contains(expect_label),
+            "{state:?} must render {expect_label:?}: {content}"
+        );
+        assert!(
+            content.contains(expect_action),
+            "{state:?} must render the {expect_action:?} action: {content}"
+        );
+        assert!(
+            !content.contains(forbid),
+            "{state:?} must not render {forbid:?}: {content}"
+        );
+    }
 }
 
 // ── error / message footer ───────────────────────────────────────────────────
