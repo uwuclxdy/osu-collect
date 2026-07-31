@@ -22,10 +22,12 @@ const NOTE_PASSWORD: &[&str] = &[
 ];
 const NOTE_VERIFICATION: &str = "osu! emailed a code to verify this device.";
 
+// The one fact that actually changes behavior: this is ROPC against
+// osu!lazer's own client id, an unofficial grey area, so the mirror stays a
+// last resort rather than a primary. Cut: the rate-limiting used to sit here
+// too, but it's automatic and the user has no decision to make about it.
 const CAUTION: &[&str] = &[
-    "signs in with osu!lazer's first-party client (unofficial).",
-    "requests to osu! are throttled automatically to stay within its limits.",
-    "grey area: still best as a last-resort mirror, used sparingly.",
+    "osu!lazer's client id is unofficial and a grey area, so treat this mirror as a last resort, used sparingly.",
 ];
 
 pub fn render(
