@@ -112,7 +112,7 @@ impl<T: Copy + PartialEq> FormItems<T> {
 /// visible window, the caret row — reads this map, so they cannot drift apart.
 /// With every item one line tall each method reduces to the plain arithmetic it
 /// replaced, so a form of single-line rows renders and parks its caret exactly
-/// as before (`one_line_rows_render_and_park_the_caret_unchanged`).
+/// as before (`one_line_form_renders_and_parks_the_caret_unchanged`).
 pub struct ItemHeights(Vec<usize>);
 
 impl ItemHeights {
