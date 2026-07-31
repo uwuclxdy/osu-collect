@@ -652,7 +652,7 @@ impl App {
             return;
         }
         match self.active_tab() {
-            Tab::Home => self.home.next_field(),
+            Tab::Home => self.home.next_field(self.config.supporter),
             Tab::Config => self.config.next_field(),
             _ => {}
         }
@@ -666,7 +666,7 @@ impl App {
             return;
         }
         match self.active_tab() {
-            Tab::Home => self.home.prev_field(),
+            Tab::Home => self.home.prev_field(self.config.supporter),
             Tab::Config => self.config.prev_field(),
             _ => {}
         }
@@ -680,7 +680,7 @@ impl App {
             return;
         }
         match self.active_tab() {
-            Tab::Home => self.home.first_field(),
+            Tab::Home => self.home.first_field(self.config.supporter),
             Tab::Config => self.config.first_field(),
             _ => {}
         }
@@ -694,7 +694,7 @@ impl App {
             return;
         }
         match self.active_tab() {
-            Tab::Home => self.home.last_field(),
+            Tab::Home => self.home.last_field(self.config.supporter),
             Tab::Config => self.config.last_field(),
             _ => {}
         }
@@ -1381,6 +1381,29 @@ impl App {
             HomeField::FindMode => self.home.find.cycle_mode(forward),
             HomeField::FindStatus => self.home.find.cycle_status(forward),
             HomeField::FindSort => self.home.find.cycle_sort(forward),
+            HomeField::FindExplicit => self.home.find.cycle_explicit(forward),
+            HomeField::FindGenre => self.home.find.cycle_genre(forward),
+            HomeField::FindLanguage => self.home.find.cycle_language(forward),
+            HomeField::FindPlayed => self.home.find.cycle_played(forward),
+            _ => {}
+        }
+    }
+
+    /// `space`/`enter` on a multi-select find row: flip the member under the
+    /// row's chip cursor.
+    fn toggle_find_chip(&mut self) {
+        match self.home.focus {
+            HomeField::FindExtra => self.home.find.extra.toggle(),
+            HomeField::FindRank => self.home.find.rank.toggle(),
+            _ => {}
+        }
+    }
+
+    /// `⇧←`/`⇧→` on a multi-select find row: walk its chip cursor, wrapping.
+    fn move_find_chip_cursor(&mut self, forward: bool) {
+        match self.home.focus {
+            HomeField::FindExtra => self.home.find.extra.move_cursor(forward),
+            HomeField::FindRank => self.home.find.rank.move_cursor(forward),
             _ => {}
         }
     }
@@ -1885,6 +1908,12 @@ impl App {
             return Some(AppCommand::Quit);
         }
 
+        // The supporter gate can close under a focused row at any time (a logout,
+        // a `/me` re-probe that comes back negative), and eight call sites flip
+        // the flag. Re-checking it here instead means the caret cannot still be
+        // parked on a row the next render will not draw.
+        self.home.clamp_supporter_focus(self.config.supporter);
+
         // ctrl+w and ctrl+backspace delete the previous word in the focused text
         // field (no-op elsewhere). Many terminals send ctrl+backspace as ^H
         // (ctrl+h), so both are intercepted early — otherwise they type 'w'/'h'.
@@ -2206,6 +2235,23 @@ impl App {
             // they focus the list / preview pane. Everywhere else they switch
             // tabs — the source strip + search chips cycle on space/enter, not
             // arrows. Home/End jump to the field edges (text-field only).
+            // ⇧← / ⇧→ walk the chip cursor inside a focused multi-select find row
+            // (`extra`, `rank`); `space`/`enter` then toggle the chip under it.
+            // The modifier is the whole point: PLAIN ←/→ still switch tabs on
+            // these rows like everywhere else, so the global binding keeps its
+            // contract, and ⇧+arrow is the shape this app already uses for a
+            // row-local action (the Config tab's ⇧↑/⇧↓ mirror reorder below).
+            // Guarded on the supporter flag as well as the row, so the pair that
+            // renders the rows and the pair that keys them can never disagree.
+            KeyCode::Left | KeyCode::Right
+                if key.modifiers.contains(KeyModifiers::SHIFT)
+                    && self.active_tab() == Tab::Home
+                    && !self.home_set_browsing()
+                    && self.config.supporter
+                    && self.home.focus.is_find_multi_chip() =>
+            {
+                self.move_find_chip_cursor(key.code == KeyCode::Right);
+            }
             KeyCode::Left => {
                 if typing {
                     self.caret_left_focused();
@@ -2437,8 +2483,11 @@ impl App {
                             // The find CTA dispatches the resolved plan (osu search
                             // or nzbasic filter).
                             HomeField::FindRun => return self.dispatch_find_run(),
-                            // Find chips step forward on enter (like the source strip).
+                            // Find chips step forward on enter (like the source strip);
+                            // a multi-select row flips the chip under its cursor
+                            // instead, since it has no single "next" value.
                             field if field.is_find_chip() => self.cycle_find_chip(true),
+                            field if field.is_find_multi_chip() => self.toggle_find_chip(),
                             field if field.is_disclosure() => {
                                 self.home.find.toggle_advanced_filters()
                             }
@@ -2519,6 +2568,8 @@ impl App {
                         self.home.cycle_source(true);
                     } else if self.home.focus.is_find_chip() {
                         self.cycle_find_chip(true);
+                    } else if self.home.focus.is_find_multi_chip() {
+                        self.toggle_find_chip();
                     } else if self.home.focus.is_disclosure() {
                         self.home.find.toggle_advanced_filters();
                     } else if self.home.focus.is_toggle() {
@@ -2622,7 +2673,7 @@ impl App {
                         // while already on a button cycles the other available
                         // buttons. (`d` for the output-dir field stays
                         // Collection-only: search/update borrow it silently.)
-                        self.home.focus = self.home.cycle_enabled_button();
+                        self.home.focus = self.home.cycle_enabled_button(self.config.supporter);
                         self.editing = false;
                     } else if let Some(source) = ch
                         .to_digit(10)

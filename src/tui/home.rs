@@ -46,6 +46,7 @@ const HELP_MIRRORS_SUMMARY: &str = "[↵] configure";
 ///
 /// System-wide banners are rendered by [`super::draw`] above the body area, so
 /// this receives the already-reduced content area.
+#[allow(clippy::too_many_arguments)]
 pub fn render(
     frame: &mut Frame,
     area: Rect,
@@ -54,6 +55,7 @@ pub fn render(
     covers: &Covers,
     editing: bool,
     tick: u64,
+    supporter: bool,
 ) {
     // A browse claims the whole body regardless of density.
     if form.source == GetMapsSource::Update && form.update.is_browsing() {
@@ -66,7 +68,7 @@ pub fn render(
     // Compact (< COMPACT_HEIGHT) drops the section headers, spacers, and per-row
     // help tooltips to reclaim vertical space; navigation is identical.
     let chrome = area.height >= super::COMPACT_HEIGHT;
-    render_form(frame, area, form, library, editing, tick, chrome);
+    render_form(frame, area, form, library, editing, tick, chrome, supporter);
 }
 
 /// Caret column for whichever text input is focused in edit mode: the update
@@ -186,6 +188,7 @@ fn directory_hint(form: &HomeTab) -> String {
 /// (off below `COMPACT_HEIGHT`) drops the section headers, spacers, and per-row
 /// help tooltips; navigation is identical either way. The browse-claims-body and
 /// density checks are handled by [`render`] before this is called.
+#[allow(clippy::too_many_arguments)]
 fn render_form(
     frame: &mut Frame,
     area: Rect,
@@ -194,9 +197,10 @@ fn render_form(
     editing: bool,
     tick: u64,
     chrome: bool,
+    supporter: bool,
 ) {
     let focus = form.focus;
-    let primary = form.primary_action_field();
+    let primary = form.primary_action_field(supporter);
     let active_section = home_section(focus);
     let content_width = widgets::panel_content_width(area);
     let mut items = widgets::FormItems::new(focus);
@@ -268,6 +272,7 @@ fn render_form(
             primary,
             content_width,
             chrome,
+            supporter,
         ),
     }
 
@@ -456,7 +461,8 @@ fn home_section(field: HomeField) -> &'static str {
         FindQuery | FindPreset | FindSpecial | FindMode | FindStatus | FindSort | FindAdvanced
         | FindStars | FindAr | FindCs | FindOd | FindHp | FindBpm | FindLength | FindKeys
         | FindFavourites | FindRanked | FindArtist | FindCreator | FindTitle | FindLimit
-        | FindRun | FindBrowse => SECTION_NONE,
+        | FindRun | FindBrowse | FindExplicit | FindGenre | FindLanguage | FindExtra | FindRank
+        | FindPlayed => SECTION_NONE,
     }
 }
 

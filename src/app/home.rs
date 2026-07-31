@@ -254,6 +254,22 @@ pub enum HomeField {
     FindStatus,
     /// The find source's sort chip (curated field+order presets).
     FindSort,
+    /// The find source's explicit-content chip (any / hide / show). Supporter-only
+    /// — see [`HomeField::is_supporter_only`] — and sits in the main `filters`
+    /// block beside the other facets the osu! website groups it with.
+    FindExplicit,
+    /// The find source's supporter-only single-select facets, behind the
+    /// `advanced filters` disclosure.
+    FindGenre,
+    FindLanguage,
+    /// The find source's supporter-only MULTI-select facets: several chips can be
+    /// on at once (`e=video.storyboard`, `r=XH.X`). `⇧←`/`⇧→` walk the chip
+    /// cursor, `space`/`enter` toggle the chip under it.
+    FindExtra,
+    FindRank,
+    /// The find source's supporter-only play-state facet (any / played /
+    /// unplayed), scoped to the logged-in account.
+    FindPlayed,
     /// The find source's `advanced filters` disclosure: expands/collapses the 13
     /// per-attribute range inputs. `space`/`enter` toggle it; collapsed by
     /// default so the primary form (query + chips + find) fits on one screen.
@@ -303,9 +319,10 @@ const COLLECTION_FIELDS: &[HomeField] = &[
 ];
 
 /// Find-source focus order: the strip, the free-text query box, the `preset`
-/// chip, the `filters` chips (mode → categories → special), the `results` rows
-/// (sort → limit), the `advanced filters` disclosure, [the 13 per-attribute
-/// range inputs when expanded], the `find` / `view N maps` CTAs, then the shared
+/// chip, the `filters` chips (mode → categories → explicit → special), the
+/// `results` rows (sort → limit), the `advanced filters` disclosure, [the five
+/// supporter facets + the 13 per-attribute range inputs when expanded], the
+/// `find` / `view N maps` CTAs, then the shared
 /// download section (mirrors / directory / threads / overwrite / video) and its
 /// `Download` button. Mirrors the rendered order section for section — a
 /// tab order that disagrees with the eyebrows is the bug this pairing prevents.
@@ -320,10 +337,16 @@ const FIND_FIELDS: &[HomeField] = &[
     HomeField::FindPreset,
     HomeField::FindMode,
     HomeField::FindStatus,
+    HomeField::FindExplicit,
     HomeField::FindSpecial,
     HomeField::FindSort,
     HomeField::FindLimit,
     HomeField::FindAdvanced,
+    HomeField::FindGenre,
+    HomeField::FindLanguage,
+    HomeField::FindExtra,
+    HomeField::FindRank,
+    HomeField::FindPlayed,
     HomeField::FindStars,
     HomeField::FindAr,
     HomeField::FindCs,
@@ -347,16 +370,19 @@ const FIND_FIELDS: &[HomeField] = &[
     HomeField::Download,
 ];
 
-/// Find-source focus order with the `advanced filters` disclosure collapsed:
-/// the 13 per-attribute range inputs are skipped so navigation stays on the
-/// primary form. [`HomeTab::active_fields`] picks between this and
-/// [`FIND_FIELDS`] based on the disclosure state.
+/// Find-source focus order with the `advanced filters` disclosure collapsed: the
+/// five supporter facets and the 13 per-attribute range inputs are skipped so
+/// navigation stays on the primary form. [`HomeTab::active_fields`] picks between
+/// this and [`FIND_FIELDS`] based on the disclosure state, then drops the
+/// supporter-only rows from whichever it picked — the two dimensions are
+/// independent, and a row hidden on either must not be tab-reachable.
 const FIND_FIELDS_COLLAPSED: &[HomeField] = &[
     HomeField::Source,
     HomeField::FindQuery,
     HomeField::FindPreset,
     HomeField::FindMode,
     HomeField::FindStatus,
+    HomeField::FindExplicit,
     HomeField::FindSpecial,
     HomeField::FindSort,
     HomeField::FindLimit,
@@ -429,7 +455,9 @@ impl HomeField {
         matches!(self, HomeField::AutoOverwrite | HomeField::Video)
     }
 
-    /// Whether this is a find-source chip that `space`/`enter` cycle.
+    /// Whether this is a find-source SINGLE-select chip that `space`/`enter`
+    /// cycle. Disjoint from [`is_find_multi_chip`](Self::is_find_multi_chip),
+    /// whose rows toggle one member instead of stepping the whole row.
     pub fn is_find_chip(self) -> bool {
         matches!(
             self,
@@ -438,6 +466,39 @@ impl HomeField {
                 | HomeField::FindMode
                 | HomeField::FindStatus
                 | HomeField::FindSort
+                | HomeField::FindExplicit
+                | HomeField::FindGenre
+                | HomeField::FindLanguage
+                | HomeField::FindPlayed
+        )
+    }
+
+    /// Whether this is a find-source MULTI-select chip row: several members can
+    /// be on at once, so the row carries its own chip cursor. `⇧←`/`⇧→` walk it
+    /// and `space`/`enter` toggle the member under it.
+    ///
+    /// The modifier is what makes this legal: PLAIN `←`/`→` keep switching tabs
+    /// on these rows exactly as everywhere else, so the global binding is
+    /// untouched. `⇧`+arrow is already carved out in this app for the Config
+    /// tab's `⇧↑`/`⇧↓` mirror reorder.
+    pub fn is_find_multi_chip(self) -> bool {
+        matches!(self, HomeField::FindExtra | HomeField::FindRank)
+    }
+
+    /// Whether this row is one of the six osu!supporter-gated facets. Every one
+    /// of them was only honoured for a supporter token when probed against the
+    /// live API, so they are hidden — not disabled — for anyone else, per the
+    /// design language's login-gated-section rule. Unknown supporter status
+    /// reads as `false`, so the rows stay hidden until it is confirmed.
+    pub fn is_supporter_only(self) -> bool {
+        matches!(
+            self,
+            HomeField::FindExplicit
+                | HomeField::FindGenre
+                | HomeField::FindLanguage
+                | HomeField::FindExtra
+                | HomeField::FindRank
+                | HomeField::FindPlayed
         )
     }
 
@@ -446,14 +507,21 @@ impl HomeField {
         matches!(self, HomeField::FindAdvanced)
     }
 
-    /// Whether this is one of the 13 fields gated behind the `advanced filters`
-    /// disclosure. Drives auto-expand: the section stays open while focus rests
-    /// on an advanced field so the user can never be "stuck" focusing an
-    /// invisible row.
+    /// Whether this is one of the fields gated behind the `advanced filters`
+    /// disclosure — the five supporter facets that live there plus the 13
+    /// per-attribute inputs. Drives auto-expand: the section stays open while
+    /// focus rests on an advanced field so the user can never be "stuck" focusing
+    /// an invisible row. `FindExplicit` is supporter-gated but NOT advanced: it
+    /// renders in the main `filters` block.
     pub fn is_advanced(self) -> bool {
         matches!(
             self,
-            HomeField::FindStars
+            HomeField::FindGenre
+                | HomeField::FindLanguage
+                | HomeField::FindExtra
+                | HomeField::FindRank
+                | HomeField::FindPlayed
+                | HomeField::FindStars
                 | HomeField::FindAr
                 | HomeField::FindCs
                 | HomeField::FindOd
@@ -742,8 +810,14 @@ impl HomeTab {
 
     /// Focusable fields for the active source. A placeholder source exposes only
     /// the strip; the collection source exposes the full form.
-    fn active_fields(&self) -> &'static [HomeField] {
-        match self.source {
+    ///
+    /// The find source has TWO independent visibility dimensions — the `advanced
+    /// filters` disclosure and the supporter gate — so the disclosure picks the
+    /// list and the gate filters it. A row the render hides must not be reachable
+    /// by tab, which is what makes this filter, rather than the render, the
+    /// authority both read from.
+    pub(crate) fn active_fields(&self, supporter: bool) -> Vec<HomeField> {
+        let fields: &'static [HomeField] = match self.source {
             GetMapsSource::Collection => COLLECTION_FIELDS,
             GetMapsSource::Update => UPDATE_FIELDS,
             GetMapsSource::Find => {
@@ -753,6 +827,20 @@ impl HomeTab {
                     FIND_FIELDS_COLLAPSED
                 }
             }
+        };
+        fields
+            .iter()
+            .copied()
+            .filter(|field| supporter || !field.is_supporter_only())
+            .collect()
+    }
+
+    /// Move focus off a supporter row once the gate closes under it (a logout, a
+    /// `/me` re-probe that comes back non-supporter). The row stops rendering the
+    /// same frame, so leaving focus there would park the caret on nothing.
+    pub fn clamp_supporter_focus(&mut self, supporter: bool) {
+        if !supporter && self.focus.is_supporter_only() {
+            self.focus = HomeField::Source;
         }
     }
 
@@ -763,20 +851,20 @@ impl HomeTab {
         self.source = self.source.cycled(forward);
     }
 
-    pub fn next_field(&mut self) {
-        self.focus = next_field(self.active_fields(), self.focus);
+    pub fn next_field(&mut self, supporter: bool) {
+        self.focus = next_field(&self.active_fields(supporter), self.focus);
     }
 
-    pub fn prev_field(&mut self) {
-        self.focus = prev_field(self.active_fields(), self.focus);
+    pub fn prev_field(&mut self, supporter: bool) {
+        self.focus = prev_field(&self.active_fields(supporter), self.focus);
     }
 
-    pub fn first_field(&mut self) {
-        self.focus = first_field(self.active_fields(), self.focus);
+    pub fn first_field(&mut self, supporter: bool) {
+        self.focus = first_field(&self.active_fields(supporter), self.focus);
     }
 
-    pub fn last_field(&mut self) {
-        self.focus = last_field(self.active_fields(), self.focus);
+    pub fn last_field(&mut self, supporter: bool) {
+        self.focus = last_field(&self.active_fields(supporter), self.focus);
     }
 
     /// Whether the form has the minimum inputs a collection download needs: a
@@ -821,8 +909,8 @@ impl HomeTab {
     /// doesn't shout). This is the `None`-focus arm of
     /// [`cycle_enabled_button`](Self::cycle_enabled_button); the render reads it
     /// to pick each button's `ButtonProminence`.
-    pub fn primary_action_field(&self) -> HomeField {
-        self.active_fields()
+    pub fn primary_action_field(&self, supporter: bool) -> HomeField {
+        self.active_fields(supporter)
             .iter()
             .copied()
             .filter(|&field| field.is_button() && self.button_enabled(field))
@@ -838,9 +926,9 @@ impl HomeTab {
     /// lands somewhere predictable. When focus **is** on an enabled button, the
     /// *next* enabled button (wrapping), so repeated `s` cycles the other
     /// available buttons.
-    pub fn cycle_enabled_button(&self) -> HomeField {
+    pub fn cycle_enabled_button(&self, supporter: bool) -> HomeField {
         let buttons: Vec<HomeField> = self
-            .active_fields()
+            .active_fields(supporter)
             .iter()
             .copied()
             .filter(|&field| field.is_button() && self.button_enabled(field))

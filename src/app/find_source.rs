@@ -21,8 +21,8 @@ use osu_downloader::filter::{
     FilterSpecial, FilterStatus,
 };
 use osu_downloader::search::{
-    Beatmap, BeatmapSetMeta, QueryRange, RangeBound, SearchMode, SearchQuery, SearchStatus,
-    SortField, SortOrder,
+    Beatmap, BeatmapSetMeta, Extra, Genre, Language, PlayedFilter, QueryRange, RangeBound, Rank,
+    SearchMode, SearchQuery, SearchStatus, SortField, SortOrder,
 };
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -893,6 +893,144 @@ const _: () = assert!(matches!(
 /// and editable, so there is no hidden query state. `none` is the plain reset.
 const PRESET_LABELS: &[&str] = &["none", "all ranked", "loved", "farm", "stream", "7★+"];
 
+// ── supporter-only facets ────────────────────────────────────────────────────
+//
+// Six osu!-website facets the nzbasic database cannot express, so each forces
+// the osu route. Every one of them only took effect for a supporter token when
+// probed against the live API (2026-07-31), so the whole group is hidden unless
+// `ConfigTab::supporter` is a confirmed `true` — an unknown reads as not a
+// supporter and the rows stay hidden.
+
+/// Explicit-content chip; `explicit_idx` indexes this and [`EXPLICIT_NSFW`].
+/// `any` sends no `nsfw` parameter at all, which is what makes it the account's
+/// own profile default rather than a third server-side value.
+const EXPLICIT_LABELS: &[&str] = &["any", "hide", "show"];
+const EXPLICIT_NSFW: &[Option<bool>] = &[None, Some(false), Some(true)];
+const _: () = assert!(EXPLICIT_LABELS.len() == EXPLICIT_NSFW.len());
+
+/// Genre chip labels; index 0 is `any` (no `g` parameter) and the rest track
+/// [`Genre::ALL`] position for position. osu!'s genre ids skip 8, which `ALL`
+/// already encodes — hence walking it rather than a numeric range.
+const GENRE_LABELS: &[&str] = &[
+    "any",
+    "unspecified",
+    "video game",
+    "anime",
+    "rock",
+    "pop",
+    "other",
+    "novelty",
+    "hip hop",
+    "electronic",
+    "metal",
+    "classical",
+    "folk",
+    "jazz",
+];
+const _: () = assert!(GENRE_LABELS.len() == Genre::ALL.len() + 1);
+
+/// Language chip labels; index 0 is `any` (no `l` parameter), the rest track
+/// [`Language::ALL`].
+const LANGUAGE_LABELS: &[&str] = &[
+    "any",
+    "unspecified",
+    "english",
+    "japanese",
+    "chinese",
+    "instrumental",
+    "korean",
+    "french",
+    "german",
+    "swedish",
+    "spanish",
+    "italian",
+    "russian",
+    "polish",
+    "other",
+];
+const _: () = assert!(LANGUAGE_LABELS.len() == Language::ALL.len() + 1);
+
+/// Play-state chip labels; `played_idx` indexes this and [`PLAYED_VALUES`].
+/// `any` sends nothing rather than [`PlayedFilter::Any`] — same result, one
+/// fewer parameter.
+const PLAYED_LABELS: &[&str] = &["any", "played", "unplayed"];
+const PLAYED_VALUES: &[Option<PlayedFilter>] = &[
+    None,
+    Some(PlayedFilter::Played),
+    Some(PlayedFilter::Unplayed),
+];
+const _: () = assert!(PLAYED_LABELS.len() == PLAYED_VALUES.len());
+
+/// Extras chip labels, tracking [`Extra::ALL`] position for position.
+const EXTRA_LABELS: &[&str] = &["video", "storyboard"];
+const _: () = assert!(EXTRA_LABELS.len() == Extra::ALL.len());
+
+/// Achieved-rank chip labels, tracking [`Rank::ALL`] position for position.
+/// osu!'s own tokens, so they stay uppercase where every other chip is lowercase.
+const RANK_LABELS: &[&str] = &["XH", "X", "SH", "S", "A", "B", "C", "D"];
+const _: () = assert!(RANK_LABELS.len() == Rank::ALL.len());
+
+/// A multi-select chip row (`extra`, `rank`): which members are picked, plus the
+/// chip cursor `⇧←`/`⇧→` walk. One shape for both rows — the library bitset each
+/// converts to at build time is the only difference between them.
+///
+/// Members are addressed by POSITION in the row's label table, which the const
+/// asserts above bind to the library's own `ALL` order. Nothing here stores a
+/// label, so a reword cannot reach the mask (and through it the folder tag).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChipSet {
+    mask: u8,
+    cursor: usize,
+    /// Member count, taken from the row's label table at construction so no
+    /// caller can walk the cursor past the chips that exist.
+    len: usize,
+}
+
+impl ChipSet {
+    const fn new(len: usize) -> Self {
+        Self {
+            mask: 0,
+            cursor: 0,
+            len,
+        }
+    }
+
+    /// Flip the member under the cursor (`space`/`enter`).
+    pub fn toggle(&mut self) {
+        self.mask ^= 1 << self.cursor;
+    }
+
+    /// Step the chip cursor one member, wrapping (`⇧→` forward, `⇧←` back).
+    pub fn move_cursor(&mut self, forward: bool) {
+        self.cursor = cycle_idx(self.cursor, self.len, forward);
+    }
+
+    pub fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    pub fn contains(&self, idx: usize) -> bool {
+        self.mask & (1 << idx) != 0
+    }
+
+    /// Whether nothing is picked, i.e. the row emits no parameter.
+    pub fn is_empty(&self) -> bool {
+        self.mask == 0
+    }
+
+    /// The picked members' positions, ascending — the order both `ALL` tables
+    /// use, so the emitted parameter is byte-stable.
+    fn picked(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.len).filter(|idx| self.contains(*idx))
+    }
+
+    /// Reset to nothing picked, cursor home (preset seeds, `none`).
+    fn clear(&mut self) {
+        self.mask = 0;
+        self.cursor = 0;
+    }
+}
+
 /// Session-lived download-size state for one result set. Filled by both routes —
 /// the osu route probes nekoha lazily, the nzbasic route folds its response's
 /// free `SizeMap` in — so a state here is never route-specific.
@@ -917,6 +1055,16 @@ pub struct FindSource {
     mode_idx: usize,
     status_idx: usize,
     sort_idx: usize,
+    /// The six supporter-only facets. Each is inexpressible on nzbasic, so each
+    /// forces the osu route once moved off its default; all six are hidden
+    /// entirely (rows AND tab order) unless the account is a confirmed
+    /// supporter, so a non-supporter can never move one off default.
+    explicit_idx: usize,
+    genre_idx: usize,
+    language_idx: usize,
+    played_idx: usize,
+    pub extra: ChipSet,
+    pub rank: ChipSet,
     /// osu! free-text query (`q`). osu-only — a non-empty value forces osu.
     pub query: InputField,
     pub stars: InputField,
@@ -976,6 +1124,12 @@ impl FindSource {
             mode_idx: 0,
             status_idx: STATUS_DEFAULT_IDX,
             sort_idx: 0,
+            explicit_idx: 0,
+            genre_idx: 0,
+            language_idx: 0,
+            played_idx: 0,
+            extra: ChipSet::new(EXTRA_LABELS.len()),
+            rank: ChipSet::new(RANK_LABELS.len()),
             query: InputField::new("query", "", "artist, title, mapper, tags…"),
             stars: InputField::new("stars", "", "e.g. 7+  5.5..7  <9"),
             ar: InputField::new("ar", "", "e.g. 9  8+"),
@@ -1017,9 +1171,18 @@ impl FindSource {
         self.advanced_filters_open || self.has_any_advanced_input()
     }
 
-    /// Whether any of the 13 per-attribute range/text inputs has a non-empty value.
+    /// Whether any advanced-section control carries a value: the five supporter
+    /// facets that live there, or one of the 13 per-attribute range/text inputs.
+    /// A non-supporter can never move a facet off default, so this reduces to the
+    /// inputs there. `explicit` is deliberately absent — it renders in the main
+    /// FILTERS block, not behind the disclosure.
     fn has_any_advanced_input(&self) -> bool {
-        !self.stars.value.is_empty()
+        self.genre_idx != 0
+            || self.language_idx != 0
+            || self.played_idx != 0
+            || !self.extra.is_empty()
+            || !self.rank.is_empty()
+            || !self.stars.value.is_empty()
             || !self.ar.value.is_empty()
             || !self.cs.value.is_empty()
             || !self.od.value.is_empty()
@@ -1053,6 +1216,15 @@ impl FindSource {
         self.mode_idx = 0;
         self.status_idx = STATUS_DEFAULT_IDX;
         self.sort_idx = 0;
+        // The six supporter facets are osu-forcers too, so a leftover one turns
+        // a nzbasic-seeding preset (farm, stream) into a routing conflict — the
+        // exact failure the reset above exists to prevent.
+        self.explicit_idx = 0;
+        self.genre_idx = 0;
+        self.language_idx = 0;
+        self.played_idx = 0;
+        self.extra.clear();
+        self.rank.clear();
         for field in [
             &mut self.query,
             &mut self.stars,
@@ -1107,6 +1279,22 @@ impl FindSource {
         self.sort_idx = cycle_idx(self.sort_idx, SORT.len(), forward);
     }
 
+    pub fn cycle_explicit(&mut self, forward: bool) {
+        self.explicit_idx = cycle_idx(self.explicit_idx, EXPLICIT_LABELS.len(), forward);
+    }
+
+    pub fn cycle_genre(&mut self, forward: bool) {
+        self.genre_idx = cycle_idx(self.genre_idx, GENRE_LABELS.len(), forward);
+    }
+
+    pub fn cycle_language(&mut self, forward: bool) {
+        self.language_idx = cycle_idx(self.language_idx, LANGUAGE_LABELS.len(), forward);
+    }
+
+    pub fn cycle_played(&mut self, forward: bool) {
+        self.played_idx = cycle_idx(self.played_idx, PLAYED_LABELS.len(), forward);
+    }
+
     pub fn preset_label(&self) -> &'static str {
         PRESET_LABELS[self.preset_idx]
     }
@@ -1159,6 +1347,46 @@ impl FindSource {
     /// never drift.
     pub fn sort_labels(&self) -> Vec<&'static str> {
         SORT.iter().map(|opt| opt.label).collect()
+    }
+
+    pub fn explicit_label(&self) -> &'static str {
+        EXPLICIT_LABELS[self.explicit_idx]
+    }
+
+    pub fn explicit_labels(&self) -> &'static [&'static str] {
+        EXPLICIT_LABELS
+    }
+
+    pub fn genre_label(&self) -> &'static str {
+        GENRE_LABELS[self.genre_idx]
+    }
+
+    pub fn genre_labels(&self) -> &'static [&'static str] {
+        GENRE_LABELS
+    }
+
+    pub fn language_label(&self) -> &'static str {
+        LANGUAGE_LABELS[self.language_idx]
+    }
+
+    pub fn language_labels(&self) -> &'static [&'static str] {
+        LANGUAGE_LABELS
+    }
+
+    pub fn played_label(&self) -> &'static str {
+        PLAYED_LABELS[self.played_idx]
+    }
+
+    pub fn played_labels(&self) -> &'static [&'static str] {
+        PLAYED_LABELS
+    }
+
+    pub fn extra_labels(&self) -> &'static [&'static str] {
+        EXTRA_LABELS
+    }
+
+    pub fn rank_labels(&self) -> &'static [&'static str] {
+        RANK_LABELS
     }
 
     // ── plan / routing ──────────────────────────────────────────────────────
@@ -1216,7 +1444,9 @@ impl FindSource {
     }
 
     /// The first criterion forcing the osu route, or `None`. Priority: free text
-    /// → sort → status → keys → ranked date → favourites.
+    /// → sort → status → keys → ranked date → favourites → the six supporter
+    /// facets. The facets come last so adding them cannot reword a conflict
+    /// message any pre-existing pair already produced.
     ///
     /// The osu-only range fields route off their PARSED criterion, not their raw
     /// text — see [`emits_criterion`].
@@ -1233,6 +1463,18 @@ impl FindSource {
             Some("ranked date".to_string())
         } else if emits_criterion(osu_int_range(&self.favourites)) {
             Some("favourites".to_string())
+        } else if self.explicit_idx != 0 {
+            Some("explicit".to_string())
+        } else if self.genre_idx != 0 {
+            Some("genre".to_string())
+        } else if self.language_idx != 0 {
+            Some("language".to_string())
+        } else if !self.extra.is_empty() {
+            Some("extra".to_string())
+        } else if !self.rank.is_empty() {
+            Some("rank".to_string())
+        } else if self.played_idx != 0 {
+            Some("played".to_string())
         } else {
             None
         }
@@ -1260,12 +1502,12 @@ impl FindSource {
             text: self.query.value.trim().to_string(),
             mode: MODE_OSU[self.mode_idx],
             status: STATUS_OSU[self.status_idx],
-            genre: None,
-            language: None,
-            extra: Default::default(),
-            nsfw: None,
-            rank: Default::default(),
-            played: None,
+            genre: index_opt(&Genre::ALL, self.genre_idx),
+            language: index_opt(&Language::ALL, self.language_idx),
+            extra: self.extra.picked().map(|idx| Extra::ALL[idx]).collect(),
+            nsfw: EXPLICIT_NSFW[self.explicit_idx],
+            rank: self.rank.picked().map(|idx| Rank::ALL[idx]).collect(),
+            played: PLAYED_VALUES[self.played_idx],
             sort: SORT[self.sort_idx].osu,
             cursor,
             stars: osu_float_range(&self.stars)?,
@@ -1314,12 +1556,14 @@ impl FindSource {
     ///
     /// Chips contribute their index, not their display text: [`folder_tag`] hashes
     /// this into an on-disk directory name, so keying on wording would relocate a
-    /// user's downloads every time a chip is reworded.
+    /// user's downloads every time a chip is reworded. The two multi-select rows
+    /// contribute their member bitmask over the library's `ALL` order, which is
+    /// the same rule — a position, never a label.
     ///
     /// [`folder_tag`]: Self::folder_tag
     fn criteria_string(&self) -> String {
         format!(
-            "special={}|mode={}|status={}|q={}|stars={}|ar={}|cs={}|od={}|hp={}|bpm={}|len={}|keys={}|fav={}|ranked={}|artist={}|creator={}|title={}",
+            "special={}|mode={}|status={}|q={}|stars={}|ar={}|cs={}|od={}|hp={}|bpm={}|len={}|keys={}|fav={}|ranked={}|artist={}|creator={}|title={}|explicit={}|genre={}|language={}|extra={}|rank={}|played={}",
             self.special_idx,
             self.mode_idx,
             self.status_idx,
@@ -1337,16 +1581,23 @@ impl FindSource {
             self.artist.value.trim(),
             self.creator.value.trim(),
             self.title.value.trim(),
+            self.explicit_idx,
+            self.genre_idx,
+            self.language_idx,
+            self.extra.mask,
+            self.rank.mask,
+            self.played_idx,
         )
     }
 
     /// Canonical string of ALL inputs (criteria + sort + limit) — the staleness
-    /// key for the `view N maps` button.
+    /// key for the `view N maps` button. Sort contributes its INDEX for the same
+    /// reason the criteria chips do: a reword must never read as an input edit.
     fn inputs_string(&self) -> String {
         format!(
             "{}|sort={}|limit={}",
             self.criteria_string(),
-            self.sort_label(),
+            self.sort_idx,
             self.limit.value.trim(),
         )
     }
@@ -1529,6 +1780,13 @@ fn cycle_idx(idx: usize, len: usize, forward: bool) -> usize {
     } else {
         (idx + len - 1) % len
     }
+}
+
+/// Resolve a single-select chip index over one of the library's `ALL` tables,
+/// where slot 0 is the row's own `any` (send no parameter) and every later slot
+/// is `ALL[idx - 1]`. The const asserts on each label table keep the two aligned.
+fn index_opt<T: Copy>(all: &[T], idx: usize) -> Option<T> {
+    idx.checked_sub(1).map(|slot| all[slot])
 }
 
 /// Union chip index for a status/mode/special label. The arrays are const-length

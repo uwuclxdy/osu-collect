@@ -3,7 +3,10 @@ use crate::app::FindBackend;
 use osu_downloader::filter::{
     FilterDirection, FilterMode, FilterRange, FilterSort, FilterSpecial, FilterStatus,
 };
-use osu_downloader::search::{QueryRange, SearchMode, SearchStatus, SortField, SortOrder};
+use osu_downloader::search::{
+    Extra, ExtraSet, Genre, Language, PlayedFilter, QueryRange, Rank, RankSet, SearchMode,
+    SearchStatus, SortField, SortOrder,
+};
 use std::collections::HashMap;
 
 fn row(id: u32) -> BrowseRow {
@@ -573,20 +576,57 @@ fn canonical_criteria_string_is_stable_and_sort_limit_independent() {
     );
 
     // Sort/limit are excluded from the criteria string but present in the inputs
-    // string (the staleness key).
+    // string (the staleness key). Moved ONE AT A TIME: together, limit alone
+    // satisfies the `assert_ne!` and leaves sort's own contribution unpinned.
     let criteria_before = a.criteria_string();
+
     let inputs_before = a.inputs_string();
     a.cycle_sort(true);
-    a.limit.set_value("100");
     assert_eq!(
         a.criteria_string(),
         criteria_before,
-        "sort/limit do not change the criteria string"
+        "sort does not change the criteria string"
     );
     assert_ne!(
         a.inputs_string(),
         inputs_before,
-        "sort/limit change the staleness key"
+        "sort alone changes the staleness key"
+    );
+
+    let inputs_before = a.inputs_string();
+    a.limit.set_value("100");
+    assert_eq!(
+        a.criteria_string(),
+        criteria_before,
+        "limit does not change the criteria string"
+    );
+    assert_ne!(
+        a.inputs_string(),
+        inputs_before,
+        "limit alone changes the staleness key"
+    );
+}
+
+/// Sort reaches the staleness key by INDEX, not by its display label — the same
+/// rule the criteria chips follow. Lower stakes than the folder tag (this key is
+/// never persisted), but one label left in a canonical string reads as "the rule
+/// is mostly true", which is how it comes back.
+#[test]
+fn sort_rename_cannot_move_the_staleness_key() {
+    let mut source = FindSource::new();
+    set_sort(&mut source, "stars ↓");
+    let inputs = source.inputs_string();
+    let value = inputs
+        .split('|')
+        .find_map(|part| part.strip_prefix("sort="))
+        .unwrap_or_else(|| panic!("no sort field in {inputs}"));
+    assert!(
+        value.parse::<usize>().is_ok(),
+        "sort carries the display text {value:?}, not its index: {inputs}"
+    );
+    assert!(
+        !inputs.contains(source.sort_label()),
+        "the sort LABEL leaked into the staleness key: {inputs}"
     );
 }
 
@@ -615,10 +655,12 @@ fn criteria_string_is_byte_pinned() {
     // Ranges render from parsed bounds in operator form (`9+` → `>=9`, bare `8`
     // → `=8`, `<=4` → `<=4`); ranked/texts stay raw-trimmed. Chips contribute
     // their index (`farm` = special 1, `osu!catch` = mode 3, `approved` =
-    // status 3), never their display text.
+    // status 3), never their display text. The six supporter facets trail at
+    // their defaults here — `supporter_facets_are_byte_pinned_in_the_criteria`
+    // pins them moved.
     assert_eq!(
         source.criteria_string(),
-        "special=1|mode=3|status=3|q=tekno|stars=>=6 <=7|ar=>=9|cs=<=4|od==8|hp=>=5.5 <=6.5|bpm=>=180|len=>=90 <=300|keys==7|fav=>=100|ranked=2024|artist=cam|creator=toby|title=night"
+        "special=1|mode=3|status=3|q=tekno|stars=>=6 <=7|ar=>=9|cs=<=4|od==8|hp=>=5.5 <=6.5|bpm=>=180|len=>=90 <=300|keys==7|fav=>=100|ranked=2024|artist=cam|creator=toby|title=night|explicit=0|genre=0|language=0|extra=0|rank=0|played=0"
     );
 }
 
@@ -652,8 +694,9 @@ fn folder_tag_hash_is_byte_pinned() {
     let mut source = FindSource::new();
     source.stars.set_value("<=5");
     // FNV-1a-32 of `special=0|mode=0|status=1|q=|stars=<=5|ar=|cs=|od=|hp=|bpm=
-    // |len=|keys=|fav=|ranked=|artist=|creator=|title=`.
-    assert_eq!(source.folder_tag(), "a43c05c2");
+    // |len=|keys=|fav=|ranked=|artist=|creator=|title=|explicit=0|genre=0
+    // |language=0|extra=0|rank=0|played=0`.
+    assert_eq!(source.folder_tag(), "c3d0edd8");
 }
 
 /// Fix for raw-input hashing: equivalent numeric spellings share a folder tag
@@ -705,6 +748,377 @@ fn note_results_backend_round_trips() {
     // from it until a re-fetch).
     source.clear_results_snapshot();
     assert_eq!(source.results_backend(), Some(FindBackend::Nzbasic));
+}
+
+// ── supporter-only facets ─────────────────────────────────────────────────────
+
+/// One supporter facet under test: its user-facing name plus the edit that moves
+/// it off default.
+type FacetCase = (&'static str, fn(&mut FindSource));
+/// Same, plus whether moving it should auto-expand the advanced disclosure.
+type AdvancedFacetCase = (&'static str, bool, fn(&mut FindSource));
+
+/// Step a single-select supporter chip to `slot` from its default (slot 0 =
+/// `any`), through the same cycle the key handler calls.
+fn step(cycle: impl Fn(&mut FindSource, bool), source: &mut FindSource, slot: usize) {
+    for _ in 0..slot {
+        cycle(source, true);
+    }
+}
+
+/// Pick multi-select members by chip index, walking the row's own cursor exactly
+/// as `⇧←`/`⇧→` do — so these drive the shipped control rather than reaching past
+/// it into the mask.
+fn pick(chips: &mut ChipSet, indices: &[usize]) {
+    for &want in indices {
+        // Forward-only, wrapping, so this reaches any chip from any start; 64 is
+        // an upper bound on any row's chip count, not a wrap count.
+        for _ in 0..64 {
+            if chips.cursor() == want {
+                break;
+            }
+            chips.move_cursor(true);
+        }
+        assert_eq!(chips.cursor(), want, "chip cursor never reached {want}");
+        chips.toggle();
+    }
+}
+
+/// Every genre slot must resolve to the library variant at the same position in
+/// [`Genre::ALL`]. Enumerated rather than spot-checked: osu!'s genre ids skip 8,
+/// so an off-by-one against `ALL` is invisible until the exact slot is asked for.
+#[test]
+fn every_genre_slot_maps_to_its_library_variant() {
+    assert_eq!(osu(&FindSource::new()).genre, None, "slot 0 sends no `g`");
+    for (slot, expected) in Genre::ALL.iter().enumerate() {
+        let mut source = FindSource::new();
+        step(FindSource::cycle_genre, &mut source, slot + 1);
+        assert_eq!(source.genre_label(), GENRE_LABELS[slot + 1]);
+        assert_eq!(
+            osu(&source).genre,
+            Some(*expected),
+            "genre slot {} ({})",
+            slot + 1,
+            GENRE_LABELS[slot + 1]
+        );
+    }
+}
+
+#[test]
+fn every_language_slot_maps_to_its_library_variant() {
+    assert_eq!(
+        osu(&FindSource::new()).language,
+        None,
+        "slot 0 sends no `l`"
+    );
+    for (slot, expected) in Language::ALL.iter().enumerate() {
+        let mut source = FindSource::new();
+        step(FindSource::cycle_language, &mut source, slot + 1);
+        assert_eq!(source.language_label(), LANGUAGE_LABELS[slot + 1]);
+        assert_eq!(
+            osu(&source).language,
+            Some(*expected),
+            "language slot {} ({})",
+            slot + 1,
+            LANGUAGE_LABELS[slot + 1]
+        );
+    }
+}
+
+/// `any` must send NO `nsfw` parameter — that is what makes it the account's own
+/// profile default rather than a third server-side value.
+#[test]
+fn explicit_chip_maps_any_hide_show_onto_the_nsfw_parameter() {
+    for (slot, expected) in [(0, None), (1, Some(false)), (2, Some(true))] {
+        let mut source = FindSource::new();
+        step(FindSource::cycle_explicit, &mut source, slot);
+        assert_eq!(source.explicit_label(), EXPLICIT_LABELS[slot]);
+        assert_eq!(osu(&source).nsfw, expected, "explicit slot {slot}");
+    }
+}
+
+#[test]
+fn played_chip_maps_any_played_unplayed_onto_the_played_parameter() {
+    for (slot, expected) in [
+        (0, None),
+        (1, Some(PlayedFilter::Played)),
+        (2, Some(PlayedFilter::Unplayed)),
+    ] {
+        let mut source = FindSource::new();
+        step(FindSource::cycle_played, &mut source, slot);
+        assert_eq!(source.played_label(), PLAYED_LABELS[slot]);
+        assert_eq!(osu(&source).played, expected, "played slot {slot}");
+    }
+}
+
+/// Each multi-select chip must reach the library variant at its own position.
+/// Enumerated per chip, so a whole-row shift and a single mis-indexed chip are
+/// both caught.
+#[test]
+fn every_extra_chip_maps_to_its_library_variant() {
+    for (slot, expected) in Extra::ALL.iter().enumerate() {
+        let mut source = FindSource::new();
+        pick(&mut source.extra, &[slot]);
+        assert_eq!(
+            osu(&source).extra,
+            [*expected].into_iter().collect::<ExtraSet>(),
+            "extra chip {slot} ({})",
+            EXTRA_LABELS[slot]
+        );
+    }
+}
+
+#[test]
+fn every_rank_chip_maps_to_its_library_variant() {
+    for (slot, expected) in Rank::ALL.iter().enumerate() {
+        let mut source = FindSource::new();
+        pick(&mut source.rank, &[slot]);
+        assert_eq!(
+            osu(&source).rank,
+            [*expected].into_iter().collect::<RankSet>(),
+            "rank chip {slot} ({})",
+            RANK_LABELS[slot]
+        );
+    }
+}
+
+/// The point of the multi-select shape: several members on at once, which is
+/// what the `e=video.storyboard` / `r=XH.X` parameters express. The library joins
+/// them in `ALL` order, so the set value — not the pick order — is the contract.
+#[test]
+fn several_members_ride_one_multi_select_row() {
+    let mut source = FindSource::new();
+    pick(&mut source.extra, &[0, 1]);
+    pick(&mut source.rank, &[0, 1, 3]);
+    let query = osu(&source);
+    assert_eq!(
+        query.extra,
+        [Extra::Video, Extra::Storyboard]
+            .into_iter()
+            .collect::<ExtraSet>()
+    );
+    assert_eq!(
+        query.rank,
+        [Rank::Xh, Rank::X, Rank::S]
+            .into_iter()
+            .collect::<RankSet>()
+    );
+}
+
+/// Picking the same members in the reverse order must land on the identical set,
+/// so the emitted parameter is byte-stable whatever the user clicked first.
+#[test]
+fn multi_select_membership_ignores_pick_order() {
+    let mut forward = FindSource::new();
+    pick(&mut forward.rank, &[0, 2, 5]);
+    let mut backward = FindSource::new();
+    pick(&mut backward.rank, &[5, 2, 0]);
+    assert_eq!(osu(&forward).rank, osu(&backward).rank);
+    assert_eq!(forward.criteria_string(), backward.criteria_string());
+}
+
+/// Toggling one member off leaves every other member standing — the failure a
+/// row built as a cycle-over-a-bitmask would have.
+#[test]
+fn untoggling_one_member_leaves_the_rest() {
+    let mut source = FindSource::new();
+    pick(&mut source.rank, &[0, 1, 3]);
+    // Second press on the same chip clears just that one.
+    pick(&mut source.rank, &[1]);
+    assert_eq!(
+        osu(&source).rank,
+        [Rank::Xh, Rank::S].into_iter().collect::<RankSet>()
+    );
+    assert!(source.rank.contains(0) && !source.rank.contains(1) && source.rank.contains(3));
+    assert!(!source.rank.is_empty());
+}
+
+/// The chip cursor wraps at both ends and never leaves the row's chip count.
+#[test]
+fn chip_cursor_wraps_within_the_row() {
+    let mut source = FindSource::new();
+    assert_eq!(source.extra.cursor(), 0);
+    source.extra.move_cursor(false);
+    assert_eq!(
+        source.extra.cursor(),
+        EXTRA_LABELS.len() - 1,
+        "⇧← from the first chip wraps to the last"
+    );
+    source.extra.move_cursor(true);
+    assert_eq!(source.extra.cursor(), 0, "⇧→ wraps back");
+    // Moving the cursor alone picks nothing.
+    assert!(source.extra.is_empty());
+    assert_eq!(osu(&source).extra, ExtraSet::new());
+}
+
+/// All six are inexpressible on nzbasic, so each one alone must route osu and
+/// name itself as the forcer when it meets a nzbasic-forcing criterion.
+#[test]
+fn every_supporter_facet_forces_the_osu_route() {
+    let cases: [FacetCase; 6] = [
+        ("explicit", |s| step(FindSource::cycle_explicit, s, 1)),
+        ("genre", |s| step(FindSource::cycle_genre, s, 1)),
+        ("language", |s| step(FindSource::cycle_language, s, 1)),
+        ("extra", |s| pick(&mut s.extra, &[0])),
+        ("rank", |s| pick(&mut s.rank, &[0])),
+        ("played", |s| step(FindSource::cycle_played, s, 1)),
+    ];
+    for (field, apply) in cases {
+        // Alone: the plan routes osu and the indicator agrees.
+        let mut source = FindSource::new();
+        apply(&mut source);
+        assert!(
+            matches!(source.build_plan(None), Ok(FindPlan::Osu(_))),
+            "{field} alone must route osu"
+        );
+        assert_eq!(
+            source.resolved_route(),
+            crate::app::FindRoute::Osu,
+            "{field}"
+        );
+        assert_eq!(source.planned_backend(), FindBackend::Osu, "{field}");
+
+        // Against a nzbasic forcer: a hard conflict naming BOTH fields.
+        let mut source = FindSource::new();
+        set_special(&mut source, "farm");
+        apply(&mut source);
+        let err = source
+            .build_plan(None)
+            .expect_err("{field} + farm must conflict");
+        assert_eq!(err, format!("farm needs nzbasic · {field} needs osu! api"));
+        assert_eq!(
+            source.resolved_route(),
+            crate::app::FindRoute::Conflict {
+                nzbasic: "farm".to_string(),
+                osu: field.to_string(),
+            },
+            "the indicator mirrors the conflict for {field}"
+        );
+    }
+}
+
+/// Byte-pin of the six facets inside the canonical criteria string: indices for
+/// the single-selects, a member BITMASK over the library's `ALL` order for the
+/// two multi-selects. No display text on either — the folder tag hashes this.
+#[test]
+fn supporter_facets_are_byte_pinned_in_the_criteria() {
+    let mut source = FindSource::new();
+    step(FindSource::cycle_explicit, &mut source, 1); // hide
+    step(FindSource::cycle_genre, &mut source, 3); // anime
+    step(FindSource::cycle_language, &mut source, 2); // english
+    pick(&mut source.extra, &[1]); // storyboard → bit 1
+    pick(&mut source.rank, &[0, 2]); // XH + SH → bits 0 and 2
+    step(FindSource::cycle_played, &mut source, 2); // unplayed
+    let canonical = source.criteria_string();
+    assert!(
+        canonical.ends_with("|explicit=1|genre=3|language=2|extra=2|rank=5|played=2"),
+        "{canonical}"
+    );
+    for key in ["explicit", "genre", "language", "extra", "rank", "played"] {
+        let value = canonical
+            .split('|')
+            .find_map(|part| part.strip_prefix(&format!("{key}=")))
+            .unwrap_or_else(|| panic!("no {key} field in {canonical}"));
+        assert!(
+            value.parse::<u32>().is_ok(),
+            "{key} carries the display text {value:?}, not a stable index: {canonical}"
+        );
+    }
+}
+
+/// The chip cursor is pure UI, so walking it must not reach the canonical string
+/// (and through it a user's on-disk download directory).
+#[test]
+fn the_chip_cursor_never_reaches_the_criteria_string() {
+    let mut source = FindSource::new();
+    let before = source.criteria_string();
+    let tag_before = source.folder_tag();
+    source.rank.move_cursor(true);
+    source.rank.move_cursor(true);
+    source.extra.move_cursor(false);
+    assert_eq!(source.criteria_string(), before);
+    assert_eq!(source.folder_tag(), tag_before);
+}
+
+/// A preset is a full reset — it must clear the six too, or a nzbasic-seeding
+/// preset (`farm`) inherits a stray osu forcer and lands the form in a conflict.
+#[test]
+fn a_preset_resets_every_supporter_facet() {
+    let mut source = FindSource::new();
+    step(FindSource::cycle_explicit, &mut source, 2);
+    step(FindSource::cycle_genre, &mut source, 4);
+    step(FindSource::cycle_language, &mut source, 5);
+    step(FindSource::cycle_played, &mut source, 1);
+    pick(&mut source.extra, &[0, 1]);
+    pick(&mut source.rank, &[2, 4]);
+
+    // `farm` is the nzbasic-seeding preset — the one a leftover forcer breaks.
+    for _ in 0..PRESET_LABELS.len() {
+        source.cycle_preset(true);
+        if source.preset_label() == "farm" {
+            break;
+        }
+    }
+    assert_eq!(source.preset_label(), "farm");
+    assert!(
+        matches!(source.build_plan(None), Ok(FindPlan::Nzbasic(_))),
+        "a reset preset must not carry an osu forcer into the plan: {:?}",
+        source.resolved_route()
+    );
+    assert_eq!(source.explicit_label(), "any");
+    assert_eq!(source.genre_label(), "any");
+    assert_eq!(source.language_label(), "any");
+    assert_eq!(source.played_label(), "any");
+    assert!(source.extra.is_empty() && source.rank.is_empty());
+    assert_eq!(source.extra.cursor(), 0);
+    assert_eq!(source.rank.cursor(), 0);
+}
+
+/// The five facets that live behind the disclosure auto-expand it, so a live
+/// value is never hidden. `explicit` renders in the main block and must NOT.
+#[test]
+fn an_advanced_facet_auto_expands_the_disclosure() {
+    let cases: [AdvancedFacetCase; 6] = [
+        ("genre", true, |s| step(FindSource::cycle_genre, s, 1)),
+        ("language", true, |s| step(FindSource::cycle_language, s, 1)),
+        ("extra", true, |s| pick(&mut s.extra, &[0])),
+        ("rank", true, |s| pick(&mut s.rank, &[0])),
+        ("played", true, |s| step(FindSource::cycle_played, s, 1)),
+        ("explicit", false, |s| {
+            step(FindSource::cycle_explicit, s, 1)
+        }),
+    ];
+    for (field, expands, apply) in cases {
+        let mut source = FindSource::new();
+        assert!(!source.show_advanced_filters());
+        apply(&mut source);
+        assert_eq!(
+            source.show_advanced_filters(),
+            expands,
+            "{field} auto-expand should be {expands}"
+        );
+    }
+}
+
+/// A facet moves the folder tag (it changes which maps match) and stales a
+/// loaded result set. Guards the same class the range fields already pin.
+#[test]
+fn a_supporter_facet_moves_the_tag_and_stales_the_results() {
+    let mut source = FindSource::new();
+    let plain = source.folder_tag();
+    source.mark_results_current();
+    assert!(source.results_current());
+
+    pick(&mut source.rank, &[0]);
+    assert_ne!(
+        source.folder_tag(),
+        plain,
+        "a picked rank is a new criteria set"
+    );
+    assert!(
+        !source.results_current(),
+        "a facet edit stales the snapshot"
+    );
 }
 
 // ── folder_tag ────────────────────────────────────────────────────────────────

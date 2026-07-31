@@ -807,6 +807,60 @@ pub fn cycle_item(
     label_width: usize,
     width: u16,
 ) -> ListItem<'static> {
+    // A single-select row's cursor IS its selection, so both cues land on the
+    // same chip — which is what makes it the degenerate case of [`chip_row`].
+    chip_row(
+        label,
+        options,
+        |idx| options[idx] == selected,
+        |idx| options[idx] == selected,
+        focused,
+        label_width,
+        width,
+    )
+}
+
+/// A multi-select chip row: any number of `options` can be picked at once, so
+/// the row carries its own `cursor` for `space`/`enter` to act on.
+///
+/// Same grammar as [`cycle_item`], which is the point — the two sit adjacent in
+/// the find form and must read as one control family. `ACCENT` is the selection
+/// cue (now on every picked chip, not just one) and the `[brackets]` are the
+/// focus cue (now tracking the cursor, which no longer coincides with the
+/// selection).
+pub fn multi_chip_item(
+    label: &str,
+    options: &[&str],
+    picked: impl Fn(usize) -> bool,
+    cursor: usize,
+    focused: bool,
+    label_width: usize,
+    width: u16,
+) -> ListItem<'static> {
+    chip_row(
+        label,
+        options,
+        picked,
+        |idx| idx == cursor,
+        focused,
+        label_width,
+        width,
+    )
+}
+
+/// The shared chip-row body behind [`cycle_item`] and [`multi_chip_item`]:
+/// label cell, then every option, wrapping between chips at `width`.
+/// `picked` paints a chip `ACCENT`; `at_cursor` wraps it in `[brackets]` while
+/// the row is focused.
+fn chip_row(
+    label: &str,
+    options: &[&str],
+    picked: impl Fn(usize) -> bool,
+    at_cursor: impl Fn(usize) -> bool,
+    focused: bool,
+    label_width: usize,
+    width: u16,
+) -> ListItem<'static> {
     let lead = focus_span(focused);
     let cell = Span::styled(label_cell(label, label_width), focused_label(focused));
     // Continuation lines indent to the value column so the chips column-align.
@@ -816,16 +870,17 @@ pub fn cycle_item(
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut first_on_line = true;
 
-    for &option in options {
-        let chip = if option == selected {
-            // [brackets] only while the row is focused; ACCENT, no bold.
-            if focused {
-                format!("[{option}]").fg(accent())
-            } else {
-                option.to_string().fg(accent())
-            }
+    for (idx, &option) in options.iter().enumerate() {
+        // [brackets] only while the row is focused; ACCENT, no bold.
+        let text = if focused && at_cursor(idx) {
+            format!("[{option}]")
         } else {
-            option.to_string().fg(text_faint())
+            option.to_string()
+        };
+        let chip = if picked(idx) {
+            text.fg(accent())
+        } else {
+            text.fg(text_faint())
         };
         // A chip that overruns the width on its own still goes out whole, on a
         // line of its own: breaking inside one is never an option.

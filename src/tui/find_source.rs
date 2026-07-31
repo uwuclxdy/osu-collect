@@ -29,6 +29,15 @@ const LABEL_STATUS: &str = "categories";
 const LABEL_SORT: &str = "sort";
 const LABEL_ADVANCED: &str = "advanced filters";
 const LABEL_CTA: &str = "find";
+/// The six osu!supporter-gated facets. Hidden outright for anyone else — the
+/// design language's login-gated-section rule — so none of these labels renders
+/// unless `App.config.supporter` is a confirmed `true`.
+const LABEL_EXPLICIT: &str = "explicit";
+const LABEL_GENRE: &str = "genre";
+const LABEL_LANGUAGE: &str = "language";
+const LABEL_EXTRA: &str = "extra";
+const LABEL_RANK: &str = "rank";
+const LABEL_PLAYED: &str = "played";
 
 /// Eyebrow headers grouping the chips, so the form reads as three decisions
 /// (which macro / what to match / how to order) instead of one wall of rows.
@@ -69,6 +78,7 @@ pub fn push_form_rows(
     primary: HomeField,
     width: u16,
     chrome: bool,
+    supporter: bool,
 ) {
     let route = find.resolved_route();
     let active_section = find_section(focus);
@@ -131,6 +141,21 @@ pub fn push_form_rows(
             width,
         ),
     );
+    // `explicit` sits between categories and special, matching the osu! website's
+    // own filter block. Supporter-gated like the five in the advanced section.
+    if supporter {
+        items.push_focusable(
+            HomeField::FindExplicit,
+            widgets::cycle_item(
+                LABEL_EXPLICIT,
+                find.explicit_labels(),
+                find.explicit_label(),
+                focus == HomeField::FindExplicit,
+                LABEL_WIDTH,
+                width,
+            ),
+        );
+    }
     items.push_focusable(
         HomeField::FindSpecial,
         widgets::cycle_item(
@@ -179,6 +204,9 @@ pub fn push_form_rows(
         advanced_filters_item(show_advanced, advanced_focused),
     );
     if show_advanced {
+        if supporter {
+            push_supporter_facets(items, find, focus, width);
+        }
         for (field, input) in [
             (HomeField::FindStars, &find.stars),
             (HomeField::FindAr, &find.ar),
@@ -253,6 +281,89 @@ pub fn push_form_rows(
     }
 }
 
+/// The five supporter facets that open the advanced section, ahead of the
+/// per-attribute ranges: `genre  language  extra  rank  played`. `extra` and
+/// `rank` are MULTI-select — several chips can be on at once, so each renders
+/// with its own chip cursor ([`widgets::multi_chip_item`]) rather than a single
+/// accented value.
+fn push_supporter_facets(
+    items: &mut widgets::FormItems<HomeField>,
+    find: &FindSource,
+    focus: HomeField,
+    width: u16,
+) {
+    for (field, label, labels, selected) in [
+        (
+            HomeField::FindGenre,
+            LABEL_GENRE,
+            find.genre_labels(),
+            find.genre_label(),
+        ),
+        (
+            HomeField::FindLanguage,
+            LABEL_LANGUAGE,
+            find.language_labels(),
+            find.language_label(),
+        ),
+    ] {
+        items.push_focusable(
+            field,
+            widgets::cycle_item(label, labels, selected, focus == field, LABEL_WIDTH, width),
+        );
+    }
+    for (field, label, labels, chips) in [
+        (
+            HomeField::FindExtra,
+            LABEL_EXTRA,
+            find.extra_labels(),
+            &find.extra,
+        ),
+        (
+            HomeField::FindRank,
+            LABEL_RANK,
+            find.rank_labels(),
+            &find.rank,
+        ),
+    ] {
+        items.push_focusable(
+            field,
+            widgets::multi_chip_item(
+                label,
+                labels,
+                |idx| chips.contains(idx),
+                chips.cursor(),
+                focus == field,
+                LABEL_WIDTH,
+                width,
+            ),
+        );
+        push_chip_hint(items, field, focus);
+    }
+    items.push_focusable(
+        HomeField::FindPlayed,
+        widgets::cycle_item(
+            LABEL_PLAYED,
+            find.played_labels(),
+            find.played_label(),
+            focus == HomeField::FindPlayed,
+            LABEL_WIDTH,
+            width,
+        ),
+    );
+}
+
+/// The `└ …` tooltip under a focused multi-select row. The chip cursor is the
+/// one control in this form with no single-key equivalent, so the row states its
+/// grammar in place as well as in the footer — a sub-cursor advertised nowhere
+/// on screen is a sub-cursor nobody finds.
+fn push_chip_hint(items: &mut widgets::FormItems<HomeField>, field: HomeField, focus: HomeField) {
+    if focus == field {
+        items.push(widgets::help_item_keyed(
+            "[shift+←→] pick a chip, [space] toggles it — several can be on",
+        ));
+    }
+}
+
 /// The eyebrow a focused find field sits under, driving its underline cue. The
 /// query box, the `advanced filters` disclosure and its range inputs, and the
 /// CTAs render outside every section, so focusing them lights no header.
@@ -260,7 +371,7 @@ fn find_section(field: HomeField) -> &'static str {
     use HomeField::*;
     match field {
         FindPreset => SECTION_PRESET,
-        FindMode | FindStatus | FindSpecial => SECTION_FILTERS,
+        FindMode | FindStatus | FindExplicit | FindSpecial => SECTION_FILTERS,
         FindSort | FindLimit => SECTION_RESULTS,
         _ => SECTION_NONE,
     }
