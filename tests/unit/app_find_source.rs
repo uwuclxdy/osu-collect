@@ -1014,6 +1014,30 @@ fn untoggling_one_member_leaves_the_rest() {
     assert!(!source.rank.is_empty());
 }
 
+/// `contains` is public and takes a bare index. Every chip a full row can hold
+/// must answer, and anything past the row must answer `false` rather than shift
+/// a `u8` out of range — which panics in debug and, in release, wraps to bit 0
+/// and reports the FIRST chip's state under another chip's name.
+#[test]
+fn contains_answers_for_every_addressable_index() {
+    let mut source = FindSource::new();
+    pick(&mut source.rank, &[0]);
+    assert!(source.rank.contains(0));
+    for idx in RANK_LABELS.len()..=ChipSet::MAX_MEMBERS + 1 {
+        assert!(
+            !source.rank.contains(idx),
+            "chip {idx} is past the row and must read as unpicked"
+        );
+    }
+    // The narrow row is where an unguarded shift is least likely to be noticed:
+    // `extra` has two chips, so six of the mask's eight bits are out of range.
+    let mut source = FindSource::new();
+    pick(&mut source.extra, &[0]);
+    for idx in EXTRA_LABELS.len()..=ChipSet::MAX_MEMBERS + 1 {
+        assert!(!source.extra.contains(idx), "extra chip {idx}");
+    }
+}
+
 /// The chip cursor wraps at both ends and never leaves the row's chip count.
 #[test]
 fn chip_cursor_wraps_within_the_row() {

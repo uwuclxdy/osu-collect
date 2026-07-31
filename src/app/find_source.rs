@@ -964,11 +964,15 @@ const _: () = assert!(PLAYED_LABELS.len() == PLAYED_VALUES.len());
 /// Extras chip labels, tracking [`Extra::ALL`] position for position.
 const EXTRA_LABELS: &[&str] = &["video", "storyboard"];
 const _: () = assert!(EXTRA_LABELS.len() == Extra::ALL.len());
+const _: () = assert!(EXTRA_LABELS.len() <= ChipSet::MAX_MEMBERS);
 
 /// Achieved-rank chip labels, tracking [`Rank::ALL`] position for position.
 /// osu!'s own tokens, so they stay uppercase where every other chip is lowercase.
 const RANK_LABELS: &[&str] = &["XH", "X", "SH", "S", "A", "B", "C", "D"];
 const _: () = assert!(RANK_LABELS.len() == Rank::ALL.len());
+/// This row saturates the mask exactly, so a ninth [`Rank`] must widen
+/// [`ChipSet::mask`] before it can be listed here.
+const _: () = assert!(RANK_LABELS.len() <= ChipSet::MAX_MEMBERS);
 
 /// A multi-select chip row (`extra`, `rank`): which members are picked, plus the
 /// chip cursor `⇧←`/`⇧→` walk. One shape for both rows — the library bitset each
@@ -982,6 +986,11 @@ const _: () = assert!(RANK_LABELS.len() == Rank::ALL.len());
 /// a REORDER reaches both, which is what that test exists for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChipSet {
+    /// One bit per member, so the row can hold at most [`Self::MAX_MEMBERS`]
+    /// chips. `RANK_LABELS` already fills it exactly — see the asserts beside
+    /// each label table, which are what turn a ninth variant into a build error
+    /// rather than a `1 << 8` that panics in debug and silently toggles the
+    /// FIRST chip in release.
     mask: u8,
     cursor: usize,
     /// Member count, taken from the row's label table at construction so no
@@ -990,6 +999,9 @@ pub struct ChipSet {
 }
 
 impl ChipSet {
+    /// Chips one [`Self::mask`] can address.
+    pub const MAX_MEMBERS: usize = u8::BITS as usize;
+
     const fn new(len: usize) -> Self {
         Self {
             mask: 0,
@@ -1012,8 +1024,12 @@ impl ChipSet {
         self.cursor
     }
 
+    /// Whether the chip at `idx` is picked. Total: an index past the row's chip
+    /// count reads as unpicked rather than shifting the mask out of range. The
+    /// render passes label-table indices, so the two agree today — the guard is
+    /// what keeps a public method from having a panicking input at all.
     pub fn contains(&self, idx: usize) -> bool {
-        self.mask & (1 << idx) != 0
+        idx < self.len && self.mask & (1 << idx) != 0
     }
 
     /// Whether nothing is picked, i.e. the row emits no parameter.
