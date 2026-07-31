@@ -237,32 +237,64 @@ fn apply_supporter_probe_is_fail_soft() {
         supporter: None,
     };
 
-    apply_supporter_probe(&mut auth, &MeProbe::Unreachable);
+    assert_eq!(
+        apply_supporter_probe(&mut auth, &MeProbe::Unreachable),
+        None,
+        "an unreachable probe answers nothing, not a confirmed false"
+    );
     assert_eq!(
         auth.supporter, None,
         "an unreachable probe must not claim a status"
     );
 
-    apply_supporter_probe(&mut auth, &MeProbe::Unauthorized);
+    assert_eq!(
+        apply_supporter_probe(&mut auth, &MeProbe::Unauthorized),
+        None,
+        "a pending-verification probe answers nothing"
+    );
     assert_eq!(
         auth.supporter, None,
         "a pending-verification probe must not claim a status"
     );
 
-    apply_supporter_probe(
-        &mut auth,
-        &MeProbe::Ok(MeResponse {
-            is_supporter: true,
-            session_verified: None,
-            session_verification_method: None,
-        }),
+    assert_eq!(
+        apply_supporter_probe(
+            &mut auth,
+            &MeProbe::Ok(MeResponse {
+                is_supporter: true,
+                session_verified: None,
+                session_verification_method: None,
+            }),
+        ),
+        Some(true)
     );
     assert_eq!(auth.supporter, Some(true));
 
-    apply_supporter_probe(&mut auth, &MeProbe::Unreachable);
+    assert_eq!(
+        apply_supporter_probe(&mut auth, &MeProbe::Unreachable),
+        None,
+        "silence after a confirmed true is still silence — a caller acting on \
+         this would revoke supporter features on a flaky network"
+    );
     assert_eq!(
         auth.supporter,
         Some(true),
         "a later failed probe must not overwrite a previously confirmed status"
     );
+
+    // A server that answers `false` IS an answer: supporter expires, and the
+    // gate has to close for a real revocation as well as open for a real grant.
+    assert_eq!(
+        apply_supporter_probe(
+            &mut auth,
+            &MeProbe::Ok(MeResponse {
+                is_supporter: false,
+                session_verified: None,
+                session_verification_method: None,
+            }),
+        ),
+        Some(false),
+        "a confirmed false must be distinguishable from an unanswered probe"
+    );
+    assert_eq!(auth.supporter, Some(false));
 }

@@ -347,31 +347,39 @@ fn session_verification_required_from(probe: &MeProbe) -> bool {
 }
 
 /// Applies a `/me` probe's `is_supporter` to `auth` when the probe carries a
-/// usable body. A failed or unauthorized probe leaves `auth.supporter`
-/// untouched — fail-soft, never claims a status it couldn't confirm.
-fn apply_supporter_probe(auth: &mut StoredAuth, probe: &MeProbe) {
-    if let MeProbe::Ok(body) = probe {
-        auth.supporter = Some(body.is_supporter);
-    }
+/// usable body, and reports the CONFIRMED answer.
+///
+/// `Some` only for a body the server actually returned. A failed or
+/// unauthorized probe leaves `auth.supporter` untouched and answers `None` —
+/// fail-soft, and the `Option` is what stops a caller reading silence as a
+/// confirmed `false`.
+fn apply_supporter_probe(auth: &mut StoredAuth, probe: &MeProbe) -> Option<bool> {
+    let MeProbe::Ok(body) = probe else {
+        return None;
+    };
+    auth.supporter = Some(body.is_supporter);
+    Some(body.is_supporter)
 }
 
-/// Re-probes `/me` and persists `is_supporter` on `auth`, returning the
-/// resulting [`StoredAuth::is_supporter`] value. Used after the
-/// device-verification step succeeds, where the original login's `/me` probe
-/// 401'd and never learned the account's supporter status.
+/// Re-probes `/me` and persists `is_supporter` on `auth`. `Some` is the answer
+/// the server actually gave; `None` means the probe carried no usable body (a
+/// network error, a 401, an unparseable response) and `auth.supporter` was left
+/// exactly as it was.
 ///
-/// Fail-soft: a network error or unparseable body just logs and leaves the
-/// cached value as-is — this must never fail an otherwise-successful
-/// verification.
-pub async fn refresh_supporter_status(client: &reqwest::Client, auth: &mut StoredAuth) -> bool {
+/// The `Option` is the whole contract: a caller must be able to tell a confirmed
+/// `false` from an unanswered probe, or a flaky network silently revokes a
+/// supporter's features. Fail-soft otherwise — this must never fail an
+/// otherwise-successful verification.
+pub async fn refresh_supporter_status(
+    client: &reqwest::Client,
+    auth: &mut StoredAuth,
+) -> Option<bool> {
     let probe = fetch_me(client, auth.bearer_token()).await;
-    apply_supporter_probe(auth, &probe);
-    if matches!(probe, MeProbe::Ok(_))
-        && let Err(err) = save(auth)
-    {
+    let confirmed = apply_supporter_probe(auth, &probe)?;
+    if let Err(err) = save(auth) {
         warn!(error = %err, "failed to persist supporter status");
     }
-    auth.is_supporter()
+    Some(confirmed)
 }
 
 /// Submit the emailed / TOTP session-verification code for the given token.

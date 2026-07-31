@@ -594,6 +594,20 @@ impl ConfigTab {
         clear_app_message(&mut self.message);
     }
 
+    /// Adopt a `/me` answer for a session that was already logged in — the
+    /// startup re-probe. Only a CONFIRMED answer reaches here (see
+    /// `AuthEvent::SupporterRefreshed`), so this may legitimately move the flag
+    /// in either direction.
+    ///
+    /// Ignored unless the session is still logged in: a logout that raced the
+    /// probe already zeroed the flag, and the answer describes a token that no
+    /// longer exists.
+    pub fn set_supporter(&mut self, supporter: bool) {
+        if self.login_state == AuthLoginState::LoggedIn {
+            self.supporter = supporter;
+        }
+    }
+
     pub fn resolved_threads(&self) -> u8 {
         if self.threads.value.trim().is_empty() {
             self.default_threads

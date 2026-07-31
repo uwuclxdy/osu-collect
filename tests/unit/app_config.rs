@@ -94,6 +94,48 @@ fn failed_login_clears_a_stale_supporter_flag() {
     assert!(!tab.supporter);
 }
 
+/// The startup re-probe's landing point. A stored token written before the
+/// supporter field existed loads as unknown (= not a supporter), so the probe
+/// has to be able to open the gate on a session nobody re-authenticated.
+#[test]
+fn a_confirmed_probe_opens_the_gate_on_an_already_logged_in_session() {
+    let mut tab = tab_logged_in();
+    assert!(!tab.supporter, "an unknown stored answer starts closed");
+    tab.set_supporter(true);
+    assert!(
+        tab.supporter,
+        "a confirmed probe must reach an already-logged-in session"
+    );
+}
+
+/// The other direction: supporter expires, so a confirmed `false` closes the
+/// gate. Only a confirmed answer ever reaches here (`AuthEvent::SupporterRefreshed`
+/// is not sent for an unanswered probe), which is what makes acting on it safe.
+#[test]
+fn a_confirmed_probe_closes_the_gate_when_supporter_lapsed() {
+    let mut tab = tab_logged_in_supporter();
+    tab.set_supporter(false);
+    assert!(!tab.supporter);
+}
+
+/// A logout that raced the probe already zeroed the flag; the in-flight answer
+/// describes a token that no longer exists and must not resurrect the gate.
+#[test]
+fn a_probe_landing_after_a_logout_does_not_resurrect_the_gate() {
+    for state in [
+        AuthLoginState::LoggedOut,
+        AuthLoginState::InProgress(String::new()),
+    ] {
+        let mut tab = tab_logged_in();
+        tab.login_state = state.clone();
+        tab.set_supporter(true);
+        assert!(
+            !tab.supporter,
+            "a probe answer must not unlock the {state:?} state"
+        );
+    }
+}
+
 #[test]
 fn logout_sets_loading_message() {
     let mut tab = tab_logged_in();
