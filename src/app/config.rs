@@ -118,6 +118,12 @@ pub struct ConfigTab {
     pub nzbasic: bool,
     pub custom_mirrors: CustomMirrorList,
     pub login_state: AuthLoginState,
+    /// Cached osu!supporter status, mirroring `StoredAuth::is_supporter` at
+    /// the moment `login_state` last became [`AuthLoginState::LoggedIn`].
+    /// Only meaningful while logged in — `false` on every other state.
+    /// Reachable off `App` as `app.config.supporter` for anything that gates
+    /// a supporter-only feature.
+    pub supporter: bool,
     pub threads: InputField,
     pub video: bool,
     pub archive_validation: ArchiveValidation,
@@ -153,7 +159,9 @@ pub struct ConfigTab {
 
 impl ConfigTab {
     pub fn new(config: &Config) -> Self {
-        let auth_loaded = crate::auth::load().is_some();
+        let stored_auth = crate::auth::load();
+        let auth_loaded = stored_auth.is_some();
+        let supporter = stored_auth.as_ref().is_some_and(|auth| auth.is_supporter());
         Self {
             nerinyan: config.mirror.nerinyan,
             osu_direct: config.mirror.osu_direct,
@@ -167,6 +175,7 @@ impl ConfigTab {
             nzbasic: config.mirror.nzbasic,
             custom_mirrors: CustomMirrorList::from_templates(&config.mirror.custom_templates()),
             login_state: login_state(auth_loaded),
+            supporter,
             threads: threads_field(&config.download),
             video: config.download.video,
             archive_validation: config.download.archive_validation,
@@ -567,18 +576,21 @@ impl ConfigTab {
         self.login_state = AuthLoginState::InProgress(String::new());
     }
 
-    pub fn set_login_complete(&mut self) {
+    pub fn set_login_complete(&mut self, supporter: bool) {
         self.login_state = AuthLoginState::LoggedIn;
+        self.supporter = supporter;
         clear_app_message(&mut self.message);
     }
 
     pub fn set_login_failed(&mut self) {
         self.login_state = AuthLoginState::LoggedOut;
+        self.supporter = false;
         clear_app_message(&mut self.message);
     }
 
     pub fn set_logged_out(&mut self) {
         self.login_state = AuthLoginState::LoggedOut;
+        self.supporter = false;
         clear_app_message(&mut self.message);
     }
 

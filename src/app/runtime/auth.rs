@@ -9,11 +9,12 @@ use tracing::debug;
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug)]
 pub(super) enum AuthEvent {
-    /// Password (ROPC) grant finished. `Ok(true)` → osu! requires device
-    /// (new-IP / 2FA) verification before the token can download.
-    LazerLoginComplete(Result<bool, String>),
-    /// Session-verification code submission finished.
-    VerificationComplete(Result<(), String>),
+    /// Password (ROPC) grant finished.
+    LazerLoginComplete(Result<auth::LazerLoginOutcome, String>),
+    /// Session-verification code submission finished. Carries the resulting
+    /// supporter status — the original login's `/me` probe 401'd before it
+    /// could learn it, so it's re-probed once verification succeeds.
+    VerificationComplete(Result<bool, String>),
     /// Verification-code reissue finished.
     ReissueComplete(Result<(), String>),
     LogoutComplete(Result<(), String>),
@@ -28,8 +29,8 @@ pub(super) fn handle_auth_event(event: AuthEvent, app: &mut App) {
         {
             debug!("Discarding stale auth event (cancelled or already settled)");
         }
-        AuthEvent::LazerLoginComplete(Ok(needs_verification)) => {
-            if needs_verification {
+        AuthEvent::LazerLoginComplete(Ok(outcome)) => {
+            if outcome.needs_verification {
                 // The token is saved but device verification is pending, so it
                 // can't download yet — treat as logged-out until verified.
                 app.config.set_logged_out();
@@ -45,7 +46,7 @@ pub(super) fn handle_auth_event(event: AuthEvent, app: &mut App) {
                     );
                 }
             } else {
-                app.config.set_login_complete();
+                app.config.set_login_complete(outcome.supporter);
                 if let Some(login) = app.login.as_mut() {
                     login.enter_logged_in();
                 } else {
@@ -60,8 +61,8 @@ pub(super) fn handle_auth_event(event: AuthEvent, app: &mut App) {
             }
             app.push_toast(Toast::danger("login failed").with_detail(err));
         }
-        AuthEvent::VerificationComplete(Ok(())) => {
-            app.config.set_login_complete();
+        AuthEvent::VerificationComplete(Ok(supporter)) => {
+            app.config.set_login_complete(supporter);
             // The open panel shows the logged-in state inline; only toast when
             // it's closed.
             if let Some(login) = app.login.as_mut() {
@@ -138,11 +139,15 @@ pub(super) fn spawn_logout_task(tx: mpsc::UnboundedSender<AuthEvent>) {
     });
 }
 
-/// Load the stored token and submit the verification code against it.
-async fn submit_verification(code: &str) -> crate::utils::Result<()> {
-    let stored = auth::load().ok_or_else(|| AppError::other_dynamic(Box::from("not logged in")))?;
+/// Load the stored token and submit the verification code against it. On
+/// success, re-probes `/me` for supporter status — unknown until now, since
+/// the original login's probe 401'd — and returns the confirmed value.
+async fn submit_verification(code: &str) -> crate::utils::Result<bool> {
+    let mut stored =
+        auth::load().ok_or_else(|| AppError::other_dynamic(Box::from("not logged in")))?;
     let client = reqwest::Client::new();
-    auth::submit_session_verification(&client, stored.bearer_token(), code).await
+    auth::submit_session_verification(&client, stored.bearer_token(), code).await?;
+    Ok(auth::refresh_supporter_status(&client, &mut stored).await)
 }
 
 /// Load the stored token and ask osu! to re-send the verification code.

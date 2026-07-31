@@ -44,6 +44,14 @@ pub struct StoredAuth {
     pub refresh_token: Option<String>,
     pub expires_at: u64,
     pub scopes: Vec<String>,
+    /// Cached `/me` `is_supporter` flag. `None` means unknown — never probed,
+    /// or the last probe failed — and reads as **not** supporter via
+    /// [`is_supporter`](Self::is_supporter): this gates supporter-only
+    /// features, so an unconfirmed account must never unlock them.
+    /// `#[serde(default)]` so an `auth.json` written before this field
+    /// existed still loads.
+    #[serde(default)]
+    pub supporter: Option<bool>,
 }
 
 impl StoredAuth {
@@ -64,6 +72,14 @@ impl StoredAuth {
     /// narrow-scope token from being attached to `MirrorKind::OsuApi`.
     pub fn has_lazer_scope(&self) -> bool {
         self.scopes.iter().any(|scope| scope == LAZER_SCOPE)
+    }
+
+    /// Whether the account carries osu!supporter, per the last successful
+    /// `/me` probe. `None` (never probed, or the probe failed) reads as
+    /// `false` — the conservative direction, since this gates supporter-only
+    /// features.
+    pub fn is_supporter(&self) -> bool {
+        self.supporter == Some(true)
     }
 }
 
@@ -197,18 +213,101 @@ pub async fn password_grant(
         refresh_token: token.refresh_token,
         expires_at: now + token.expires_in,
         scopes: vec![LAZER_SCOPE.to_string()],
+        // Not yet known — [`lazer_login`] fills this in from the same `/me`
+        // probe it uses for the verification check.
+        supporter: None,
     };
 
     save(&auth)?;
     Ok(auth)
 }
 
+/// Outcome of a full [`lazer_login`] attempt.
+#[derive(Debug, Clone, Copy)]
+pub struct LazerLoginOutcome {
+    /// osu! requires device (new-IP / 2FA) verification before this token can
+    /// download.
+    pub needs_verification: bool,
+    /// Confirmed osu!supporter status. Only ever `true` when
+    /// `needs_verification` is `false` — a verification-pending `/me` probe
+    /// 401s and carries no supporter data; see [`refresh_supporter_status`].
+    pub supporter: bool,
+}
+
 /// Full lazer login: [`password_grant`] followed by a session-verification
-/// probe. Returns `Ok(true)` when osu! requires device (new-IP / 2FA)
-/// verification before this token can download.
-pub async fn lazer_login(client: &reqwest::Client, username: &str, password: &str) -> Result<bool> {
-    let auth = password_grant(client, username, password).await?;
-    Ok(session_verification_required(client, auth.bearer_token()).await)
+/// probe.
+///
+/// The same `/me` probe response also carries `is_supporter`: when
+/// verification is *not* required, the response is trusted and cached on the
+/// stored token, so one request covers both signals rather than a second
+/// round-trip just for supporter status.
+pub async fn lazer_login(
+    client: &reqwest::Client,
+    username: &str,
+    password: &str,
+) -> Result<LazerLoginOutcome> {
+    let mut auth = password_grant(client, username, password).await?;
+    let probe = fetch_me(client, auth.bearer_token()).await;
+    let needs_verification = session_verification_required_from(&probe);
+    if !needs_verification {
+        apply_supporter_probe(&mut auth, &probe);
+        if let Err(err) = save(&auth) {
+            warn!(error = %err, "failed to persist supporter status");
+        }
+    }
+    Ok(LazerLoginOutcome {
+        needs_verification,
+        supporter: auth.is_supporter(),
+    })
+}
+
+/// Parsed subset of the osu! `/me` response this module reads.
+#[derive(Debug, Deserialize)]
+struct MeResponse {
+    #[serde(default)]
+    is_supporter: bool,
+    #[serde(default)]
+    session_verified: Option<bool>,
+    #[serde(default)]
+    session_verification_method: Option<serde_json::Value>,
+}
+
+/// Outcome of a `/me` GET. `Unauthorized` mirrors a 401 (pending device
+/// verification); `Unreachable` covers a network error or an unparseable
+/// body — every reader of this type treats both as "no usable data".
+enum MeProbe {
+    Ok(MeResponse),
+    Unauthorized,
+    Unreachable,
+}
+
+/// Single `/me` GET, shared by [`session_verification_required`] and
+/// [`lazer_login`] / [`refresh_supporter_status`] so a login makes one probe
+/// request rather than a separate one per signal.
+async fn fetch_me(client: &reqwest::Client, access_token: &str) -> MeProbe {
+    let resp = match client
+        .get(format!("{OSU_API_BASE}/me"))
+        .bearer_auth(access_token)
+        .header("x-api-version", X_API_VERSION)
+        .send()
+        .await
+    {
+        Ok(resp) => resp,
+        Err(err) => {
+            warn!(error = %err, "/me probe failed; assuming no usable data");
+            return MeProbe::Unreachable;
+        }
+    };
+
+    // A pending device verification makes osu! reject `/me` with 401.
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return MeProbe::Unauthorized;
+    }
+
+    match resp.json::<MeResponse>().await {
+        Ok(body) => MeProbe::Ok(body),
+        Err(_) => MeProbe::Unreachable,
+    }
 }
 
 /// Probe whether osu! requires session (device) verification before this token
@@ -222,34 +321,45 @@ pub async fn lazer_login(client: &reqwest::Client, username: &str, password: &st
 /// unrecognised body as **not required**, so a false positive never blocks an
 /// otherwise-working login. Confirm and adjust against a real account.
 pub async fn session_verification_required(client: &reqwest::Client, access_token: &str) -> bool {
-    let resp = match client
-        .get(format!("{OSU_API_BASE}/me"))
-        .bearer_auth(access_token)
-        .header("x-api-version", X_API_VERSION)
-        .send()
-        .await
-    {
-        Ok(resp) => resp,
-        Err(err) => {
-            warn!(error = %err, "session verification probe failed; assuming not required");
-            return false;
+    session_verification_required_from(&fetch_me(client, access_token).await)
+}
+
+fn session_verification_required_from(probe: &MeProbe) -> bool {
+    match probe {
+        MeProbe::Unauthorized => true,
+        MeProbe::Unreachable => false,
+        MeProbe::Ok(body) => {
+            body.session_verified == Some(false) || body.session_verification_method.is_some()
         }
-    };
-
-    // A pending device verification makes osu! reject `/me` with 401.
-    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
-        return true;
     }
+}
 
-    let Ok(body) = resp.json::<serde_json::Value>().await else {
-        return false;
-    };
-
-    if body.get("session_verified") == Some(&serde_json::Value::Bool(false)) {
-        return true;
+/// Applies a `/me` probe's `is_supporter` to `auth` when the probe carries a
+/// usable body. A failed or unauthorized probe leaves `auth.supporter`
+/// untouched — fail-soft, never claims a status it couldn't confirm.
+fn apply_supporter_probe(auth: &mut StoredAuth, probe: &MeProbe) {
+    if let MeProbe::Ok(body) = probe {
+        auth.supporter = Some(body.is_supporter);
     }
-    body.get("session_verification_method")
-        .is_some_and(|method| !method.is_null())
+}
+
+/// Re-probes `/me` and persists `is_supporter` on `auth`, returning the
+/// resulting [`StoredAuth::is_supporter`] value. Used after the
+/// device-verification step succeeds, where the original login's `/me` probe
+/// 401'd and never learned the account's supporter status.
+///
+/// Fail-soft: a network error or unparseable body just logs and leaves the
+/// cached value as-is — this must never fail an otherwise-successful
+/// verification.
+pub async fn refresh_supporter_status(client: &reqwest::Client, auth: &mut StoredAuth) -> bool {
+    let probe = fetch_me(client, auth.bearer_token()).await;
+    apply_supporter_probe(auth, &probe);
+    if matches!(probe, MeProbe::Ok(_))
+        && let Err(err) = save(auth)
+    {
+        warn!(error = %err, "failed to persist supporter status");
+    }
+    auth.is_supporter()
 }
 
 /// Submit the emailed / TOTP session-verification code for the given token.

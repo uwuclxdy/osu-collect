@@ -5,12 +5,23 @@ use crate::download::ArchiveValidation;
 fn tab_logged_out() -> ConfigTab {
     let mut tab = ConfigTab::new(&Config::default());
     tab.login_state = AuthLoginState::LoggedOut;
+    // `ConfigTab::new` seeds `supporter` from the real stored auth on this
+    // machine; pin it explicitly so these tests never depend on whether the
+    // box running them happens to be logged in.
+    tab.supporter = false;
     tab
 }
 
 fn tab_logged_in() -> ConfigTab {
     let mut tab = ConfigTab::new(&Config::default());
     tab.login_state = AuthLoginState::LoggedIn;
+    tab.supporter = false;
+    tab
+}
+
+fn tab_logged_in_supporter() -> ConfigTab {
+    let mut tab = tab_logged_in();
+    tab.supporter = true;
     tab
 }
 
@@ -26,8 +37,12 @@ fn login_flow_marks_in_progress_without_message() {
 fn login_flow_success() {
     let mut tab = tab_logged_out();
     tab.set_login_in_progress();
-    tab.set_login_complete();
+    tab.set_login_complete(true);
     assert_eq!(tab.login_state, AuthLoginState::LoggedIn);
+    assert!(
+        tab.supporter,
+        "set_login_complete must carry the outcome through"
+    );
 }
 
 #[test]
@@ -60,6 +75,23 @@ fn logout_clears_state() {
     let mut tab = tab_logged_in();
     tab.set_logged_out();
     assert_eq!(tab.login_state, AuthLoginState::LoggedOut);
+}
+
+#[test]
+fn logout_clears_a_stale_supporter_flag() {
+    let mut tab = tab_logged_in_supporter();
+    tab.set_logged_out();
+    assert!(
+        !tab.supporter,
+        "a logged-out account must never keep claiming supporter"
+    );
+}
+
+#[test]
+fn failed_login_clears_a_stale_supporter_flag() {
+    let mut tab = tab_logged_in_supporter();
+    tab.set_login_failed();
+    assert!(!tab.supporter);
 }
 
 #[test]
