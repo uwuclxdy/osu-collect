@@ -684,12 +684,14 @@ pub fn password_input_item(
 /// Left inset of the boxed search input, matching [`FOCUS_PAD`] on every other
 /// form row.
 const SEARCH_BOX_INSET: usize = 2;
+/// Gap between the left border and the value on the text row.
+const SEARCH_BOX_VALUE_GAP: usize = 1;
 /// Cells the box's own chrome eats on its text row: the two border cells plus
-/// the 2-cell focus glyph.
-const SEARCH_BOX_CHROME: usize = 2 + FOCUS_PAD.len();
+/// the value gap.
+const SEARCH_BOX_CHROME: usize = 2 + SEARCH_BOX_VALUE_GAP;
 /// Column the value starts at, shared by [`search_box_item`] and
 /// [`search_box_cursor_col`] so the caret can't drift off the text.
-const SEARCH_BOX_VALUE_COL: usize = SEARCH_BOX_INSET + 1 + FOCUS_PAD.len();
+const SEARCH_BOX_VALUE_COL: usize = SEARCH_BOX_INSET + 1 + SEARCH_BOX_VALUE_GAP;
 
 /// A free-text input drawn as a 3-row bordered search box — top border, text,
 /// bottom border — spanning `width` (the panel's [`panel_content_width`]) less
@@ -697,8 +699,8 @@ const SEARCH_BOX_VALUE_COL: usize = SEARCH_BOX_INSET + 1 + FOCUS_PAD.len();
 ///
 /// The box carries no label column: it IS the label, so the value starts at a
 /// fixed [`SEARCH_BOX_VALUE_COL`] rather than at a group-aligned one. The focus
-/// glyph sits inside the frame at the text row's left edge, so focus never rests
-/// on the border colour alone.
+/// glyph sits in the gutter to the frame's left, so focus never rests on the
+/// border colour alone.
 ///
 /// The frame is hand-drawn rather than a [`Block`]: a `List` item is `Text`, so
 /// there is no seam to hang a widget on inside a row. [`ItemHeights`] is what
@@ -732,9 +734,9 @@ pub fn search_box_item(
             Span::styled(format!("╭{}╮", "─".repeat(rail)), border),
         ]),
         Line::from(vec![
-            Span::raw(FOCUS_PAD),
-            Span::styled("│", border),
             input_focus_span(focused, editing),
+            Span::styled("│", border),
+            Span::raw(" "),
             Span::styled(value, value_style),
             Span::raw(" ".repeat(pad)),
             Span::styled("│", border),

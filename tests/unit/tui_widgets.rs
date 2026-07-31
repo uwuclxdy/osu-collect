@@ -218,7 +218,7 @@ fn search_box_frames_the_value_across_the_panel_width() {
         rows,
         [
             "  ╭────────────────────╮",
-            "  │✎ nekodex           │",
+            "✎ │ nekodex            │",
             "  ╰────────────────────╯",
             "                        ",
         ]
@@ -252,7 +252,7 @@ fn search_box_clips_a_value_wider_than_its_frame() {
     // than pushing the border off the row.
     assert_eq!(
         buffer_rows(terminal.backend().buffer())[1],
-        "  │  a very long f…│"
+        "  │ a very long fr…│"
     );
 }
 

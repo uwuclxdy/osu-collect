@@ -1514,8 +1514,8 @@ fn find_query_renders_as_a_bordered_search_box() {
         rows[text + 1]
     );
     assert!(
-        rows[text].contains("❯ artist, title, mapper, tags…"),
-        "focus reads as a glyph inside the box, not colour alone: {:?}",
+        rows[text].contains("❯ │"),
+        "focus glyph sits in the gutter before the box border: {:?}",
         rows[text]
     );
     // The frame spans the panel: it ends one cell short of the right padding
@@ -1541,14 +1541,14 @@ fn find_query_caret_parks_on_the_boxs_text_row() {
         app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::empty()));
     }
     let rows = render_rows(&app, 100, 34);
-    let text = row_of(&rows, "✎ abc") as u16;
+    let text = row_of(&rows, "✎ │ abc") as u16;
     let (x, y) = cursor_pos(&app, 100, 34);
     assert_eq!(
         y, text,
         "the caret sits on the box's text line, not its top border"
     );
-    // Two-cell inset + left border + the edit glyph, then the three typed chars.
-    assert_eq!(x, 2 + 2 + 1 + 2 + 3);
+    // Two-cell panel pad + gutter + left border + inner pad, then the typed chars.
+    assert_eq!(x, 2 + 2 + 1 + 1 + 3);
 }
 
 #[test]
