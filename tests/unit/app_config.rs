@@ -2,26 +2,25 @@ use super::{AuthLoginState, ConfigField, ConfigTab};
 use crate::config::Config;
 use crate::download::ArchiveValidation;
 
+// `ConfigTab::new` seeds both `login_state` and `supporter` from the real
+// stored auth on this machine, so each fixture drives a production transition
+// to reach a known state rather than depending on whether the box running the
+// tests happens to be logged in.
 fn tab_logged_out() -> ConfigTab {
     let mut tab = ConfigTab::new(&Config::default());
-    tab.login_state = AuthLoginState::LoggedOut;
-    // `ConfigTab::new` seeds `supporter` from the real stored auth on this
-    // machine; pin it explicitly so these tests never depend on whether the
-    // box running them happens to be logged in.
-    tab.supporter = false;
+    tab.set_logged_out();
     tab
 }
 
 fn tab_logged_in() -> ConfigTab {
     let mut tab = ConfigTab::new(&Config::default());
-    tab.login_state = AuthLoginState::LoggedIn;
-    tab.supporter = false;
+    tab.set_login_complete(false);
     tab
 }
 
 fn tab_logged_in_supporter() -> ConfigTab {
-    let mut tab = tab_logged_in();
-    tab.supporter = true;
+    let mut tab = ConfigTab::new(&Config::default());
+    tab.set_login_complete(true);
     tab
 }
 
@@ -40,7 +39,7 @@ fn login_flow_success() {
     tab.set_login_complete(true);
     assert_eq!(tab.login_state, AuthLoginState::LoggedIn);
     assert!(
-        tab.supporter,
+        tab.supporter(),
         "set_login_complete must carry the outcome through"
     );
 }
@@ -82,7 +81,7 @@ fn logout_clears_a_stale_supporter_flag() {
     let mut tab = tab_logged_in_supporter();
     tab.set_logged_out();
     assert!(
-        !tab.supporter,
+        !tab.supporter(),
         "a logged-out account must never keep claiming supporter"
     );
 }
@@ -91,7 +90,7 @@ fn logout_clears_a_stale_supporter_flag() {
 fn failed_login_clears_a_stale_supporter_flag() {
     let mut tab = tab_logged_in_supporter();
     tab.set_login_failed();
-    assert!(!tab.supporter);
+    assert!(!tab.supporter());
 }
 
 /// The startup re-probe's landing point. A stored token written before the
@@ -100,10 +99,10 @@ fn failed_login_clears_a_stale_supporter_flag() {
 #[test]
 fn a_confirmed_probe_opens_the_gate_on_an_already_logged_in_session() {
     let mut tab = tab_logged_in();
-    assert!(!tab.supporter, "an unknown stored answer starts closed");
+    assert!(!tab.supporter(), "an unknown stored answer starts closed");
     tab.set_supporter(true);
     assert!(
-        tab.supporter,
+        tab.supporter(),
         "a confirmed probe must reach an already-logged-in session"
     );
 }
@@ -115,7 +114,7 @@ fn a_confirmed_probe_opens_the_gate_on_an_already_logged_in_session() {
 fn a_confirmed_probe_closes_the_gate_when_supporter_lapsed() {
     let mut tab = tab_logged_in_supporter();
     tab.set_supporter(false);
-    assert!(!tab.supporter);
+    assert!(!tab.supporter());
 }
 
 /// A logout that raced the probe already zeroed the flag; the in-flight answer
@@ -130,7 +129,7 @@ fn a_probe_landing_after_a_logout_does_not_resurrect_the_gate() {
         tab.login_state = state.clone();
         tab.set_supporter(true);
         assert!(
-            !tab.supporter,
+            !tab.supporter(),
             "a probe answer must not unlock the {state:?} state"
         );
     }

@@ -517,7 +517,7 @@ fn auth_chip_item(form: &ConfigTab) -> ListItem<'static> {
             let mut spans = vec![Span::styled(CHIP_LOGGED_IN, chip_bg.fg(success()))];
             // Absence, not a "no" label, marks the non-supporter case — same
             // idiom as the mirror latency suffix (`latency_span`).
-            if form.supporter {
+            if form.supporter() {
                 spans.push(Span::styled(CHIP_SUPPORTER, chip_bg.fg(accent())));
             }
             (spans, CHIP_ACTION_MANAGE)

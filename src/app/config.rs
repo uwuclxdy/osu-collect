@@ -120,10 +120,14 @@ pub struct ConfigTab {
     pub login_state: AuthLoginState,
     /// Cached osu!supporter status, mirroring `StoredAuth::is_supporter` at
     /// the moment `login_state` last became [`AuthLoginState::LoggedIn`].
-    /// Only meaningful while logged in — `false` on every other state.
-    /// Reachable off `App` as `app.config.supporter` for anything that gates
-    /// a supporter-only feature.
-    pub supporter: bool,
+    /// Only meaningful while logged in; `false` on every other state.
+    ///
+    /// PRIVATE on purpose. The six supporter-gated find facets reset their
+    /// values and release focus when this goes false, and that settle runs in
+    /// the setters below. A direct write would skip it and strand the form with
+    /// an invisible filter still steering the query. Read it through
+    /// [`ConfigTab::supporter`].
+    supporter: bool,
     pub threads: InputField,
     pub video: bool,
     pub archive_validation: ArchiveValidation,
@@ -606,6 +610,12 @@ impl ConfigTab {
         if self.login_state == AuthLoginState::LoggedIn {
             self.supporter = supporter;
         }
+    }
+
+    /// Whether the signed-in account has a CONFIRMED osu!supporter. Unknown
+    /// reads as `false`, so an unresolved probe never unlocks a gated feature.
+    pub fn supporter(&self) -> bool {
+        self.supporter
     }
 
     pub fn resolved_threads(&self) -> u8 {

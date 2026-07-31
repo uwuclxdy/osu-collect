@@ -1591,8 +1591,12 @@ fn find_form_tab_order_matches_the_rendered_order() {
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
     app.home.focus = HomeField::Source;
-    // Default account, so the supporter gate is shut — this is the NON-supporter
-    // order. Both legs are pinned at the model level in `app::home`'s tests.
+    // Shut the supporter gate explicitly: `ConfigTab::new` seeds it from the
+    // real stored auth, so on a box whose account has supporter this walked the
+    // supporter order instead and failed on `FindExplicit`. This is the
+    // NON-supporter order; both legs are pinned at the model level in
+    // `app::home`'s tests.
+    app.config.set_logged_out();
     for expected in [
         HomeField::FindQuery,
         HomeField::FindPreset,
@@ -1618,6 +1622,9 @@ fn find_form_expanded_tab_order_runs_the_ranges_after_the_disclosure() {
     use osu_collect::app::{GetMapsSource, HomeField};
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
+    // Same reason as the fixture above: pin the gate shut rather than inherit
+    // whatever account this machine has stored.
+    app.config.set_logged_out();
     app.home.focus = HomeField::FindAdvanced;
     app.handle_key(press(KeyCode::Char(' '))); // open the disclosure
     app.handle_key(press(KeyCode::Down));
@@ -1633,7 +1640,7 @@ fn find_app_on(field: osu_collect::app::HomeField) -> App {
     use osu_collect::app::GetMapsSource;
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
-    app.config.supporter = true;
+    app.config.set_login_complete(true);
     app.home.find.toggle_advanced_filters();
     app.home.focus = field;
     app

@@ -359,7 +359,7 @@ fn push_supporter_facets(
 fn push_chip_hint(items: &mut widgets::FormItems<HomeField>, field: HomeField, focus: HomeField) {
     if focus == field {
         items.push(widgets::help_item_keyed(
-            "[⇧←→] pick a chip, [space] toggles it — several can be on",
+            "[⇧←→] pick a chip, [space] toggles it. several can be on",
         ));
     }
 }

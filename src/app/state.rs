@@ -652,7 +652,7 @@ impl App {
             return;
         }
         match self.active_tab() {
-            Tab::Home => self.home.next_field(self.config.supporter),
+            Tab::Home => self.home.next_field(self.config.supporter()),
             Tab::Config => self.config.next_field(),
             _ => {}
         }
@@ -666,7 +666,7 @@ impl App {
             return;
         }
         match self.active_tab() {
-            Tab::Home => self.home.prev_field(self.config.supporter),
+            Tab::Home => self.home.prev_field(self.config.supporter()),
             Tab::Config => self.config.prev_field(),
             _ => {}
         }
@@ -680,7 +680,7 @@ impl App {
             return;
         }
         match self.active_tab() {
-            Tab::Home => self.home.first_field(self.config.supporter),
+            Tab::Home => self.home.first_field(self.config.supporter()),
             Tab::Config => self.config.first_field(),
             _ => {}
         }
@@ -694,7 +694,7 @@ impl App {
             return;
         }
         match self.active_tab() {
-            Tab::Home => self.home.last_field(self.config.supporter),
+            Tab::Home => self.home.last_field(self.config.supporter()),
             Tab::Config => self.config.last_field(),
             _ => {}
         }
@@ -847,11 +847,11 @@ impl App {
     /// the closing direction needs work: opening the gate adds rows at their
     /// defaults, which needs no cleanup.
     fn settle_supporter_gate(&mut self) {
-        if self.config.supporter {
+        if self.config.supporter() {
             return;
         }
         self.home.find.clear_supporter_facets();
-        self.home.clamp_supporter_focus(self.config.supporter);
+        self.home.clamp_supporter_focus(self.config.supporter());
     }
 
     /// Whether a login / verification request is currently in flight.
@@ -2714,7 +2714,7 @@ impl App {
                         // while already on a button cycles the other available
                         // buttons. (`d` for the output-dir field stays
                         // Collection-only: search/update borrow it silently.)
-                        self.home.focus = self.home.cycle_enabled_button(self.config.supporter);
+                        self.home.focus = self.home.cycle_enabled_button(self.config.supporter());
                         self.editing = false;
                     } else if let Some(source) = ch
                         .to_digit(10)

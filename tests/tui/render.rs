@@ -1666,7 +1666,7 @@ fn find_app(supporter: bool) -> App {
     use osu_collect::app::GetMapsSource;
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
-    app.config.supporter = supporter;
+    app.config.set_login_complete(supporter);
     app.home.find.toggle_advanced_filters();
     app
 }
