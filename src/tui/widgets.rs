@@ -814,20 +814,33 @@ pub fn cycle_item(
         options,
         |idx| options[idx] == selected,
         |idx| options[idx] == selected,
+        false,
         focused,
         label_width,
         width,
     )
 }
 
+/// Pick marks on a MULTI-select chip row. Which chips are on has to survive a
+/// colourblind palette, a low-contrast theme, and a copy-pasted screen, so the
+/// `ACCENT` fill cannot be the only channel carrying it. Same glyph pair the
+/// Config toggle rows use rather than a new vocabulary; the prefix also tells a
+/// multi row apart from a cycle row, which carries none.
+const CHIP_PICKED: &str = "●";
+const CHIP_UNPICKED: &str = "○";
+
 /// A multi-select chip row: any number of `options` can be picked at once, so
 /// the row carries its own `cursor` for `space`/`enter` to act on.
 ///
 /// Same grammar as [`cycle_item`], which is the point — the two sit adjacent in
-/// the find form and must read as one control family. `ACCENT` is the selection
-/// cue (now on every picked chip, not just one) and the `[brackets]` are the
-/// focus cue (now tracking the cursor, which no longer coincides with the
-/// selection).
+/// the find form and must read as one control family. Each chip states its own
+/// pick state ([`CHIP_PICKED`] / [`CHIP_UNPICKED`]) with `ACCENT` reinforcing
+/// it, and the `[brackets]` are the focus cue, tracking the cursor — which on
+/// this row no longer coincides with the selection:
+///
+/// ```text
+///   rank    ●XH  [●X]  ○SH  ○S  ○A  ○B  ○C  ○D
+/// ```
 pub fn multi_chip_item(
     label: &str,
     options: &[&str],
@@ -842,6 +855,7 @@ pub fn multi_chip_item(
         options,
         picked,
         |idx| idx == cursor,
+        true,
         focused,
         label_width,
         width,
@@ -851,12 +865,16 @@ pub fn multi_chip_item(
 /// The shared chip-row body behind [`cycle_item`] and [`multi_chip_item`]:
 /// label cell, then every option, wrapping between chips at `width`.
 /// `picked` paints a chip `ACCENT`; `at_cursor` wraps it in `[brackets]` while
-/// the row is focused.
+/// the row is focused. `marked` prefixes every chip with its own pick glyph —
+/// the multi-select row, where `picked` is a per-chip answer nobody can infer
+/// from the row's shape.
+#[allow(clippy::too_many_arguments)]
 fn chip_row(
     label: &str,
     options: &[&str],
     picked: impl Fn(usize) -> bool,
     at_cursor: impl Fn(usize) -> bool,
+    marked: bool,
     focused: bool,
     label_width: usize,
     width: u16,
@@ -871,11 +889,17 @@ fn chip_row(
     let mut first_on_line = true;
 
     for (idx, &option) in options.iter().enumerate() {
-        // [brackets] only while the row is focused; ACCENT, no bold.
+        let body = match (marked, picked(idx)) {
+            (false, _) => option.to_string(),
+            (true, true) => format!("{CHIP_PICKED}{option}"),
+            (true, false) => format!("{CHIP_UNPICKED}{option}"),
+        };
+        // [brackets] only while the row is focused; ACCENT, no bold. They wrap
+        // the mark too, so the cursor reads as sitting on the whole chip.
         let text = if focused && at_cursor(idx) {
-            format!("[{option}]")
+            format!("[{body}]")
         } else {
-            option.to_string()
+            body
         };
         let chip = if picked(idx) {
             text.fg(accent())
