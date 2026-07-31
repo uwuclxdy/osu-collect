@@ -975,7 +975,7 @@ const _: () = assert!(RANK_LABELS.len() == Rank::ALL.len());
 const _: () = assert!(RANK_LABELS.len() <= ChipSet::MAX_MEMBERS);
 
 /// A multi-select chip row (`extra`, `rank`): which members are picked, plus the
-/// chip cursor `⇧←`/`⇧→` walk. One shape for both rows — the library bitset each
+/// chip cursor `←`/`→` walk. One shape for both rows — the library bitset each
 /// converts to at build time is the only difference between them.
 ///
 /// Members are addressed by POSITION in the row's label table. The const asserts
@@ -1010,12 +1010,12 @@ impl ChipSet {
         }
     }
 
-    /// Flip the member under the cursor (`space`/`enter`).
+    /// Flip the member under the cursor (`space`, while the row is descended).
     pub fn toggle(&mut self) {
         self.mask ^= 1 << self.cursor;
     }
 
-    /// Step the chip cursor one member, wrapping (`⇧→` forward, `⇧←` back).
+    /// Step the chip cursor one member, wrapping (`→` forward, `←` back).
     pub fn move_cursor(&mut self, forward: bool) {
         self.cursor = cycle_idx(self.cursor, self.len, forward);
     }

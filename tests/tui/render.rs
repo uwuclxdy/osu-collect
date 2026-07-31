@@ -1714,26 +1714,40 @@ fn supporter_facets_render_with_their_chips_for_a_supporter() {
     assert!(content.contains("XH"), "rank chips render: {content}");
 }
 
-/// The chip cursor and the picked members are separate cues: `[brackets]` follow
-/// the cursor (focus), `ACCENT` marks every picked chip (selection). Both must be
-/// readable at once, which is the whole reason the row is not a cycle.
+/// The chip cursor and the picked members are separate cues: the `❯` caret
+/// follows the cursor (focus), `[x]` plus `ACCENT` marks every picked chip
+/// (selection). Both must be readable at once, which is the whole reason the row
+/// is not a cycle.
 #[test]
-fn multi_select_row_brackets_the_cursor_and_accents_the_picked() {
+fn multi_select_row_carets_the_cursor_and_marks_the_picks() {
     use osu_collect::app::HomeField;
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     let mut app = find_app(true);
     app.home.focus = HomeField::FindExtra;
-    // Cursor starts on the first chip, nothing picked.
+    // At rest the row is a mark row and nothing more — no caret slots at all.
     let content = render_content(&app, 90, 60);
     assert!(
-        content.contains("[○video]"),
-        "cursor brackets chip 0: {content}"
+        content.contains("[ ]video  [ ]storyboard"),
+        "an undescended row carries marks and no slots: {content}"
+    );
+    let at_rest = extra_row(&render_rows(&app, 90, 60));
+    let value_column = column_of(&at_rest, "[ ]video");
+
+    // `↵` descends. The row widens once — into the label cell's own pad, so the
+    // first chip does not move; the user's eye stays where it was.
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let descended = extra_row(&render_rows(&app, 90, 60));
+    assert_eq!(
+        column_of(&descended, "[ ]video"),
+        value_column,
+        "descending shifted the value column: {at_rest} → {descended}"
     );
 
-    // `space` picks it, `⇧→` walks the cursor on: the bracket moves, the pick stays.
+    // `space` picks chip 0, `→` walks the cursor on: the caret moves, the pick
+    // stays.
     app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
     let buf = render_to_buffer(&app, 90, 60);
     let rows: Vec<String> = (0..buf.area.height)
         .map(|y| {
@@ -1749,8 +1763,8 @@ fn multi_select_row_brackets_the_cursor_and_accents_the_picked() {
         .find(|line| line.contains("storyboard"))
         .unwrap_or_else(|| panic!("no extra row: {rows:?}"));
     assert!(
-        row.contains("[○storyboard]") && !row.contains("[●video]"),
-        "the bracket follows the cursor, not the pick: {row}"
+        row.contains(" [x]video  ❯[ ]storyboard"),
+        "the caret follows the cursor, not the pick: {row}"
     );
 
     // The picked chip is the accented one; the cursor chip is not.
@@ -1762,12 +1776,51 @@ fn multi_select_row_brackets_the_cursor_and_accents_the_picked() {
         Some(accent),
         "a picked chip carries the selection colour: {row}"
     );
-    // +1 steps past the `[` onto the chip's own first cell.
-    let cursor_at = column_of(row, "[○storyboard]") + 1;
+    let cursor_at = column_of(row, "storyboard");
     assert_ne!(
         buf[(cursor_at, y)].style().fg,
         Some(accent),
         "an unpicked chip under the cursor is not accented: {row}"
+    );
+}
+
+/// Pick state is data, not focus: the mark and the accent both survive the row
+/// losing focus, or the user can no longer see what the query will carry.
+#[test]
+fn a_blurred_multi_select_row_keeps_its_mark_and_accent() {
+    use osu_collect::app::HomeField;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = find_app(true);
+    app.home.focus = HomeField::FindExtra;
+    for key in [KeyCode::Enter, KeyCode::Char(' '), KeyCode::Enter] {
+        app.handle_key(KeyEvent::new(key, KeyModifiers::NONE));
+    }
+    // `↓` walks off the row (onto `rank`), blurring it through the shipped path.
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.home.focus, HomeField::FindRank);
+
+    let buf = render_to_buffer(&app, 90, 60);
+    let rows: Vec<String> = (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect();
+    let row = rows
+        .iter()
+        .find(|line| line.contains("storyboard"))
+        .unwrap_or_else(|| panic!("no extra row: {rows:?}"));
+    assert!(
+        row.contains("[x]video  [ ]storyboard") && !row.contains('❯'),
+        "a blurred row keeps its marks and grows no slots: {row}"
+    );
+    let y = rows.iter().position(|line| line == row).expect("row index") as u16;
+    assert_eq!(
+        buf[(column_of(row, "video"), y)].style().fg,
+        Some(osu_collect::tui::theme().accent),
+        "the pick's accent is gated on focus: {row}"
     );
 }
 
@@ -1783,12 +1836,22 @@ fn column_of(row: &str, needle: &str) -> u16 {
     row[..byte].chars().count() as u16
 }
 
-/// The row the states below are read off. Anchored on a picked chip's mark:
-/// `rank ` alone also matches the `ranked` date input two rows down, and the
-/// bare label matches the footer.
+/// The `extra` row. Anchored on `storyboard`: `video` alone also matches the
+/// genre row's `video game` chip, which would silently read the wrong row.
+fn extra_row(rows: &[String]) -> String {
+    rows.iter()
+        .find(|line| line.contains("storyboard"))
+        .unwrap_or_else(|| panic!("no extra row: {rows:?}"))
+        .trim_end()
+        .to_string()
+}
+
+/// The row the states below are read off. Anchored on a chip's mark: `rank `
+/// alone also matches the `ranked` date input two rows down, and the bare label
+/// matches the footer.
 fn rank_row(rows: &[String]) -> String {
     rows.iter()
-        .find(|line| line.contains("●XH"))
+        .find(|line| line.contains("]XH"))
         .unwrap_or_else(|| panic!("no rank row: {rows:?}"))
         .trim_end()
         .to_string()
@@ -1796,8 +1859,8 @@ fn rank_row(rows: &[String]) -> String {
 
 /// A multi-select chip has four states, and every one has to be readable with
 /// the colour thrown away — on a colourblind palette, a low-contrast theme, or
-/// in a pasted screenshot. The `●`/`○` mark carries pick-ness, the `[brackets]`
-/// carry the cursor, and the two compose. Before this the accent fill was the
+/// in a pasted screenshot. The `[x]`/`[ ]` mark carries pick-ness, the `❯` caret
+/// carries the cursor, and the two compose. Before this the accent fill was the
 /// only thing saying which chips were on.
 #[test]
 fn every_multi_select_chip_state_reads_without_colour() {
@@ -1806,31 +1869,36 @@ fn every_multi_select_chip_state_reads_without_colour() {
 
     let mut app = find_app(true);
     app.home.focus = HomeField::FindRank;
-    // Pick XH, walk to X, pick that too — leaving the cursor on a PICKED chip.
-    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
-    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+    // Descend, pick XH, walk to X, pick that too — cursor on a PICKED chip.
+    for key in [
+        KeyCode::Enter,
+        KeyCode::Char(' '),
+        KeyCode::Right,
+        KeyCode::Char(' '),
+    ] {
+        app.handle_key(KeyEvent::new(key, KeyModifiers::NONE));
+    }
 
     let row = rank_row(&render_rows(&app, 90, 60));
     assert!(
-        row.contains("●XH  [●X]  ○SH  ○S  ○A  ○B  ○C  ○D"),
+        row.contains("[x]XH  ❯[x]X   [ ]SH   [ ]S   [ ]A   [ ]B   [ ]C   [ ]D"),
         "picked, picked-at-cursor and unpicked must differ in text: {row}"
     );
 
     // The fourth state: the cursor moves onto an UNPICKED chip, which keeps its
     // own mark rather than borrowing the one it is sitting next to.
-    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
     let row = rank_row(&render_rows(&app, 90, 60));
     assert!(
-        row.contains("●XH  ●X  [○SH]  ○S  ○A  ○B  ○C  ○D"),
+        row.contains("[x]XH   [x]X  ❯[ ]SH   [ ]S   [ ]A   [ ]B   [ ]C   [ ]D"),
         "unpicked-at-cursor must not read as picked: {row}"
     );
 }
 
-/// The prefix is what separates a multi row from a cycle row: several chips can
-/// be on at once, so the row states each one's answer. A cycle row has exactly
-/// one selection and takes no mark, and losing that distinction is what would
-/// make the two families read alike.
+/// The mark is what separates a multi row from a cycle row: several chips can be
+/// on at once, so the row states each one's answer. A cycle row has exactly one
+/// selection and takes no mark — it brackets it instead, which is the other half
+/// of what keeps the two families apart.
 #[test]
 fn a_cycle_row_carries_no_pick_mark() {
     use osu_collect::app::HomeField;
@@ -1842,32 +1910,85 @@ fn a_cycle_row_carries_no_pick_mark() {
         .find(|line| line.contains("hip hop"))
         .unwrap_or_else(|| panic!("no genre row: {rows:?}"));
     assert!(
-        !genre.contains('●') && !genre.contains('○'),
+        !genre.contains("[x]") && !genre.contains("[ ]"),
         "a single-select row must not borrow the multi-select mark: {genre}"
     );
     assert!(genre.contains("[any]"), "its cursor is still bracketed");
 }
 
-/// A sub-cursor nobody can find is a sub-cursor nobody uses: the key that moves
-/// it must be advertised while such a row holds focus.
+/// A second stage nobody can find is a stage nobody uses: the key that opens it
+/// must be advertised while such a row holds focus, and the grammar inside it
+/// once the row is down.
 #[test]
-fn multi_select_row_advertises_the_chip_cursor_key() {
+fn a_multi_select_row_advertises_both_of_its_stages() {
     use osu_collect::app::HomeField;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
     let mut app = find_app(true);
     app.home.focus = HomeField::FindRank;
-    let content = render_content(&app, 120, 60);
+    let rows = render_rows(&app, 120, 60);
     assert!(
-        content.contains("⇧←→ pick"),
-        "footer must name the chip-cursor key: {content}"
+        rows.iter().any(|row| row.contains("↵ edit (multiselect)")),
+        "the row states how to open it: {rows:?}"
     );
-    // And in place on the row itself, where the user is looking.
+    let footer = rows.last().expect("footer row").clone();
     assert!(
-        content.contains("⇧←→ pick a chip"),
-        "the row states its own grammar: {content}"
+        footer.contains("↵ edit"),
+        "the footer names the same key: {footer}"
     );
-    // Both land in the SAME frame, so the app must name the modifier one way.
+
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let rows = render_rows(&app, 120, 60);
+    // Both land in the SAME frame, so every key has to be spelled one way. The
+    // footer drops the `·` group markers the tooltip prints, so the agreement is
+    // asserted per key rather than on the whole run.
+    let footer = rows.last().expect("footer row").clone();
+    let tooltip = rows
+        .iter()
+        .find(|row| row.contains("└ ←→ move"))
+        .unwrap_or_else(|| panic!("no descended tooltip: {rows:?}"));
+    for key in ["←→ move", "space toggle", "esc done"] {
+        assert!(footer.contains(key), "footer is missing {key:?}: {footer}");
+        assert!(tooltip.contains(key), "row is missing {key:?}: {tooltip}");
+    }
     assert!(
-        !content.contains("shift+"),
-        "two spellings of the shift modifier are visible at once: {content}"
+        !rows.iter().any(|row| row.contains('⇧')),
+        "no shifted spelling survives on this row: {rows:?}"
+    );
+}
+
+/// One tooltip for the pair, anchored under `rank` — which is what makes walking
+/// `extra` → `rank` reflow nothing. A hint per row would shift every row below
+/// the pair by one as focus moved between them.
+#[test]
+fn the_multi_select_hint_is_one_row_anchored_under_rank() {
+    use osu_collect::app::HomeField;
+    const HINT: &str = "↵ edit (multiselect)";
+
+    let mut app = find_app(true);
+    app.home.focus = HomeField::FindExtra;
+    let on_extra = render_rows(&app, 120, 60);
+    assert_eq!(
+        on_extra.iter().filter(|row| row.contains(HINT)).count(),
+        1,
+        "one hint, not one per row: {on_extra:?}"
+    );
+    assert_eq!(
+        row_of(&on_extra, HINT),
+        row_of(&on_extra, "]XH") + 1,
+        "the hint sits under `rank`, not under the focused `extra`: {on_extra:?}"
+    );
+
+    app.home.focus = HomeField::FindRank;
+    let on_rank = render_rows(&app, 120, 60);
+    assert_eq!(
+        on_rank.iter().filter(|row| row.contains(HINT)).count(),
+        1,
+        "the hint stays live for the other row of the pair: {on_rank:?}"
+    );
+    assert_eq!(
+        row_of(&on_extra, "played"),
+        row_of(&on_rank, "played"),
+        "walking between the two rows reflowed the form"
     );
 }

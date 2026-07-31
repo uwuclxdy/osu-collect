@@ -205,7 +205,7 @@ pub fn push_form_rows(
     );
     if show_advanced {
         if supporter {
-            push_supporter_facets(items, find, focus, width);
+            push_supporter_facets(items, find, focus, editing, width);
         }
         for (field, input) in [
             (HomeField::FindStars, &find.stars),
@@ -284,12 +284,13 @@ pub fn push_form_rows(
 /// The five supporter facets that open the advanced section, ahead of the
 /// per-attribute ranges: `genre  language  extra  rank  played`. `extra` and
 /// `rank` are MULTI-select — several chips can be on at once, so each renders
-/// with its own chip cursor ([`widgets::multi_chip_item`]) rather than a single
-/// accented value.
+/// its own pick marks ([`widgets::multi_chip_item`]) rather than a single
+/// accented value, and descends into a chip cursor on `↵`.
 fn push_supporter_facets(
     items: &mut widgets::FormItems<HomeField>,
     find: &FindSource,
     focus: HomeField,
+    editing: bool,
     width: u16,
 ) {
     for (field, label, labels, selected) in [
@@ -333,12 +334,13 @@ fn push_supporter_facets(
                 |idx| chips.contains(idx),
                 chips.cursor(),
                 focus == field,
+                editing && focus == field,
                 LABEL_WIDTH,
                 width,
             ),
         );
-        push_chip_hint(items, field, focus);
     }
+    push_chip_hint(items, focus, editing);
     items.push_focusable(
         HomeField::FindPlayed,
         widgets::cycle_item(
@@ -352,16 +354,20 @@ fn push_supporter_facets(
     );
 }
 
-/// The `└ …` tooltip under a focused multi-select row. The chip cursor is the
-/// one control in this form with no single-key equivalent, so the row states its
-/// grammar in place as well as in the footer — a sub-cursor advertised nowhere
-/// on screen is a sub-cursor nobody finds.
-fn push_chip_hint(items: &mut widgets::FormItems<HomeField>, field: HomeField, focus: HomeField) {
-    if focus == field {
-        items.push(widgets::help_item_keyed(
-            "[⇧←→] pick a chip, [space] toggles it. several can be on",
-        ));
+/// The one `└ …` tooltip the multi-select pair carries, anchored under `rank`
+/// and live for either row's focus — so walking `extra` → `rank` reflows
+/// nothing. A row whose second stage is advertised nowhere on screen is a stage
+/// nobody finds, so it states its own grammar as well as the footer does; the
+/// key spellings match the footer's, since both land in the same frame.
+fn push_chip_hint(items: &mut widgets::FormItems<HomeField>, focus: HomeField, editing: bool) {
+    if !focus.is_find_multi_chip() {
+        return;
     }
+    items.push(widgets::help_item_keyed(if editing {
+        "[←→] move · [space] toggle · [esc] done"
+    } else {
+        "[↵] edit (multiselect)"
+    }));
 }
 
 /// The eyebrow a focused find field sits under, driving its underline cue. The

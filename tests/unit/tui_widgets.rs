@@ -971,24 +971,34 @@ fn the_one_line_boundary_is_exact() {
 // ── multi_chip_item wrapping ─────────────────────────────────────────────────
 
 /// The real `rank` row — the widest multi-select the form has, and the one whose
-/// pick marks add the most cells relative to its chip widths (`●XH` is half
-/// glyph). A two-chip `extra` fixture would never wrap at all.
+/// pick marks add the most cells relative to its chip widths (`[x]XH` is three
+/// cells of mark on two of label). A two-chip `extra` fixture would never wrap.
 const RANK_CHIPS: &[&str] = &["XH", "X", "SH", "S", "A", "B", "C", "D"];
 const RANK_LABEL: &str = "rank";
 
 /// Renders the `rank` row at `width` with chips 0 and 2 picked and the cursor on
 /// chip 1, so a wrap has to carry a picked chip, an unpicked one, and the
-/// bracketed cursor across the break.
-fn rank_rows(width: u16) -> Vec<String> {
+/// cursor's caret slot across the break. `descended` puts the row in edit mode,
+/// where every chip reserves that slot.
+fn rank_rows(width: u16, descended: bool) -> Vec<String> {
+    render_rank(1, descended, width, width)
+}
+
+/// The same row with the cursor anywhere, laid out against `layout_width` and
+/// drawn into a `draw_width`-wide viewport — a `layout_width` of 0 asks for one
+/// line whatever its length, which is how the row's own width gets measured.
+fn render_rank(cursor: usize, descended: bool, layout_width: u16, draw_width: u16) -> Vec<String> {
     let item = multi_chip_item(
         RANK_LABEL,
         RANK_CHIPS,
         |idx| idx == 0 || idx == 2,
-        1,
+        cursor,
         true,
+        descended,
         CHIP_LABEL_WIDTH,
-        width,
+        layout_width,
     );
+    let width = draw_width;
     let inner = Rect::new(0, 0, width.max(1), CHIP_VIEWPORT);
     let mut terminal =
         Terminal::new(TestBackend::new(width.max(1), CHIP_VIEWPORT)).expect("test backend");
@@ -1011,25 +1021,24 @@ fn rank_rows(width: u16) -> Vec<String> {
     rows.iter().map(|row| row.trim_end().to_string()).collect()
 }
 
-/// The marks widen every chip by a cell, so the wrap math has to count them.
-/// Pinned as the exact render rather than a property, since this is the row the
-/// four chip states are read off.
+/// The marks widen every chip by three cells, so the wrap math has to count
+/// them — and it counts spans now, not one string. Pinned as the exact render
+/// rather than a property, since this is the row the chip states are read off.
 #[test]
 fn a_marked_chip_row_wraps_between_chips() {
     assert_eq!(
-        rank_rows(60),
-        vec!["\u{276f} rank        ●XH  [○X]  ●SH  ○S  ○A  ○B  ○C  ○D"],
+        rank_rows(70, false),
+        vec!["\u{276f} rank        [x]XH  [ ]X  [x]SH  [ ]S  [ ]A  [ ]B  [ ]C  [ ]D"],
         "with room to spare it stays one line"
     );
-    // 30 cells: 14 of indent leaves 16, and `●XH` + `[○X]` + `●SH` with their
-    // gaps is 14 of it — one more chip would overrun, so the break falls there.
-    let rows = rank_rows(30);
+    // 40 cells: 14 of indent leaves 26, and four marked chips with their gaps
+    // are 24 of it — a fifth would overrun, so the break falls there.
+    let rows = rank_rows(40, false);
     assert_eq!(
         rows,
         vec![
-            "\u{276f} rank        ●XH  [○X]  ●SH",
-            "              ○S  ○A  ○B  ○C",
-            "              ○D",
+            "\u{276f} rank        [x]XH  [ ]X  [x]SH  [ ]S",
+            "              [ ]A  [ ]B  [ ]C  [ ]D",
         ]
     );
     for row in &rows[1..] {
@@ -1040,42 +1049,88 @@ fn a_marked_chip_row_wraps_between_chips() {
     }
 }
 
-/// A break must never fall between a chip's mark and its label, or inside the
-/// cursor brackets: both would read as a chip that isn't there.
+/// Descending widens the row exactly once: the label cell gives up a cell to the
+/// first chip's caret slot (so the value column holds) and every later chip gains
+/// one (so the gaps go 2 → 3). A continuation line indents to the same narrowed
+/// column, landing its chip's own text back on the value column.
+#[test]
+fn a_descended_row_reserves_a_caret_slot_on_every_chip() {
+    assert_eq!(
+        rank_rows(70, true),
+        vec!["\u{270e} rank        [x]XH  \u{276f}[ ]X   [x]SH   [ ]S   [ ]A   [ ]B   [ ]C   [ ]D"],
+        "one slot per chip, filled only under the cursor"
+    );
+    let rows = rank_rows(40, true);
+    assert_eq!(
+        rows,
+        vec![
+            "\u{270e} rank        [x]XH  \u{276f}[ ]X   [x]SH",
+            "              [ ]S   [ ]A   [ ]B   [ ]C",
+            "              [ ]D",
+        ]
+    );
+    for row in &rows[1..] {
+        assert!(
+            row.starts_with(&" ".repeat(CHIP_INDENT)),
+            "a wrapped chip's text left the value column: {row:?}"
+        );
+    }
+}
+
+/// Walking the cursor may not move a single cell of the row. The slots are what
+/// buy that, and a row that only drew a slot under the cursor would still pass
+/// every other assertion here.
+#[test]
+fn the_row_width_is_the_same_under_every_cursor_position() {
+    let widths: Vec<usize> = (0..RANK_CHIPS.len())
+        .map(|cursor| {
+            let rows = render_rank(cursor, true, 0, 90);
+            assert_eq!(rows.len(), 1, "the measurement row wrapped");
+            rows[0].chars().count()
+        })
+        .collect();
+    // 69, hand-counted off the diagram: 2 lead + 11 label cell + 8 chips whose
+    // slot+mark+label runs total 43, with seven 2-cell gaps.
+    assert_eq!(widths, vec![69; RANK_CHIPS.len()], "the row breathes");
+}
+
+/// A break must never fall between a chip's mark and its label, or between its
+/// caret slot and its mark: each would read as a chip that isn't there.
 #[test]
 fn a_marked_chip_never_splits_across_the_break() {
-    let floor = CHIP_INDENT + 2 + 1 + RANK_CHIPS.iter().map(|c| c.len()).max().expect("non-empty");
-    for width in floor as u16..=60 {
-        let rows = rank_rows(width);
-        let seen: Vec<String> = rows
-            .iter()
-            .flat_map(|row| {
-                row.chars()
-                    .skip(CHIP_INDENT)
-                    .collect::<String>()
-                    .split("  ")
-                    .filter(|part| !part.is_empty())
-                    .map(|part| part.trim_matches(['[', ']', '●', '○']).to_string())
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        assert_eq!(
-            seen,
-            RANK_CHIPS.iter().map(|c| c.to_string()).collect::<Vec<_>>(),
-            "chip set differs at width {width}: {rows:?}"
-        );
-        // Every chip keeps a mark: a lone `●`/`○` orphaned onto its own line
-        // would survive the check above, since trimming would empty it out.
-        for row in &rows {
-            let value: String = row.chars().skip(CHIP_INDENT).collect();
-            for chip in value.split("  ").filter(|part| !part.is_empty()) {
-                assert!(
-                    chip.contains('●') || chip.contains('○'),
-                    "chip {chip:?} lost its mark at width {width}: {rows:?}"
-                );
-            }
+    let floor = CHIP_INDENT + 4 + RANK_CHIPS.iter().map(|c| c.len()).max().expect("non-empty");
+    for descended in [false, true] {
+        for width in floor as u16..=70 {
+            let rows = rank_rows(width, descended);
+            assert_eq!(
+                marked_chips(&rows),
+                [
+                    "[x]XH", "[ ]X", "[x]SH", "[ ]S", "[ ]A", "[ ]B", "[ ]C", "[ ]D"
+                ],
+                "chip set differs at width {width} (descended: {descended}): {rows:?}"
+            );
         }
     }
+}
+
+/// Every chip in the render, in order, read off its `[x]` / `[ ]` mark rather
+/// than off the spacing — which the caret slots change. A chip cut across a
+/// break loses its label here, and an orphaned mark reads as an empty one.
+fn marked_chips(rows: &[String]) -> Vec<String> {
+    rows.iter()
+        .flat_map(|row| {
+            row.match_indices('[')
+                .map(|(at, _)| {
+                    let rest = &row[at..];
+                    let label: String = rest[3..]
+                        .chars()
+                        .take_while(|c| !c.is_whitespace())
+                        .collect();
+                    format!("{}{label}", &rest[..3])
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 #[test]

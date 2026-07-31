@@ -851,7 +851,12 @@ impl App {
             return;
         }
         self.home.find.clear_supporter_facets();
-        self.home.clamp_supporter_focus(self.config.supporter());
+        // The clamp can move focus off a descended multi-select chip row, and
+        // `editing` would outlive it there — set on a row that is neither a text
+        // input nor a chip row, so nothing would take it back down.
+        if self.home.clamp_supporter_focus(self.config.supporter()) {
+            self.editing = false;
+        }
     }
 
     /// Whether a login / verification request is currently in flight.
@@ -1432,7 +1437,18 @@ impl App {
         }
     }
 
-    /// `space`/`enter` on a multi-select find row: flip the member under the
+    /// Whether focus is descended into a multi-select find row — the state where
+    /// `←`/`→` walk its chip cursor instead of switching tabs, and `space`
+    /// toggles the chip under it. The arrow handler and the footer both read it.
+    pub fn find_chip_editing(&self) -> bool {
+        self.editing
+            && self.login.is_none()
+            && self.active_tab() == Tab::Home
+            && !self.home_set_browsing()
+            && self.home.focus.is_find_multi_chip()
+    }
+
+    /// `space` on a descended multi-select find row: flip the member under the
     /// row's chip cursor.
     fn toggle_find_chip(&mut self) {
         match self.home.focus {
@@ -1442,7 +1458,8 @@ impl App {
         }
     }
 
-    /// `⇧←`/`⇧→` on a multi-select find row: walk its chip cursor, wrapping.
+    /// `←`/`→` on a descended multi-select find row: walk its chip cursor,
+    /// wrapping.
     fn move_find_chip_cursor(&mut self, forward: bool) {
         match self.home.focus {
             HomeField::FindExtra => self.home.find.extra.move_cursor(forward),
@@ -2272,25 +2289,11 @@ impl App {
             // they focus the list / preview pane. Everywhere else they switch
             // tabs — the source strip + search chips cycle on space/enter, not
             // arrows. Home/End jump to the field edges (text-field only).
-            // ⇧← / ⇧→ walk the chip cursor inside a focused multi-select find row
-            // (`extra`, `rank`); `space`/`enter` then toggle the chip under it.
-            // The modifier is the whole point: PLAIN ←/→ still switch tabs on
-            // these rows like everywhere else, so the global binding keeps its
-            // contract, and ⇧+arrow is the shape this app already uses for a
-            // row-local action (the Config tab's ⇧↑/⇧↓ mirror reorder below).
-            // Focus is the whole gate, as it is for the `space`/`enter` toggle on
-            // these same rows: a supporter row is reachable only through
-            // `HomeTab::active_fields`, which drops it without supporter, and
-            // `settle_supporter_gate` moves focus off it the moment the flag
-            // flips. A second read of the flag here could never be the deciding
-            // one, and having one of the row's two handlers check it invites the
-            // reading that the other forgot to.
-            KeyCode::Left | KeyCode::Right
-                if key.modifiers.contains(KeyModifiers::SHIFT)
-                    && self.active_tab() == Tab::Home
-                    && !self.home_set_browsing()
-                    && self.home.focus.is_find_multi_chip() =>
-            {
+            // A multi-select find row (`extra`, `rank`) descended into edit mode
+            // takes the same arrow suspension a focused text input takes for its
+            // caret: ←/→ walk its chip cursor. At rest the row is not descended,
+            // so they switch tabs there like everywhere else.
+            KeyCode::Left | KeyCode::Right if self.find_chip_editing() => {
                 self.move_find_chip_cursor(key.code == KeyCode::Right);
             }
             KeyCode::Left => {
@@ -2525,10 +2528,12 @@ impl App {
                             // or nzbasic filter).
                             HomeField::FindRun => return self.dispatch_find_run(),
                             // Find chips step forward on enter (like the source strip);
-                            // a multi-select row flips the chip under its cursor
-                            // instead, since it has no single "next" value.
+                            // a multi-select row has no single "next" value, so
+                            // enter descends into its own edit mode instead —
+                            // where ←/→ walk the chip cursor and space toggles —
+                            // and the next enter leaves it.
                             field if field.is_find_chip() => self.cycle_find_chip(true),
-                            field if field.is_find_multi_chip() => self.toggle_find_chip(),
+                            field if field.is_find_multi_chip() => self.editing = !self.editing,
                             field if field.is_disclosure() => {
                                 self.home.find.toggle_advanced_filters()
                             }
@@ -2610,7 +2615,14 @@ impl App {
                     } else if self.home.focus.is_find_chip() {
                         self.cycle_find_chip(true);
                     } else if self.home.focus.is_find_multi_chip() {
-                        self.toggle_find_chip();
+                        // Descended, `space` toggles the chip under the cursor;
+                        // at rest it descends like `enter` rather than advancing
+                        // a value, which is what a multi row has instead.
+                        if self.editing {
+                            self.toggle_find_chip();
+                        } else {
+                            self.editing = true;
+                        }
                     } else if self.home.focus.is_disclosure() {
                         self.home.find.toggle_advanced_filters();
                     } else if self.home.focus.is_toggle() {

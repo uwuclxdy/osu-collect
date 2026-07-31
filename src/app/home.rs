@@ -263,8 +263,8 @@ pub enum HomeField {
     FindGenre,
     FindLanguage,
     /// The find source's supporter-only MULTI-select facets: several chips can be
-    /// on at once (`e=video.storyboard`, `r=XH.X`). `⇧←`/`⇧→` walk the chip
-    /// cursor, `space`/`enter` toggle the chip under it.
+    /// on at once (`e=video.storyboard`, `r=XH.X`). `↵` descends into the row,
+    /// where `←`/`→` walk the chip cursor and `space` toggles the chip under it.
     FindExtra,
     FindRank,
     /// The find source's supporter-only play-state facet (any / played /
@@ -474,13 +474,12 @@ impl HomeField {
     }
 
     /// Whether this is a find-source MULTI-select chip row: several members can
-    /// be on at once, so the row carries its own chip cursor. `⇧←`/`⇧→` walk it
-    /// and `space`/`enter` toggle the member under it.
+    /// be on at once, so the row carries its own chip cursor, reached by
+    /// descending into it on `↵`.
     ///
-    /// The modifier is what makes this legal: PLAIN `←`/`→` keep switching tabs
-    /// on these rows exactly as everywhere else, so the global binding is
-    /// untouched. `⇧`+arrow is already carved out in this app for the Config
-    /// tab's `⇧↑`/`⇧↓` mirror reorder.
+    /// The descent is what makes the cursor legal: `←`/`→` only walk it while
+    /// the row is down, the same suspension a focused text input takes for its
+    /// caret. At rest they switch tabs on these rows like everywhere else.
     pub fn is_find_multi_chip(self) -> bool {
         matches!(self, HomeField::FindExtra | HomeField::FindRank)
     }
@@ -838,10 +837,16 @@ impl HomeTab {
     /// Move focus off a supporter row once the gate closes under it (a logout, a
     /// `/me` re-probe that comes back non-supporter). The row stops rendering the
     /// same frame, so leaving focus there would park the caret on nothing.
-    pub fn clamp_supporter_focus(&mut self, supporter: bool) {
-        if !supporter && self.focus.is_supporter_only() {
-            self.focus = HomeField::Source;
+    ///
+    /// Returns whether focus moved, which is what the caller keys any
+    /// focus-scoped state (an open edit mode) off — asking here rather than
+    /// re-deriving the condition beside it.
+    pub fn clamp_supporter_focus(&mut self, supporter: bool) -> bool {
+        if supporter || !self.focus.is_supporter_only() {
+            return false;
         }
+        self.focus = HomeField::Source;
+        true
     }
 
     /// Cycle the source strip one step (`forward` = right, else left), wrapping.

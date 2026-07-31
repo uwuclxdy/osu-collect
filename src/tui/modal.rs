@@ -119,6 +119,7 @@ const VIM: &[HelpRow] = &[
 
 const HOME_TAB: &[HelpRow] = &[
     HelpRow::new("↵", "edit field / activate row"),
+    HelpRow::new("↵ (multi-select row)", "edit chips: ← → move, space toggle"),
     HelpRow::new("← →", "focus browse panes"),
     HelpRow::new("1-3", "jump source"),
     HelpRow::new("s", "jump to download / cycle sort"),

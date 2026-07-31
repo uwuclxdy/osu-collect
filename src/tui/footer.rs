@@ -56,11 +56,14 @@ const HINT_SOURCE_JUMP: &str = "1-3 switch source";
 const HINT_CYCLE: &str = "space cycle";
 /// Find form's advanced-filters disclosure: `space` expands / collapses it.
 const HINT_DISCLOSE: &str = "space toggle";
-/// Find form multi-select chip row (`extra` / `rank`): `⇧←→` walks the row's own
-/// chip cursor — plain `←→` still switch tabs — and `space` toggles the chip it
-/// rests on. One segment, because half of it advertises a key that does nothing
-/// without the other half.
-const HINT_CHIP_PICK: &str = "⇧←→ pick · space toggle";
+/// Find form multi-select chip row (`extra` / `rank`) at rest: `↵` descends into
+/// the row's own edit mode, the two-stage focus a text input takes.
+const HINT_CHIP_EDIT: &str = "↵ edit";
+/// The same row descended: `←→` walk its chip cursor (tab switching suspends
+/// exactly as it does for a text input's caret), `space` toggles the chip they
+/// rest on, `esc` leaves. One segment, because each key is dead without the
+/// others.
+const HINT_CHIP_EDITING: &str = "←→ move · space toggle · esc done";
 /// Find form's CTA: run the resolved query (osu search or nzbasic filter).
 const HINT_FIND: &str = "↵ find";
 /// Find browse (list pane): load the next page of results.
@@ -215,8 +218,10 @@ pub(crate) fn hint_for(app: &App) -> String {
 /// trimmed.
 fn hint_segments(app: &App) -> Vec<HintSegment> {
     // Editing collapses the bar to the single exit affordance — no globals,
-    // no universal help/back tail (the field owns every other key).
-    if app.editing {
+    // no universal help/back tail (the field owns every other key). A descended
+    // multi-select chip row is the exception: it owns no letters, and its own
+    // grammar (which names the exit key too) is what the user needs there.
+    if app.editing && !app.find_chip_editing() {
         return vec![HintSegment::context(HINT_EDIT_DONE)];
     }
     let (context, back) = tab_hints(app);
@@ -333,7 +338,7 @@ fn tab_hints(app: &App) -> (Vec<&'static str>, Option<&'static str>) {
         return (login_hints(app), Some(HINT_CLOSE));
     }
     match app.active_tab() {
-        Tab::Home => home_tab_hints(&app.home),
+        Tab::Home => home_tab_hints(app),
         Tab::Config => (config_hints(&app.config), Some(HINT_QUIT)),
         Tab::Downloads => downloads_hints(app),
     }
@@ -401,14 +406,18 @@ fn downloads_hints(app: &App) -> (Vec<&'static str>, Option<&'static str>) {
 /// Home-tab middle hints + trailing back key. The update source has its own
 /// form / browse hint sets; the other sources use the standard form hints and
 /// trail `q quit`.
-fn home_tab_hints(form: &HomeTab) -> (Vec<&'static str>, Option<&'static str>) {
+fn home_tab_hints(app: &App) -> (Vec<&'static str>, Option<&'static str>) {
+    let form = &app.home;
     if form.source == GetMapsSource::Update {
         return update_source_hints(form);
     }
     if let Some(browse) = active_set_browse(form) {
         return set_browse_hints(form, browse);
     }
-    (home_form_hints(form), Some(HINT_QUIT))
+    (
+        home_form_hints(form, app.find_chip_editing()),
+        Some(HINT_QUIT),
+    )
 }
 
 /// The active source's flat browse when it is descended, else `None`.
@@ -469,7 +478,7 @@ fn set_browse_hints(
     (segments, None)
 }
 
-fn home_form_hints(form: &HomeTab) -> Vec<&'static str> {
+fn home_form_hints(form: &HomeTab, chip_editing: bool) -> Vec<&'static str> {
     let mut segments = vec![HINT_MOVE];
     if form.focus == HomeField::Source {
         // Source-row focus merges the cycle key and the strip-digit jump into
@@ -484,7 +493,11 @@ fn home_form_hints(form: &HomeTab) -> Vec<&'static str> {
         HomeField::Mirrors => segments.push(HINT_ENTER_OPEN),
         HomeField::FindRun => segments.push(HINT_FIND),
         f if f.is_find_chip() => segments.push(HINT_CYCLE),
-        f if f.is_find_multi_chip() => segments.push(HINT_CHIP_PICK),
+        f if f.is_find_multi_chip() => segments.push(if chip_editing {
+            HINT_CHIP_EDITING
+        } else {
+            HINT_CHIP_EDIT
+        }),
         f if f.is_disclosure() => segments.push(HINT_DISCLOSE),
         f if f.is_stepper() => segments.push(HINT_PLUS_MINUS),
         f if f.is_toggle() => segments.push(HINT_ENTER_TOGGLE),

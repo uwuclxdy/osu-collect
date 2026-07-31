@@ -1646,9 +1646,9 @@ fn find_app_on(field: osu_collect::app::HomeField) -> App {
     app
 }
 
-/// The contract the chip cursor had to survive: PLAIN `←`/`→` keep switching
-/// tabs, on a multi-select row exactly as everywhere else. Only the shifted pair
-/// is carved out. Break this and the sub-cursor has eaten a global key.
+/// The contract the chip cursor had to survive: on a row AT REST, `←`/`→` keep
+/// switching tabs exactly as everywhere else. Only a descended row carves them
+/// out. Break this and the sub-cursor has eaten a global key.
 #[test]
 fn plain_arrows_still_switch_tabs_on_a_multi_select_row() {
     use osu_collect::app::{HomeField, Tab};
@@ -1670,58 +1670,98 @@ fn plain_arrows_still_switch_tabs_on_a_multi_select_row() {
 }
 
 #[test]
-fn shift_arrows_walk_the_chip_cursor_without_leaving_the_tab() {
+fn arrows_walk_the_chip_cursor_while_the_row_is_descended() {
     use osu_collect::app::{HomeField, Tab};
     let mut app = find_app_on(HomeField::FindRank);
+    app.handle_key(press(KeyCode::Enter));
 
-    app.handle_key(shift(KeyCode::Right));
-    assert_eq!(app.active_tab(), Tab::Home, "⇧→ is consumed by the row");
+    app.handle_key(press(KeyCode::Right));
+    assert_eq!(app.active_tab(), Tab::Home, "→ is consumed by the row");
     assert_eq!(app.home.find.rank.cursor(), 1);
-    app.handle_key(shift(KeyCode::Right));
+    app.handle_key(press(KeyCode::Right));
     assert_eq!(app.home.find.rank.cursor(), 2);
-    app.handle_key(shift(KeyCode::Left));
+    app.handle_key(press(KeyCode::Left));
     assert_eq!(app.home.find.rank.cursor(), 1);
     // Walking alone picks nothing.
     assert!(app.home.find.rank.is_empty());
 }
 
-/// `space` and `enter` both toggle the chip under the cursor — the shipped chip
-/// convention, not a third binding.
+/// `enter` and `space` both open the row's second stage; once it is down `space`
+/// toggles the chip under the cursor and `enter` closes the stage again — the
+/// same two-stage grammar a text input has, with `space` standing in for the
+/// state-control key the row would otherwise carry.
 #[test]
-fn space_and_enter_both_toggle_the_chip_under_the_cursor() {
+fn enter_and_space_both_descend_into_the_row() {
     use osu_collect::app::HomeField;
-    for key in [KeyCode::Char(' '), KeyCode::Enter] {
+    for open in [KeyCode::Enter, KeyCode::Char(' ')] {
         let mut app = find_app_on(HomeField::FindExtra);
-        app.handle_key(shift(KeyCode::Right)); // cursor → storyboard
-        app.handle_key(press(key));
+        app.handle_key(press(open));
+        assert!(app.find_chip_editing(), "{open:?} must descend");
+        // Only now do the arrows and `space` act on the row.
+        app.handle_key(press(KeyCode::Right)); // cursor → storyboard
+        app.handle_key(press(KeyCode::Char(' ')));
         assert!(
             !app.home.find.extra.contains(0) && app.home.find.extra.contains(1),
-            "{key:?} toggled the wrong chip"
+            "{open:?}: space toggled the wrong chip"
         );
-        app.handle_key(press(key));
+        app.handle_key(press(KeyCode::Char(' ')));
         assert!(
             app.home.find.extra.is_empty(),
-            "{key:?} must toggle back off"
+            "{open:?}: space must toggle back off"
         );
     }
 }
 
-/// Once the gate shuts, the row is gone and `⇧→` is a plain tab switch again.
+/// `enter`, `esc` and a row move all leave the stage — and the move takes the
+/// row with it, so focus never lands elsewhere with the mode still down.
+#[test]
+fn every_exit_from_a_descended_row_puts_the_mode_back() {
+    use osu_collect::app::HomeField;
+    for exit in [KeyCode::Enter, KeyCode::Esc] {
+        let mut app = find_app_on(HomeField::FindRank);
+        app.handle_key(press(KeyCode::Enter));
+        app.handle_key(press(exit));
+        assert!(!app.find_chip_editing(), "{exit:?} must leave the mode");
+        assert_eq!(
+            app.home.focus,
+            HomeField::FindRank,
+            "{exit:?} must not also leave the row"
+        );
+        // And the arrows are global again.
+        app.handle_key(press(KeyCode::Right));
+        assert_ne!(app.active_tab(), osu_collect::app::Tab::Home);
+    }
+    for (exit, landing) in [
+        (KeyCode::Down, HomeField::FindPlayed),
+        (KeyCode::Up, HomeField::FindExtra),
+    ] {
+        let mut app = find_app_on(HomeField::FindRank);
+        app.handle_key(press(KeyCode::Enter));
+        app.handle_key(press(exit));
+        assert!(!app.find_chip_editing(), "{exit:?} must leave the mode");
+        assert_eq!(app.home.focus, landing, "{exit:?} must leave the row too");
+    }
+}
+
+/// Once the gate shuts, the row is gone — and with it the edit mode that was
+/// down on it, or `editing` outlives its row and traps the arrows on a field
+/// that is neither a text input nor a chip row.
 ///
 /// The close runs through the path production takes (`App::set_logged_out`),
 /// which is what moves focus off the row and drops the picks. Assigning the flag
 /// alone would build a state the app cannot reach — focus parked on a row the
 /// render already dropped — and pin nothing that ships.
 #[test]
-fn shift_arrows_switch_tabs_again_once_the_supporter_gate_closes() {
+fn the_supporter_gate_closing_takes_the_descended_row_with_it() {
     use osu_collect::app::{HomeField, Tab};
     let mut app = find_app_on(HomeField::FindExtra);
-    // The row is live first, so the fall-through below is a change and not the
-    // starting state.
-    app.handle_key(shift(KeyCode::Right));
+    // The row is live and descended first, so the fall-through below is a change
+    // and not the starting state.
+    app.handle_key(press(KeyCode::Enter));
+    app.handle_key(press(KeyCode::Right));
     app.handle_key(press(KeyCode::Char(' ')));
     assert_eq!(app.home.find.extra.cursor(), 1);
-    assert!(app.home.find.extra.contains(1));
+    assert!(app.home.find.extra.contains(1) && app.find_chip_editing());
 
     app.set_logged_out();
     assert_eq!(
@@ -1729,16 +1769,17 @@ fn shift_arrows_switch_tabs_again_once_the_supporter_gate_closes() {
         HomeField::Source,
         "the row stops rendering, so focus has to leave it at the flip"
     );
+    assert!(!app.editing, "the edit mode has to leave with the row");
     assert!(
         app.home.find.extra.is_empty() && app.home.find.extra.cursor() == 0,
         "and the pick goes with it — an invisible chip still rides into the query"
     );
 
-    app.handle_key(shift(KeyCode::Right));
+    app.handle_key(press(KeyCode::Right));
     assert_ne!(
         app.active_tab(),
         Tab::Home,
-        "with the gate shut the row is gone, so ⇧→ falls through to the tab switch"
+        "with the gate shut the row is gone, so → falls through to the tab switch"
     );
     assert_eq!(app.home.find.extra.cursor(), 0, "and moves no cursor");
 }

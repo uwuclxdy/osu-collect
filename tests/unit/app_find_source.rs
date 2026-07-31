@@ -767,8 +767,8 @@ fn step(cycle: impl Fn(&mut FindSource, bool), source: &mut FindSource, slot: us
 }
 
 /// Pick multi-select members by chip index, walking the row's own cursor exactly
-/// as `⇧←`/`⇧→` do — so these drive the shipped control rather than reaching past
-/// it into the mask.
+/// as `←`/`→` do while the row is descended — so these drive the shipped control
+/// rather than reaching past it into the mask.
 fn pick(chips: &mut ChipSet, indices: &[usize]) {
     for &want in indices {
         // Forward-only, wrapping, so this reaches any chip from any start; 64 is
@@ -1047,10 +1047,10 @@ fn chip_cursor_wraps_within_the_row() {
     assert_eq!(
         source.extra.cursor(),
         EXTRA_LABELS.len() - 1,
-        "⇧← from the first chip wraps to the last"
+        "← from the first chip wraps to the last"
     );
     source.extra.move_cursor(true);
-    assert_eq!(source.extra.cursor(), 0, "⇧→ wraps back");
+    assert_eq!(source.extra.cursor(), 0, "→ wraps back");
     // Moving the cursor alone picks nothing.
     assert!(source.extra.is_empty());
     assert_eq!(osu(&source).extra, ExtraSet::new());

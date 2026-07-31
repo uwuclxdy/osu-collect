@@ -789,6 +789,11 @@ pub fn stepper_item(
 /// [`cycle_item`], not just decoration.
 const CHIP_GAP: &str = "  ";
 
+/// Chip cursor on a descended multi-select row. The `[x]`/`[ ]` pick mark owns
+/// the brackets, so the cursor takes the same `❯` caret every other selection in
+/// the app uses — one level down, inside the row.
+const CHIP_CURSOR: &str = "❯";
+
 /// A chip row: the label cell, then every option with the selected one accented
 /// (and `[bracketed]` while the row is focused).
 ///
@@ -815,40 +820,35 @@ pub fn cycle_item(
         label,
         options,
         |idx| options[idx] == selected,
-        |idx| options[idx] == selected,
-        false,
+        ChipDecor::Cycle,
         focused,
         label_width,
         width,
     )
 }
 
-/// Pick marks on a MULTI-select chip row. Which chips are on has to survive a
-/// colourblind palette, a low-contrast theme, and a copy-pasted screen, so the
-/// `ACCENT` fill cannot be the only channel carrying it. Same glyph pair the
-/// Config toggle rows use rather than a new vocabulary; the prefix also tells a
-/// multi row apart from a cycle row, which carries none.
-const CHIP_PICKED: &str = "●";
-const CHIP_UNPICKED: &str = "○";
-
 /// A multi-select chip row: any number of `options` can be picked at once, so
-/// the row carries its own `cursor` for `space`/`enter` to act on.
+/// the row carries its own `cursor`, walked by `←`/`→` once the row is
+/// `descended` into edit mode.
 ///
 /// Same grammar as [`cycle_item`], which is the point — the two sit adjacent in
 /// the find form and must read as one control family. Each chip states its own
-/// pick state ([`CHIP_PICKED`] / [`CHIP_UNPICKED`]) with `ACCENT` reinforcing
-/// it, and the `[brackets]` are the focus cue, tracking the cursor — which on
-/// this row no longer coincides with the selection:
+/// pick state with the checkbox row's [`checkbox_spans`] mark, ungated on focus
+/// because pick state is data; the cursor is a separate caret in a slot every
+/// chip reserves while descended, so nothing shifts as it walks:
 ///
 /// ```text
-///   rank    ●XH  [●X]  ○SH  ○S  ○A  ○B  ○C  ○D
+///   rank      [x]XH  [x]X  [ ]SH  [ ]S
+/// ✎ rank     ❯[x]XH   [x]X   [ ]SH   [ ]S
 /// ```
+#[allow(clippy::too_many_arguments)]
 pub fn multi_chip_item(
     label: &str,
     options: &[&str],
     picked: impl Fn(usize) -> bool,
     cursor: usize,
     focused: bool,
+    descended: bool,
     label_width: usize,
     width: u16,
 ) -> ListItem<'static> {
@@ -856,33 +856,61 @@ pub fn multi_chip_item(
         label,
         options,
         picked,
-        |idx| idx == cursor,
-        true,
+        ChipDecor::Multi { cursor, descended },
         focused,
         label_width,
         width,
     )
 }
 
+/// What a chip carries beyond its label — the whole difference between the two
+/// chip families.
+#[derive(Clone, Copy)]
+enum ChipDecor {
+    /// Single-select: the selected chip is `[bracketed]` while the row is
+    /// focused and carries no mark, since the row has exactly one answer.
+    Cycle,
+    /// Multi-select: every chip states its own `[x]`/`[ ]` answer, and while the
+    /// row is descended each also reserves a 1-cell caret slot.
+    Multi { cursor: usize, descended: bool },
+}
+
 /// The shared chip-row body behind [`cycle_item`] and [`multi_chip_item`]:
 /// label cell, then every option, wrapping between chips at `width`.
-/// `picked` paints a chip `ACCENT`; `at_cursor` wraps it in `[brackets]` while
-/// the row is focused. `marked` prefixes every chip with its own pick glyph —
-/// the multi-select row, where `picked` is a per-chip answer nobody can infer
-/// from the row's shape.
-#[allow(clippy::too_many_arguments)]
+/// `picked` paints a chip `ACCENT`; [`ChipDecor`] supplies the rest.
 fn chip_row(
     label: &str,
     options: &[&str],
     picked: impl Fn(usize) -> bool,
-    at_cursor: impl Fn(usize) -> bool,
-    marked: bool,
+    decor: ChipDecor,
     focused: bool,
     label_width: usize,
     width: u16,
 ) -> ListItem<'static> {
-    let lead = focus_span(focused);
-    let cell = Span::styled(label_cell(label, label_width), focused_label(focused));
+    // A descended row is a focused row: folding focus in here is what keeps a
+    // blurred row from ever growing caret slots.
+    let decor = match decor {
+        ChipDecor::Cycle => ChipDecor::Cycle,
+        ChipDecor::Multi { cursor, descended } => ChipDecor::Multi {
+            cursor,
+            descended: descended && focused,
+        },
+    };
+    let descended = matches!(
+        decor,
+        ChipDecor::Multi {
+            descended: true,
+            ..
+        }
+    );
+    let lead = input_focus_span(focused, descended);
+    let mut cell_text = label_cell(label, label_width);
+    if descended {
+        // The first chip's caret slot eats one cell of the label pad, so the
+        // chips hold their column across the descend and only the gaps widen.
+        cell_text.pop();
+    }
+    let cell = Span::styled(cell_text, focused_label(focused));
     // Continuation lines indent to the value column so the chips column-align.
     let indent = lead.width() + cell.width();
     let mut used = indent;
@@ -891,26 +919,36 @@ fn chip_row(
     let mut first_on_line = true;
 
     for (idx, &option) in options.iter().enumerate() {
-        let body = match (marked, picked(idx)) {
-            (false, _) => option.to_string(),
-            (true, true) => format!("{CHIP_PICKED}{option}"),
-            (true, false) => format!("{CHIP_UNPICKED}{option}"),
-        };
-        // [brackets] only while the row is focused; ACCENT, no bold. They wrap
-        // the mark too, so the cursor reads as sitting on the whole chip.
-        let text = if focused && at_cursor(idx) {
-            format!("[{body}]")
-        } else {
-            body
-        };
-        let chip = if picked(idx) {
-            text.fg(accent())
-        } else {
-            text.fg(text_faint())
-        };
+        let is_picked = picked(idx);
+        let mut chip: Vec<Span<'static>> = Vec::new();
+        match decor {
+            ChipDecor::Cycle => {
+                // [brackets] only while the row is focused; ACCENT, no bold.
+                let text = if focused && is_picked {
+                    format!("[{option}]")
+                } else {
+                    option.to_string()
+                };
+                chip.push(chip_label(text, is_picked));
+            }
+            ChipDecor::Multi { cursor, descended } => {
+                // The slot is reserved on EVERY chip, blank off-cursor: the row
+                // widens once entering edit mode, never as the cursor walks.
+                if descended {
+                    chip.push(if idx == cursor {
+                        CHIP_CURSOR.fg(accent()).bold()
+                    } else {
+                        Span::raw(" ")
+                    });
+                }
+                chip.extend(checkbox_spans(is_picked));
+                chip.push(chip_label(option.to_string(), is_picked));
+            }
+        }
+        let chip_width: usize = chip.iter().map(Span::width).sum();
         // A chip that overruns the width on its own still goes out whole, on a
         // line of its own: breaking inside one is never an option.
-        if width > 0 && !first_on_line && used + CHIP_GAP.len() + chip.width() > width as usize {
+        if width > 0 && !first_on_line && used + CHIP_GAP.len() + chip_width > width as usize {
             lines.push(Line::from(std::mem::take(&mut spans)));
             spans.push(Span::raw(" ".repeat(indent)));
             used = indent;
@@ -920,13 +958,23 @@ fn chip_row(
             spans.push(Span::raw(CHIP_GAP));
             used += CHIP_GAP.len();
         }
-        used += chip.width();
-        spans.push(chip);
+        used += chip_width;
+        spans.extend(chip);
         first_on_line = false;
     }
     lines.push(Line::from(spans));
 
     ListItem::new(Text::from(lines))
+}
+
+/// A chip's own label colour: `ACCENT` picked, `TEXT_FAINT` unpicked. Shared by
+/// both families, which is what makes them read as one.
+fn chip_label(text: String, picked: bool) -> Span<'static> {
+    if picked {
+        text.fg(accent())
+    } else {
+        text.fg(text_faint())
+    }
 }
 
 /// Eyebrow section header — `TEXT_DIM + bold`, UPPERCASE (the sanctioned eyebrow
