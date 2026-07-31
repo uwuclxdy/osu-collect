@@ -198,12 +198,13 @@ fn render_form(
     let focus = form.focus;
     let primary = form.primary_action_field();
     let active_section = home_section(focus);
+    let content_width = widgets::panel_content_width(area);
     let mut items = widgets::FormItems::new(focus);
 
     // Source strip is the first focusable row on every source.
     items.push_focusable(
         HomeField::Source,
-        source_row_item(form.source, focus == HomeField::Source),
+        source_row_item(form.source, focus == HomeField::Source, content_width),
     );
     if chrome {
         items.push(widgets::spacer());
@@ -265,7 +266,7 @@ fn render_form(
             editing,
             tick,
             primary,
-            widgets::panel_content_width(area),
+            content_width,
             chrome,
         ),
     }
@@ -462,9 +463,9 @@ fn home_section(field: HomeField) -> &'static str {
 /// The source strip: `‹active›  other  other`, the active source bracketed in
 /// accent, the rest dim. The first focusable row on the Get Maps tab; `space`/
 /// `enter` cycle it, a strip digit jumps straight to a source, arrows switch tabs.
-fn source_row_item(active: GetMapsSource, focused: bool) -> ListItem<'static> {
+fn source_row_item(active: GetMapsSource, focused: bool, width: u16) -> ListItem<'static> {
     let options: Vec<&str> = GetMapsSource::ALL.iter().map(|s| s.label()).collect();
-    widgets::cycle_item(LABEL_SOURCE, &options, active.label(), focused, 0)
+    widgets::cycle_item(LABEL_SOURCE, &options, active.label(), focused, 0, width)
 }
 
 const RESOLVE_PREFIX: &str = "  └ ";

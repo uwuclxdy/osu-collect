@@ -1,5 +1,5 @@
 use super::{
-    ButtonProminence, ItemHeights, ListRows, button_item, button_item_with_loading_cue,
+    ButtonProminence, ItemHeights, ListRows, button_item, button_item_with_loading_cue, cycle_item,
     download_button_label_with_size, input_cursor_col, input_item, message_style,
     panel_content_width, render_list, render_scrollable_panel, render_scrollbar,
     render_windowed_list, search_box_cursor_col, search_box_item, set_panel_cursor,
@@ -814,4 +814,201 @@ fn windowed_list_matches_the_full_list() {
             }
         }
     }
+}
+
+// ── cycle_item chip wrapping ─────────────────────────────────────────────────
+
+/// The real `categories` chip set: labels of wildly different widths, two of
+/// them carrying an internal space. A fixture of same-width, space-free chips
+/// would hold constant the very dimension these tests measure.
+const CHIPS: &[&str] = &[
+    "any",
+    "has leaderboard",
+    "ranked",
+    "approved",
+    "qualified",
+    "loved",
+    "pending",
+    "wip",
+    "graveyard",
+    "unranked",
+];
+
+/// The find form's own label geometry: `LABEL_WIDTH` is `"favourites".len()`.
+const CHIP_LABEL: &str = "categories";
+const CHIP_LABEL_WIDTH: usize = 10;
+
+/// Renders one [`cycle_item`] into a `width`-wide viewport and returns its rows,
+/// trailing blanks trimmed. `viewport` is the row budget the list gets, kept
+/// generous so a wrap is never mistaken for a viewport clip.
+fn chip_rows(width: u16, focused: bool) -> Vec<String> {
+    let item = cycle_item(
+        CHIP_LABEL,
+        CHIPS,
+        "has leaderboard",
+        focused,
+        CHIP_LABEL_WIDTH,
+        width,
+    );
+    let inner = Rect::new(0, 0, width.max(1), CHIP_VIEWPORT);
+    let mut terminal =
+        Terminal::new(TestBackend::new(width.max(1), CHIP_VIEWPORT)).expect("test backend");
+    terminal
+        .draw(|frame| {
+            render_list(
+                frame,
+                inner,
+                vec![item],
+                focused.then_some(0),
+                focused,
+                &std::cell::Cell::new(0),
+            );
+        })
+        .expect("frame renders");
+    let mut rows = buffer_rows(terminal.backend().buffer());
+    while rows.last().is_some_and(|row| row.trim().is_empty()) {
+        rows.pop();
+    }
+    rows.iter().map(|row| row.trim_end().to_string()).collect()
+}
+
+/// Every chip that appears in the render, in order, split on the two-space chip
+/// gap. A chip cut across a line break shows up here as a fragment.
+fn chips_in(rows: &[String]) -> Vec<String> {
+    rows.iter()
+        .flat_map(|row| {
+            let value: String = row.chars().skip(CHIP_INDENT).collect();
+            value
+                .split("  ")
+                .filter(|part| !part.is_empty())
+                .map(|part| part.trim_matches(['[', ']']).to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// The narrowest width that still holds the focused row on one line: prefix
+/// (2 focus + 12 label cell) + every chip + a 2-cell gap between each, with the
+/// selected chip bracketed.
+const CHIP_ONE_LINE_WIDTH: u16 = 107;
+/// Column the value (and every continuation line) starts at: 2-cell focus
+/// marker + the padded `categories` label cell.
+const CHIP_INDENT: usize = 14;
+/// Rows the fixture's list gets. Tall enough that even one-chip-per-line at the
+/// narrowest swept width fits whole — ratatui drops an item that overruns the
+/// viewport rather than clipping it, which would read as a lost chip.
+const CHIP_VIEWPORT: u16 = 24;
+
+#[test]
+fn a_chip_row_with_room_to_spare_stays_one_line() {
+    // Byte-identical to the pre-wrap render: one line, chips separated by two
+    // spaces, nothing indented.
+    assert_eq!(
+        chip_rows(CHIP_ONE_LINE_WIDTH + 20, true),
+        vec![
+            "\u{276f} categories  any  [has leaderboard]  ranked  approved  qualified  loved  pending  wip  graveyard  unranked"
+        ]
+    );
+}
+
+#[test]
+fn a_chip_row_wraps_to_the_value_column_when_it_overflows() {
+    let rows = chip_rows(64, true);
+    assert_eq!(
+        rows,
+        vec![
+            "\u{276f} categories  any  [has leaderboard]  ranked  approved",
+            "              qualified  loved  pending  wip  graveyard",
+            "              unranked",
+        ]
+    );
+    // Continuation lines start at the value column, so the chips column-align.
+    for row in &rows[1..] {
+        assert!(
+            row.starts_with(&" ".repeat(CHIP_INDENT)),
+            "continuation line is not indented to the value column: {row:?}"
+        );
+    }
+}
+
+#[test]
+fn wrapping_never_splits_a_chip() {
+    // Floor: the narrowest width at which the widest chip fits after the indent
+    // at all. Below it the TERMINAL truncates the cell row and no layout can
+    // help, which is exactly what it did before wrapping existed.
+    let floor = CHIP_INDENT
+        + 2 // the selected chip's [brackets]
+        + CHIPS.iter().map(|c| c.len()).max().expect("chips are non-empty");
+    // Sweep every width from there up past the one-line fit: at no width may a
+    // chip label be cut, and none may go missing.
+    for width in floor as u16..=CHIP_ONE_LINE_WIDTH + 4 {
+        let rows = chip_rows(width, true);
+        assert_eq!(
+            chips_in(&rows),
+            CHIPS.iter().map(|c| c.to_string()).collect::<Vec<_>>(),
+            "chip set differs at width {width}: {rows:?}"
+        );
+    }
+}
+
+#[test]
+fn the_one_line_boundary_is_exact() {
+    assert_eq!(
+        chip_rows(CHIP_ONE_LINE_WIDTH, true).len(),
+        1,
+        "the narrowest fitting width must stay one line"
+    );
+    assert_eq!(
+        chip_rows(CHIP_ONE_LINE_WIDTH - 1, true),
+        vec![
+            "\u{276f} categories  any  [has leaderboard]  ranked  approved  qualified  loved  pending  wip  graveyard",
+            "              unranked",
+        ],
+        "one column narrower spills exactly the last chip"
+    );
+}
+
+#[test]
+fn a_zero_width_chip_row_never_wraps() {
+    // No width to lay out against: the row renders on one line as it always did.
+    let item = cycle_item(CHIP_LABEL, CHIPS, "any", false, CHIP_LABEL_WIDTH, 0);
+    assert_eq!(item.height(), 1);
+}
+
+#[test]
+fn the_focus_highlight_covers_every_line_of_a_wrapped_row() {
+    let width = 64u16;
+    let inner = Rect::new(0, 0, width, 6);
+    let mut terminal = Terminal::new(TestBackend::new(width, 6)).expect("test backend");
+    terminal
+        .draw(|frame| {
+            render_list(
+                frame,
+                inner,
+                vec![cycle_item(
+                    CHIP_LABEL,
+                    CHIPS,
+                    "has leaderboard",
+                    true,
+                    CHIP_LABEL_WIDTH,
+                    width,
+                )],
+                Some(0),
+                true,
+                &std::cell::Cell::new(0),
+            );
+        })
+        .expect("frame renders");
+    let buf = terminal.backend().buffer().clone();
+    // Three lines tall (pinned by `a_chip_row_wraps_to_the_value_column_when_it_overflows`);
+    // the tint has to reach the last cell of each, not just the first line.
+    for y in 0..3 {
+        assert_eq!(buf[(0, y)].bg, bg_hover(), "left edge of wrapped row {y}");
+        assert_eq!(
+            buf[(width - 1, y)].bg,
+            bg_hover(),
+            "right edge of wrapped row {y}"
+        );
+    }
+    assert_ne!(buf[(0, 3)].bg, bg_hover(), "the row below is untinted");
 }

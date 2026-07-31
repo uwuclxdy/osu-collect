@@ -1307,16 +1307,22 @@ impl FindSource {
 
     // ── labels / tags ─────────────────────────────────────────────────────────
 
-    /// Canonical string of the union CRITERIA only (no sort/limit): chip labels,
+    /// Canonical string of the union CRITERIA only (no sort/limit): chip INDICES,
     /// trimmed texts, and numeric ranges re-rendered from their parsed bounds —
     /// so two runs filtering the same maps share a folder tag even when ordered,
     /// limited, or spelled differently (`6-7` vs `6.0-7.0`).
+    ///
+    /// Chips contribute their index, not their display text: [`folder_tag`] hashes
+    /// this into an on-disk directory name, so keying on wording would relocate a
+    /// user's downloads every time a chip is reworded.
+    ///
+    /// [`folder_tag`]: Self::folder_tag
     fn criteria_string(&self) -> String {
         format!(
             "special={}|mode={}|status={}|q={}|stars={}|ar={}|cs={}|od={}|hp={}|bpm={}|len={}|keys={}|fav={}|ranked={}|artist={}|creator={}|title={}",
-            self.special_label(),
-            self.mode_label(),
-            self.status_label(),
+            self.special_idx,
+            self.mode_idx,
+            self.status_idx,
             self.query.value.trim(),
             canonical_range(&self.stars),
             canonical_range(&self.ar),

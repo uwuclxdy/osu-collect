@@ -783,33 +783,69 @@ pub fn stepper_item(
     ListItem::new(Line::from(spans))
 }
 
+/// Gap between two chips on a chip row. Load-bearing for the wrap math in
+/// [`cycle_item`], not just decoration.
+const CHIP_GAP: &str = "  ";
+
+/// A chip row: the label cell, then every option with the selected one accented
+/// (and `[bracketed]` while the row is focused).
+///
+/// `width` is the cells the row can draw into — the panel's
+/// [`panel_content_width`]. A row whose chips overrun it continues on further
+/// lines indented to the value column, so the chips stay aligned under each
+/// other and the break always falls BETWEEN chips: a chip label can carry a
+/// space (`has leaderboard`, `all ranked`), which a character-level clip cuts
+/// mid-word. A row that fits stays a single line, byte for byte.
+///
+/// `width == 0` means the caller has no width to offer; the row then renders on
+/// one line whatever its length, which is what every chip row did before.
 pub fn cycle_item(
     label: &str,
     options: &[&str],
     selected: &str,
     focused: bool,
     label_width: usize,
+    width: u16,
 ) -> ListItem<'static> {
-    let mut spans = vec![
-        focus_span(focused),
-        Span::styled(label_cell(label, label_width), focused_label(focused)),
-    ];
-    for (index, &option) in options.iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::raw("  "));
-        }
-        if option == selected {
+    let lead = focus_span(focused);
+    let cell = Span::styled(label_cell(label, label_width), focused_label(focused));
+    // Continuation lines indent to the value column so the chips column-align.
+    let indent = lead.width() + cell.width();
+    let mut used = indent;
+    let mut spans = vec![lead, cell];
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut first_on_line = true;
+
+    for &option in options {
+        let chip = if option == selected {
             // [brackets] only while the row is focused; ACCENT, no bold.
             if focused {
-                spans.push(format!("[{option}]").fg(accent()));
+                format!("[{option}]").fg(accent())
             } else {
-                spans.push(option.to_string().fg(accent()));
+                option.to_string().fg(accent())
             }
         } else {
-            spans.push(option.to_string().fg(text_faint()));
+            option.to_string().fg(text_faint())
+        };
+        // A chip that overruns the width on its own still goes out whole, on a
+        // line of its own: breaking inside one is never an option.
+        if width > 0 && !first_on_line && used + CHIP_GAP.len() + chip.width() > width as usize {
+            lines.push(Line::from(std::mem::take(&mut spans)));
+            spans.push(Span::raw(" ".repeat(indent)));
+            used = indent;
+            first_on_line = true;
         }
+        if !first_on_line {
+            spans.push(Span::raw(CHIP_GAP));
+            used += CHIP_GAP.len();
+        }
+        used += chip.width();
+        spans.push(chip);
+        first_on_line = false;
     }
-    ListItem::new(Line::from(spans))
+    lines.push(Line::from(spans));
+
+    ListItem::new(Text::from(lines))
 }
 
 /// Eyebrow section header — `TEXT_DIM + bold`, UPPERCASE (the sanctioned eyebrow

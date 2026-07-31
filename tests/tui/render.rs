@@ -1547,6 +1547,49 @@ fn find_form_drops_eyebrows_in_compact_chrome() {
     );
 }
 
+/// Repro of the reported clip: at 100 columns the focused `categories` row ran
+/// off the panel and cut `graveyard` mid-word. It must now continue on a second
+/// line indented to the value column, with every chip whole.
+#[test]
+fn a_focused_categories_row_wraps_instead_of_clipping_at_100_columns() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    app.home.focus = HomeField::FindStatus;
+    let rows = render_rows(&app, 100, 34);
+    let first = row_of(&rows, "categories ");
+    assert!(
+        rows[first].contains("[has leaderboard]"),
+        "the focused chip is bracketed on the first line: {:?}",
+        rows[first]
+    );
+    // The panel border flanks every row, so read the chips between the frame.
+    let spilled = rows[first + 1].trim_matches(['\u{2502}', ' ']);
+    assert_eq!(
+        spilled, "graveyard  unranked",
+        "the row's tail continues on the next line, both chips whole"
+    );
+    // Every chip survives the break, none of them cut.
+    let joined = format!("{} {}", rows[first], rows[first + 1]);
+    for chip in [
+        "any",
+        "has leaderboard",
+        "ranked",
+        "approved",
+        "qualified",
+        "loved",
+        "pending",
+        "wip",
+        "graveyard",
+        "unranked",
+    ] {
+        assert!(
+            joined.contains(chip),
+            "chip {chip:?} lost or cut across the break: {joined:?}"
+        );
+    }
+}
+
 #[test]
 fn find_form_speaks_osu_vocabulary() {
     use osu_collect::app::GetMapsSource;
