@@ -145,7 +145,7 @@ pub fn handle_home_search_event(event: HomeSearchEvent, app: &mut App) -> Option
                 app.home.find.note_results_backend(FindBackend::Osu);
                 app.home.find.mark_results_current();
                 // Open the results immediately on a fresh search.
-                app.home.find.browse.descend();
+                app.open_find_browse();
             }
             // A search came back, so the token resolved. If that was a guest
             // token (logged out), nudge once toward login for the extra filters.

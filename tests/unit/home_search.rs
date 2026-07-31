@@ -114,3 +114,63 @@ fn failed_search_surfaces_reason() {
         FindStatusMsg::Error("search requires login (401)".to_string())
     );
 }
+
+/// The painted hint bar for `app`: the last row of a rendered frame, at a width
+/// wide enough that nothing trims.
+fn hint_bar(app: &App) -> String {
+    use ratatui::{Terminal, backend::TestBackend};
+    let mut terminal = Terminal::new(TestBackend::new(140, 40)).expect("test backend");
+    terminal
+        .draw(|frame| crate::tui::draw(frame, app))
+        .expect("frame renders");
+    let buf = terminal.backend().buffer();
+    let y = buf.area.height - 1;
+    (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect()
+}
+
+/// A fresh search lands with no keypress behind it, so it can open the browse
+/// over a form row that is still descended into its own edit mode. The browse
+/// owns input from that frame on, and a stale edit flag steals two things from
+/// it: its whole hint bar (which collapses to the text-field exit affordance)
+/// and its first `esc` (the edit-mode arm sits ahead of the browse ascend).
+#[test]
+fn results_landing_over_a_descended_chip_row_hand_input_to_the_browse() {
+    use crate::app::{GetMapsSource, HomeField};
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = app();
+    app.home.source = GetMapsSource::Find;
+    app.config.set_login_complete(true);
+    app.home.find.toggle_advanced_filters();
+    app.home.focus = HomeField::FindRank;
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.find_chip_editing(), "the row must start out descended");
+
+    handle_home_search_event(
+        HomeSearchEvent::Results {
+            entries: vec![meta(1), meta(2)],
+            total: 2,
+            cursor: None,
+            append: false,
+        },
+        &mut app,
+    );
+    assert!(app.home.find.browse.is_browsing());
+
+    // The browse's own keys are what the painted bar advertises.
+    let hints = hint_bar(&app);
+    for key in ["↑↓ scroll", "↵ toggle", "a all / A none", "→ preview"] {
+        assert!(hints.contains(key), "browse hint {key:?} missing: {hints}");
+    }
+    assert!(
+        !hints.contains("esc done"),
+        "the bar collapsed to the edit affordance: {hints}"
+    );
+
+    // And one press ascends, rather than being eaten by the stale edit mode.
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(
+        !app.home.find.browse.is_browsing(),
+        "the browse needed a second esc to ascend"
+    );
+}

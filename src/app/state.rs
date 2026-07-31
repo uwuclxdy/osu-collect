@@ -1442,7 +1442,6 @@ impl App {
     /// toggles the chip under it. The arrow handler and the footer both read it.
     pub fn find_chip_editing(&self) -> bool {
         self.editing
-            && self.login.is_none()
             && self.active_tab() == Tab::Home
             && !self.home_set_browsing()
             && self.home.focus.is_find_multi_chip()
@@ -1466,6 +1465,20 @@ impl App {
             HomeField::FindRank => self.home.find.rank.move_cursor(forward),
             _ => {}
         }
+    }
+
+    /// Open the find results browse over the form — on the `view maps` button,
+    /// and on a fresh search / filter landing, which descends with no keypress
+    /// behind it.
+    ///
+    /// The browse owns input from here, so it takes any row-scoped edit mode
+    /// down with it. A multi-select chip row left descended under an async
+    /// landing would swallow the browse's first `esc` (the edit-mode arm sits
+    /// ahead of the ascend) and collapse its hint bar to a text-field
+    /// affordance the browse has no field for.
+    pub(crate) fn open_find_browse(&mut self) {
+        self.home.find.browse.descend();
+        self.editing = false;
     }
 
     /// Build + dispatch a fresh find run from the form. The single CTA routes
@@ -2521,7 +2534,7 @@ impl App {
                                 if !self.home.find.browse.rows.is_empty()
                                     && self.home.find.results_current()
                                 {
-                                    self.home.find.browse.descend();
+                                    self.open_find_browse();
                                 }
                             }
                             // The find CTA dispatches the resolved plan (osu search

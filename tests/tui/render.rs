@@ -1836,6 +1836,14 @@ fn column_of(row: &str, needle: &str) -> u16 {
     row[..byte].chars().count() as u16
 }
 
+/// The two gutter cells of `row` — the pair immediately left of `label`, where
+/// the focus caret / edit mark / blurred pad lives. Read by column rather than
+/// by byte, since every one of these rows opens with a multi-byte glyph.
+fn gutter_of(row: &str, label: &str) -> String {
+    let at = column_of(row, label) as usize - 2;
+    row.chars().skip(at).take(2).collect()
+}
+
 /// The `extra` row. Anchored on `storyboard`: `video` alone also matches the
 /// genre row's `video game` chip, which would silently read the wrong row.
 fn extra_row(rows: &[String]) -> String {
@@ -1955,6 +1963,71 @@ fn a_multi_select_row_advertises_both_of_its_stages() {
         !rows.iter().any(|row| row.contains('⇧')),
         "no shifted spelling survives on this row: {rows:?}"
     );
+}
+
+/// The gutter is where the row's two stages become visible, and the render call
+/// site chooses them with two adjacent bools that swap without a compile error.
+/// The widget tests pass those explicitly, so only an app-level read of the
+/// painted gutter can catch the wiring.
+#[test]
+fn the_multi_select_gutter_tracks_focus_and_the_descend() {
+    use osu_collect::app::HomeField;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = find_app(true);
+    app.home.focus = HomeField::FindRank;
+    let rows = render_rows(&app, 120, 60);
+    assert_eq!(
+        gutter_of(&rank_row(&rows), "rank"),
+        "❯ ",
+        "a focused row at rest takes the selection caret: {rows:?}"
+    );
+    assert_eq!(
+        gutter_of(&extra_row(&rows), "extra"),
+        "  ",
+        "its blurred neighbour takes the pad: {rows:?}"
+    );
+
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let rows = render_rows(&app, 120, 60);
+    assert_eq!(
+        gutter_of(&rank_row(&rows), "rank"),
+        "✎ ",
+        "descending swaps the caret for the edit mark: {rows:?}"
+    );
+    assert_eq!(
+        gutter_of(&extra_row(&rows), "extra"),
+        "  ",
+        "and reaches no other row: {rows:?}"
+    );
+}
+
+/// `q` on a descended row lands in the same exit-edit-mode branch `esc` does, so
+/// it ascends and never arms the quit prompt. The bar has to say which.
+#[test]
+fn the_back_key_label_follows_what_q_does_on_a_descended_row() {
+    use osu_collect::app::HomeField;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = find_app(true);
+    app.home.focus = HomeField::FindRank;
+    let at_rest = render_rows(&app, 120, 60).last().expect("footer").clone();
+    assert!(
+        at_rest.contains("q quit") && !at_rest.contains("q back"),
+        "at rest `q` still quits: {at_rest}"
+    );
+
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let descended = render_rows(&app, 120, 60).last().expect("footer").clone();
+    assert!(
+        descended.contains("q back") && !descended.contains("q quit"),
+        "descended `q` ascends, so the bar may not promise a quit: {descended}"
+    );
+
+    // And it really does ascend rather than quit or arm anything.
+    app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+    assert!(!app.find_chip_editing(), "q must leave the mode");
+    assert_eq!(app.home.focus, HomeField::FindRank, "and stay on the row");
 }
 
 /// One tooltip for the pair, anchored under `rank` — which is what makes walking

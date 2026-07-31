@@ -138,3 +138,56 @@ fn results_record_nzbasic_backend_and_download_routes_filter() {
         .expect("default config has mirrors enabled");
     assert_eq!(request.source, IdsRunSource::Filter);
 }
+
+/// The painted hint bar for `app`: the last row of a rendered frame, at a width
+/// wide enough that nothing trims.
+fn hint_bar(app: &App) -> String {
+    use ratatui::{Terminal, backend::TestBackend};
+    let mut terminal = Terminal::new(TestBackend::new(140, 40)).expect("test backend");
+    terminal
+        .draw(|frame| crate::tui::draw(frame, app))
+        .expect("frame renders");
+    let buf = terminal.backend().buffer();
+    let y = buf.area.height - 1;
+    (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect()
+}
+
+/// The nzbasic route descends on its own landing exactly as the osu one does,
+/// so it inherits the same hazard: a form row left descended into its own edit
+/// mode would keep the browse's hint bar and its first `esc`.
+#[test]
+fn results_landing_over_a_descended_chip_row_hand_input_to_the_browse() {
+    use crate::app::{GetMapsSource, HomeField};
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = app();
+    app.home.source = GetMapsSource::Find;
+    app.config.set_login_complete(true);
+    app.home.find.toggle_advanced_filters();
+    app.home.focus = HomeField::FindExtra;
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.find_chip_editing(), "the row must start out descended");
+
+    handle_home_filter_event(
+        HomeFilterEvent::Results {
+            results: results(vec![10, 20], vec![1, 2, 3]),
+        },
+        &mut app,
+    );
+    assert!(app.home.find.browse.is_browsing());
+
+    let hints = hint_bar(&app);
+    for key in ["↑↓ scroll", "↵ toggle", "a all / A none", "→ preview"] {
+        assert!(hints.contains(key), "browse hint {key:?} missing: {hints}");
+    }
+    assert!(
+        !hints.contains("esc done"),
+        "the bar collapsed to the edit affordance: {hints}"
+    );
+
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(
+        !app.home.find.browse.is_browsing(),
+        "the browse needed a second esc to ascend"
+    );
+}

@@ -842,14 +842,24 @@ const CHIP_LABEL_WIDTH: usize = 10;
 /// trailing blanks trimmed. `viewport` is the row budget the list gets, kept
 /// generous so a wrap is never mistaken for a viewport clip.
 fn chip_rows(width: u16, focused: bool) -> Vec<String> {
-    let item = cycle_item(
-        CHIP_LABEL,
-        CHIPS,
-        "has leaderboard",
-        focused,
-        CHIP_LABEL_WIDTH,
+    draw_rows(
+        cycle_item(
+            CHIP_LABEL,
+            CHIPS,
+            "has leaderboard",
+            focused,
+            CHIP_LABEL_WIDTH,
+            width,
+        ),
         width,
-    );
+        focused,
+    )
+}
+
+/// Draws one form row into a `width`-wide viewport and returns its lines,
+/// trailing blanks trimmed. The viewport's row budget is kept generous so a wrap
+/// is never mistaken for a clip.
+fn draw_rows(item: ListItem<'static>, width: u16, focused: bool) -> Vec<String> {
     let inner = Rect::new(0, 0, width.max(1), CHIP_VIEWPORT);
     let mut terminal =
         Terminal::new(TestBackend::new(width.max(1), CHIP_VIEWPORT)).expect("test backend");
@@ -988,37 +998,20 @@ fn rank_rows(width: u16, descended: bool) -> Vec<String> {
 /// drawn into a `draw_width`-wide viewport — a `layout_width` of 0 asks for one
 /// line whatever its length, which is how the row's own width gets measured.
 fn render_rank(cursor: usize, descended: bool, layout_width: u16, draw_width: u16) -> Vec<String> {
-    let item = multi_chip_item(
-        RANK_LABEL,
-        RANK_CHIPS,
-        |idx| idx == 0 || idx == 2,
-        cursor,
+    draw_rows(
+        multi_chip_item(
+            RANK_LABEL,
+            RANK_CHIPS,
+            |idx| idx == 0 || idx == 2,
+            cursor,
+            true,
+            descended,
+            CHIP_LABEL_WIDTH,
+            layout_width,
+        ),
+        draw_width,
         true,
-        descended,
-        CHIP_LABEL_WIDTH,
-        layout_width,
-    );
-    let width = draw_width;
-    let inner = Rect::new(0, 0, width.max(1), CHIP_VIEWPORT);
-    let mut terminal =
-        Terminal::new(TestBackend::new(width.max(1), CHIP_VIEWPORT)).expect("test backend");
-    terminal
-        .draw(|frame| {
-            render_list(
-                frame,
-                inner,
-                vec![item],
-                Some(0),
-                true,
-                &std::cell::Cell::new(0),
-            );
-        })
-        .expect("frame renders");
-    let mut rows = buffer_rows(terminal.backend().buffer());
-    while rows.last().is_some_and(|row| row.trim().is_empty()) {
-        rows.pop();
-    }
-    rows.iter().map(|row| row.trim_end().to_string()).collect()
+    )
 }
 
 /// The marks widen every chip by three cells, so the wrap math has to count
@@ -1069,12 +1062,91 @@ fn a_descended_row_reserves_a_caret_slot_on_every_chip() {
             "              [ ]D",
         ]
     );
-    for row in &rows[1..] {
-        assert!(
-            row.starts_with(&" ".repeat(CHIP_INDENT)),
-            "a wrapped chip's text left the value column: {row:?}"
+    for row in &rows {
+        assert_eq!(
+            mark_column(row),
+            CHIP_INDENT,
+            "a wrapped chip's mark left the value column: {row:?}"
         );
     }
+}
+
+/// The column every line's first mark sits at, whatever came before it. This is
+/// what "indented to the value column" means once caret slots exist: the slot
+/// belongs to its chip, so a line whose first chip holds the cursor opens one
+/// cell further left and the MARK is what stays put.
+fn mark_column(row: &str) -> usize {
+    row.chars()
+        .position(|c| c == '[')
+        .unwrap_or_else(|| panic!("no chip mark in {row:?}"))
+}
+
+/// The fixture above holds the cursor at chip 1, which never lands first on a
+/// wrapped line — so the column property it pins is only exercised on one of the
+/// two shapes a line can have. Sweep the cursor across every chip at every
+/// wrapping width, which is the dimension `the_row_width_is_the_same_under_every
+/// _cursor_position` cannot reach (it never wraps).
+#[test]
+fn every_line_holds_the_value_column_at_every_cursor_and_width() {
+    let floor = CHIP_INDENT + 4 + RANK_CHIPS.iter().map(|c| c.len()).max().expect("non-empty");
+    for descended in [false, true] {
+        for cursor in 0..RANK_CHIPS.len() {
+            for width in floor as u16..=70 {
+                for row in render_rank(cursor, descended, width, width) {
+                    assert_eq!(
+                        mark_column(&row),
+                        CHIP_INDENT,
+                        "cursor {cursor} at width {width} (descended: {descended}): {row:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// `descended` only means anything on a focused row, and the render folds focus
+/// into it so a blurred row can never grow caret slots however a caller wires
+/// the two. Unreachable from the find form — reachable through this public
+/// widget, which is what makes the property total instead of caller-dependent.
+#[test]
+fn a_blurred_row_grows_no_slots_however_it_is_asked() {
+    let asked_descended = draw_rows(
+        multi_chip_item(
+            RANK_LABEL,
+            RANK_CHIPS,
+            |idx| idx == 0 || idx == 2,
+            1,
+            false,
+            true,
+            CHIP_LABEL_WIDTH,
+            0,
+        ),
+        90,
+        false,
+    );
+    let at_rest = draw_rows(
+        multi_chip_item(
+            RANK_LABEL,
+            RANK_CHIPS,
+            |idx| idx == 0 || idx == 2,
+            1,
+            false,
+            false,
+            CHIP_LABEL_WIDTH,
+            0,
+        ),
+        90,
+        false,
+    );
+    assert_eq!(
+        asked_descended,
+        vec!["  rank        [x]XH  [ ]X  [x]SH  [ ]S  [ ]A  [ ]B  [ ]C  [ ]D"],
+        "a blurred row keeps the pad gutter and the undescended geometry"
+    );
+    assert_eq!(
+        asked_descended, at_rest,
+        "the two must be indistinguishable"
+    );
 }
 
 /// Walking the cursor may not move a single cell of the row. The slots are what
@@ -1094,8 +1166,10 @@ fn the_row_width_is_the_same_under_every_cursor_position() {
     assert_eq!(widths, vec![69; RANK_CHIPS.len()], "the row breathes");
 }
 
-/// A break must never fall between a chip's mark and its label, or between its
-/// caret slot and its mark: each would read as a chip that isn't there.
+/// A break must never fall between a chip's mark and its label: that would read
+/// as a chip that isn't there. (A caret orphaned from its mark is invisible to
+/// `marked_chips`, which reads `[`-anchored text — the exact-render pins in
+/// [`a_descended_row_reserves_a_caret_slot_on_every_chip`] are what cover that.)
 #[test]
 fn a_marked_chip_never_splits_across_the_break() {
     let floor = CHIP_INDENT + 4 + RANK_CHIPS.iter().map(|c| c.len()).max().expect("non-empty");

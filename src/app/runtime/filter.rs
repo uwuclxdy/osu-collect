@@ -124,7 +124,7 @@ pub fn handle_home_filter_event(event: HomeFilterEvent, app: &mut App) -> Option
             app.home.find.note_results_backend(FindBackend::Nzbasic);
             app.home.find.mark_results_current();
             // Open the results immediately on a fresh fetch (search parity).
-            app.home.find.browse.descend();
+            app.open_find_browse();
             // Enrich what the user is about to look at: the first page.
             Some(AppCommand::LoadEnrichment {
                 target: EnrichTarget::Find,

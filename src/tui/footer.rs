@@ -90,6 +90,10 @@ const HINT_RECHECK: &str = "r recheck";
 const HINT_MARK_INSTALLED: &str = "i install / I all";
 const HINT_RESTORE: &str = "u restore / U all";
 const HINT_QUIT: &str = "q quit";
+/// Trailing key on a descended multi-select chip row: `q` lands in the same
+/// exit-edit-mode branch `esc` does, so it ascends there and never arms the
+/// quit prompt.
+const HINT_BACK: &str = "q back";
 const HINT_HELP: &str = "? help";
 const HINT_UPDATE: &str = "u update";
 /// Global `c` binding: switch the osu! client (stable ↔ lazer) from any tab.
@@ -414,9 +418,10 @@ fn home_tab_hints(app: &App) -> (Vec<&'static str>, Option<&'static str>) {
     if let Some(browse) = active_set_browse(form) {
         return set_browse_hints(form, browse);
     }
+    let chip_editing = app.find_chip_editing();
     (
-        home_form_hints(form, app.find_chip_editing()),
-        Some(HINT_QUIT),
+        home_form_hints(form, chip_editing),
+        Some(if chip_editing { HINT_BACK } else { HINT_QUIT }),
     )
 }
 
