@@ -89,18 +89,10 @@ fn update_overwrites_previous_record() {
 }
 
 #[test]
-#[serial_test::serial(config_env)]
 fn state_path_respects_env_override() {
     let dir = tempdir().unwrap();
     let custom = dir.path().join("custom_state.toml");
-    // SAFETY: `setenv`/`getenv` are not thread-safe; the shared `config_env`
-    // serial key keeps every env-mutating test off the parallel threads.
-    unsafe {
-        std::env::set_var(STATE_ENV_PATH, custom.to_str().unwrap());
-    }
+    let _env = crate::test_env::TempEnvVar::set(STATE_ENV_PATH, custom.to_str().unwrap());
     let path = collection_state::state_path();
-    unsafe {
-        std::env::remove_var(STATE_ENV_PATH);
-    }
     assert_eq!(path.unwrap(), custom);
 }

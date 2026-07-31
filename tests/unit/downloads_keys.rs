@@ -546,8 +546,7 @@ fn deleting_a_settled_page_leaves_no_history_trace() {
 fn dont_ask_again_suppresses_and_persists() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
-    // Isolate the config write from the real user file.
-    unsafe { std::env::set_var("OSU_COLLECT_CONFIG", path.to_str().unwrap()) };
+    let _env = crate::test_env::TempEnvVar::set("OSU_COLLECT_CONFIG", path.to_str().unwrap());
 
     let mut app = make_app();
     make_record(&mut app, 1);
@@ -578,8 +577,6 @@ fn dont_ask_again_suppresses_and_persists() {
     // Suppression survives a restart.
     let saved = crate::config::load_config_from(&path).unwrap();
     assert!(!saved.display.confirm_delete_history);
-
-    unsafe { std::env::remove_var("OSU_COLLECT_CONFIG") };
 }
 
 // ── x stays toast-only ───────────────────────────────────────────────────────

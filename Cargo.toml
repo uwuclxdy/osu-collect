@@ -68,7 +68,6 @@ tempfile = "3.27.0"
 osu-downloader = { path = "osu-downloader", version = "0.22.0", features = ["test-helpers"] }
 criterion = { version = "0.8.2", features = ["html_reports"] }
 chrono = "0.4.45"
-serial_test = "3.5.0"
 
 [build-dependencies]
 cxx-build = "1.0.194"

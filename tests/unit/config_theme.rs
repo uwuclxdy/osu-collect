@@ -8,7 +8,6 @@ fn write_toml(dir: &std::path::Path, contents: &str) -> std::path::PathBuf {
 }
 
 #[test]
-#[serial_test::serial(config_env)]
 fn theme_field_roundtrips_through_save_and_load() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
@@ -16,11 +15,9 @@ fn theme_field_roundtrips_through_save_and_load() {
     let mut config = Config::default();
     config.display.theme = Some(ThemeMode::Compatible);
 
-    // Use the env-var override to point save_config at our temp dir
-    unsafe { std::env::set_var("OSU_COLLECT_CONFIG", path.to_str().unwrap()) };
+    let _env = crate::test_env::TempEnvVar::set("OSU_COLLECT_CONFIG", path.to_str().unwrap());
     save_config(&config).expect("save must succeed");
     let loaded = load_config_from(&path).expect("load must succeed");
-    unsafe { std::env::remove_var("OSU_COLLECT_CONFIG") };
 
     assert_eq!(
         loaded.display.theme,

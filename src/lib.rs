@@ -8,6 +8,7 @@ pub mod download;
 pub mod mirrors;
 pub mod osu_db;
 pub mod realm_bridge;
+pub mod test_env;
 pub mod tui;
 pub mod utils;
 #[cfg(windows)]

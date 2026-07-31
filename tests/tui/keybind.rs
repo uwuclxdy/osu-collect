@@ -496,7 +496,6 @@ fn osu_official_toggle_blocked_and_notifies_when_logged_out() {
 }
 
 #[test]
-#[serial_test::serial(config_env)]
 fn osu_official_toggle_works_when_logged_in() {
     use osu_collect::app::Tab;
     use osu_collect::app::{AuthLoginState, ConfigField};
@@ -504,7 +503,7 @@ fn osu_official_toggle_works_when_logged_in() {
     // user config.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
-    unsafe { std::env::set_var("OSU_COLLECT_CONFIG", path.to_str().unwrap()) };
+    let _env = osu_collect::test_env::TempEnvVar::set("OSU_COLLECT_CONFIG", path.to_str().unwrap());
 
     let mut app = make_app();
     app.config.login_state = AuthLoginState::LoggedIn;
@@ -513,8 +512,6 @@ fn osu_official_toggle_works_when_logged_in() {
     app.config.focus = ConfigField::MirrorOsuOfficial;
 
     app.handle_key(press(KeyCode::Enter));
-
-    unsafe { std::env::remove_var("OSU_COLLECT_CONFIG") };
 
     assert!(
         app.config.osu_official,
@@ -541,7 +538,6 @@ fn enter_on_home_mirrors_summary_jumps_to_config_mirrors() {
 }
 
 #[test]
-#[serial_test::serial(config_env)]
 fn config_mirror_toggle_syncs_home_count() {
     use osu_collect::app::ConfigField;
     use osu_collect::app::Tab;
@@ -549,7 +545,7 @@ fn config_mirror_toggle_syncs_home_count() {
     // user config.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
-    unsafe { std::env::set_var("OSU_COLLECT_CONFIG", path.to_str().unwrap()) };
+    let _env = osu_collect::test_env::TempEnvVar::set("OSU_COLLECT_CONFIG", path.to_str().unwrap());
 
     let mut app = make_app();
     let before = app.home.mirror_count();
@@ -558,8 +554,6 @@ fn config_mirror_toggle_syncs_home_count() {
     // count, since the summary derives from the Config tab now.
     app.config.focus = ConfigField::MirrorNerinyan;
     app.handle_key(press(KeyCode::Enter));
-
-    unsafe { std::env::remove_var("OSU_COLLECT_CONFIG") };
 
     assert_eq!(
         app.home.mirror_count(),
@@ -1076,7 +1070,6 @@ fn enter_on_update_download_button_dispatches_selective() {
 // ── config tab: mirror reorder ────────────────────────────────────────────────
 
 #[test]
-#[serial_test::serial(config_env)]
 fn shift_arrow_reorders_config_mirror_and_syncs_pipeline() {
     use osu_collect::app::ConfigField;
     use osu_collect::app::Tab;
@@ -1086,15 +1079,13 @@ fn shift_arrow_reorders_config_mirror_and_syncs_pipeline() {
     // user config.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
-    unsafe { std::env::set_var("OSU_COLLECT_CONFIG", path.to_str().unwrap()) };
+    let _env = osu_collect::test_env::TempEnvVar::set("OSU_COLLECT_CONFIG", path.to_str().unwrap());
 
     let mut app = make_app();
     app.active_tab = Tab::Config;
     // Nerinyan is the second built-in in the default order.
     app.config.focus = ConfigField::MirrorNerinyan;
     app.handle_key(shift(KeyCode::Up));
-
-    unsafe { std::env::remove_var("OSU_COLLECT_CONFIG") };
 
     assert_eq!(
         app.config.mirror_order[0],
