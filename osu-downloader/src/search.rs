@@ -151,6 +151,386 @@ impl SortOrder {
     }
 }
 
+/// Genre filter (osu! `g` parameter).
+///
+/// The ids are osu!'s own and were probed against the live API on 2026-07-31.
+/// There is no id `8` — the numbering has a genuine gap, so no variant claims it
+/// and the value cannot be constructed. [`Unspecified`](Self::Unspecified)
+/// returns nothing on a default search but is a real value the website exposes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Genre {
+    /// Unspecified (`g=1`).
+    Unspecified,
+    /// Video Game (`g=2`).
+    VideoGame,
+    /// Anime (`g=3`).
+    Anime,
+    /// Rock (`g=4`).
+    Rock,
+    /// Pop (`g=5`).
+    Pop,
+    /// Other (`g=6`).
+    Other,
+    /// Novelty (`g=7`).
+    Novelty,
+    /// Hip Hop (`g=9`).
+    HipHop,
+    /// Electronic (`g=10`).
+    Electronic,
+    /// Metal (`g=11`).
+    Metal,
+    /// Classical (`g=12`).
+    Classical,
+    /// Folk (`g=13`).
+    Folk,
+    /// Jazz (`g=14`).
+    Jazz,
+}
+
+impl Genre {
+    /// Every genre, in ascending id order — the order a picker should list them.
+    pub const ALL: [Self; 13] = [
+        Self::Unspecified,
+        Self::VideoGame,
+        Self::Anime,
+        Self::Rock,
+        Self::Pop,
+        Self::Other,
+        Self::Novelty,
+        Self::HipHop,
+        Self::Electronic,
+        Self::Metal,
+        Self::Classical,
+        Self::Folk,
+        Self::Jazz,
+    ];
+
+    /// The `g` parameter value.
+    fn as_param(self) -> &'static str {
+        match self {
+            Self::Unspecified => "1",
+            Self::VideoGame => "2",
+            Self::Anime => "3",
+            Self::Rock => "4",
+            Self::Pop => "5",
+            Self::Other => "6",
+            Self::Novelty => "7",
+            Self::HipHop => "9",
+            Self::Electronic => "10",
+            Self::Metal => "11",
+            Self::Classical => "12",
+            Self::Folk => "13",
+            Self::Jazz => "14",
+        }
+    }
+}
+
+/// Language filter (osu! `l` parameter).
+///
+/// Ids probed against the live API on 2026-07-31; unlike [`Genre`] the numbering
+/// is gapless. [`Unspecified`](Self::Unspecified) returns nothing on a default
+/// search but is a real value the website exposes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Language {
+    /// Unspecified (`l=1`).
+    Unspecified,
+    /// English (`l=2`).
+    English,
+    /// Japanese (`l=3`).
+    Japanese,
+    /// Chinese (`l=4`).
+    Chinese,
+    /// Instrumental (`l=5`).
+    Instrumental,
+    /// Korean (`l=6`).
+    Korean,
+    /// French (`l=7`).
+    French,
+    /// German (`l=8`).
+    German,
+    /// Swedish (`l=9`).
+    Swedish,
+    /// Spanish (`l=10`).
+    Spanish,
+    /// Italian (`l=11`).
+    Italian,
+    /// Russian (`l=12`).
+    Russian,
+    /// Polish (`l=13`).
+    Polish,
+    /// Other (`l=14`).
+    Other,
+}
+
+impl Language {
+    /// Every language, in ascending id order — the order a picker should list them.
+    pub const ALL: [Self; 14] = [
+        Self::Unspecified,
+        Self::English,
+        Self::Japanese,
+        Self::Chinese,
+        Self::Instrumental,
+        Self::Korean,
+        Self::French,
+        Self::German,
+        Self::Swedish,
+        Self::Spanish,
+        Self::Italian,
+        Self::Russian,
+        Self::Polish,
+        Self::Other,
+    ];
+
+    /// The `l` parameter value.
+    fn as_param(self) -> &'static str {
+        match self {
+            Self::Unspecified => "1",
+            Self::English => "2",
+            Self::Japanese => "3",
+            Self::Chinese => "4",
+            Self::Instrumental => "5",
+            Self::Korean => "6",
+            Self::French => "7",
+            Self::German => "8",
+            Self::Swedish => "9",
+            Self::Spanish => "10",
+            Self::Italian => "11",
+            Self::Russian => "12",
+            Self::Polish => "13",
+            Self::Other => "14",
+        }
+    }
+}
+
+/// One member of the `e` (extras) set — an asset a matching set must carry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Extra {
+    /// Has a video (`video`).
+    Video,
+    /// Has a storyboard (`storyboard`).
+    Storyboard,
+}
+
+impl Extra {
+    /// Every extra, in the order [`ExtraSet`] emits them.
+    pub const ALL: [Self; 2] = [Self::Video, Self::Storyboard];
+
+    /// This member's bit inside an [`ExtraSet`].
+    const fn bit(self) -> u8 {
+        match self {
+            Self::Video => 1 << 0,
+            Self::Storyboard => 1 << 1,
+        }
+    }
+
+    /// This member's token in the `e` parameter value.
+    fn as_param(self) -> &'static str {
+        match self {
+            Self::Video => "video",
+            Self::Storyboard => "storyboard",
+        }
+    }
+}
+
+/// One member of the `r` (rank achieved) set. Scoped to the token's owner: `r`
+/// keeps only sets on which *they* achieved one of the listed ranks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rank {
+    /// Silver SS (`XH`).
+    Xh,
+    /// SS (`X`).
+    X,
+    /// Silver S (`SH`).
+    Sh,
+    /// S (`S`).
+    S,
+    /// A.
+    A,
+    /// B.
+    B,
+    /// C.
+    C,
+    /// D.
+    D,
+}
+
+impl Rank {
+    /// Every rank, best first — the order [`RankSet`] emits them.
+    pub const ALL: [Self; 8] = [
+        Self::Xh,
+        Self::X,
+        Self::Sh,
+        Self::S,
+        Self::A,
+        Self::B,
+        Self::C,
+        Self::D,
+    ];
+
+    /// This member's bit inside a [`RankSet`].
+    const fn bit(self) -> u8 {
+        match self {
+            Self::Xh => 1 << 0,
+            Self::X => 1 << 1,
+            Self::Sh => 1 << 2,
+            Self::S => 1 << 3,
+            Self::A => 1 << 4,
+            Self::B => 1 << 5,
+            Self::C => 1 << 6,
+            Self::D => 1 << 7,
+        }
+    }
+
+    /// This member's token in the `r` parameter value.
+    fn as_param(self) -> &'static str {
+        match self {
+            Self::Xh => "XH",
+            Self::X => "X",
+            Self::Sh => "SH",
+            Self::S => "S",
+            Self::A => "A",
+            Self::B => "B",
+            Self::C => "C",
+            Self::D => "D",
+        }
+    }
+}
+
+/// The set of extras a match must carry (osu! `e`), emitted dot-separated
+/// (`video.storyboard`).
+///
+/// A bitset rather than a list: a member cannot repeat, and the emitted order is
+/// [`Extra::ALL`]'s whatever the insertion order, so the parameter is
+/// byte-stable. Empty *is* the "no filter" state and emits no parameter at all —
+/// which is why [`SearchQuery::extra`] is not an `Option`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ExtraSet(u8);
+
+impl ExtraSet {
+    /// The empty set — no `e` parameter.
+    pub const fn new() -> Self {
+        Self(0)
+    }
+
+    /// This set plus `extra`.
+    pub const fn with(self, extra: Extra) -> Self {
+        Self(self.0 | extra.bit())
+    }
+
+    /// This set minus `extra`.
+    pub const fn without(self, extra: Extra) -> Self {
+        Self(self.0 & !extra.bit())
+    }
+
+    /// Whether `extra` is a member.
+    pub const fn contains(self, extra: Extra) -> bool {
+        self.0 & extra.bit() != 0
+    }
+
+    /// Whether no extra is selected, i.e. no `e` parameter is sent.
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// The `e` parameter value, or `None` when the set is empty.
+    fn to_param(self) -> Option<String> {
+        dot_join(&Extra::ALL, |extra| self.contains(extra), Extra::as_param)
+    }
+}
+
+impl FromIterator<Extra> for ExtraSet {
+    fn from_iter<I: IntoIterator<Item = Extra>>(iter: I) -> Self {
+        iter.into_iter().fold(Self::new(), Self::with)
+    }
+}
+
+/// The set of ranks the token's owner must have achieved (osu! `r`), emitted
+/// dot-separated (`XH.S`). Same bitset rationale as [`ExtraSet`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RankSet(u8);
+
+impl RankSet {
+    /// The empty set — no `r` parameter.
+    pub const fn new() -> Self {
+        Self(0)
+    }
+
+    /// This set plus `rank`.
+    pub const fn with(self, rank: Rank) -> Self {
+        Self(self.0 | rank.bit())
+    }
+
+    /// This set minus `rank`.
+    pub const fn without(self, rank: Rank) -> Self {
+        Self(self.0 & !rank.bit())
+    }
+
+    /// Whether `rank` is a member.
+    pub const fn contains(self, rank: Rank) -> bool {
+        self.0 & rank.bit() != 0
+    }
+
+    /// Whether no rank is selected, i.e. no `r` parameter is sent.
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// The `r` parameter value, or `None` when the set is empty.
+    fn to_param(self) -> Option<String> {
+        dot_join(&Rank::ALL, |rank| self.contains(rank), Rank::as_param)
+    }
+}
+
+impl FromIterator<Rank> for RankSet {
+    fn from_iter<I: IntoIterator<Item = Rank>>(iter: I) -> Self {
+        iter.into_iter().fold(Self::new(), Self::with)
+    }
+}
+
+/// Join the selected members of `all` with `.`, or `None` when none are
+/// selected. Walking `all` rather than the caller's insertion sequence is what
+/// makes the emitted order canonical.
+fn dot_join<T: Copy>(
+    all: &[T],
+    selected: impl Fn(T) -> bool,
+    token: impl Fn(T) -> &'static str,
+) -> Option<String> {
+    let joined = all
+        .iter()
+        .copied()
+        .filter(|member| selected(*member))
+        .map(&token)
+        .collect::<Vec<_>>()
+        .join(".");
+    if joined.is_empty() {
+        None
+    } else {
+        Some(joined)
+    }
+}
+
+/// Play-state filter (osu! `played`), scoped to the token's owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlayedFilter {
+    /// No filter (`any`) — the server default, sent explicitly.
+    Any,
+    /// Only sets the token's owner has played (`played`).
+    Played,
+    /// Only sets they have never played (`unplayed`).
+    Unplayed,
+}
+
+impl PlayedFilter {
+    /// The `played` parameter value.
+    fn as_param(self) -> &'static str {
+        match self {
+            Self::Any => "any",
+            Self::Played => "played",
+            Self::Unplayed => "unplayed",
+        }
+    }
+}
+
 /// One bound of a [`QueryRange`], carrying whether it is inclusive. Inclusive
 /// emits `>=`/`<=`; strict emits `>`/`<` (osu q-DSL supports both).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -287,6 +667,13 @@ fn text_term(key: &str, value: &str) -> String {
 /// The typed criteria below are folded into the `q` param in a fixed, documented
 /// order (see [`build_q`]) so the emitted string is byte-stable — tests and the
 /// app's staleness snapshot pin it.
+///
+/// [`genre`](Self::genre), [`language`](Self::language), [`extra`](Self::extra),
+/// [`nsfw`](Self::nsfw), [`rank`](Self::rank) and [`played`](Self::played) are
+/// standalone url params, not `q` terms. Every one of them only took effect for
+/// an osu!supporter token when probed (2026-07-31); whether a non-supporter gets
+/// them is untested. The library emits them either way and leaves that gate to
+/// the caller.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SearchQuery {
     /// Free text (`q`). Empty is allowed; the server applies its default sort.
@@ -297,6 +684,20 @@ pub struct SearchQuery {
     /// Category / rank status (`s`). `None` uses the server default (has-leaderboard).
     /// [`SearchStatus::Approved`] additionally emits a `status=approved` term in `q`.
     pub status: Option<SearchStatus>,
+    /// Genre (`g`). `None` searches every genre.
+    pub genre: Option<Genre>,
+    /// Language (`l`). `None` searches every language.
+    pub language: Option<Language>,
+    /// Extras a match must carry (`e`). Empty sends no parameter.
+    pub extra: ExtraSet,
+    /// Explicit-content filter (`nsfw`). `None` uses the server default;
+    /// `Some(false)` drops every set flagged explicit.
+    pub nsfw: Option<bool>,
+    /// Ranks the token's owner must have achieved (`r`). Empty sends no parameter.
+    pub rank: RankSet,
+    /// Play state relative to the token's owner (`played`). `None` sends no
+    /// parameter; [`PlayedFilter::Any`] sends the server default explicitly.
+    pub played: Option<PlayedFilter>,
     /// Sort field + order. `None` uses the server default (`relevance` with a
     /// query, else `ranked`; `desc`).
     pub sort: Option<(SortField, SortOrder)>,
@@ -540,6 +941,24 @@ fn build_query_params(query: &SearchQuery) -> Vec<(&'static str, String)> {
     }
     if let Some(status) = query.status {
         params.push(("s", status.as_param().to_string()));
+    }
+    if let Some(genre) = query.genre {
+        params.push(("g", genre.as_param().to_string()));
+    }
+    if let Some(language) = query.language {
+        params.push(("l", language.as_param().to_string()));
+    }
+    if let Some(extra) = query.extra.to_param() {
+        params.push(("e", extra));
+    }
+    if let Some(nsfw) = query.nsfw {
+        params.push(("nsfw", nsfw.to_string()));
+    }
+    if let Some(rank) = query.rank.to_param() {
+        params.push(("r", rank));
+    }
+    if let Some(played) = query.played {
+        params.push(("played", played.as_param().to_string()));
     }
     if let Some((field, order)) = query.sort {
         params.push(("sort", format!("{}_{}", field.as_param(), order.as_param())));
