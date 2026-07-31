@@ -6,14 +6,23 @@ The `find` source on the get maps tab searches for beatmaps without an osu!colle
 
 | Criterion | Notes |
 |---|---|
-| Free text query | Works like search on the osu! website |
+| Free text query | The search box at the top of the form; works like search on the osu! website |
 | Preset | Predefined filters |
-| Special | `farm` / `stream` / `ranked mapper` flags from nzbasic's (BBD) database |
-| Mode / status / sort | Cycle with <kbd>space</kbd> / <kbd>↵</kbd>; all options render on the row, the active one is bracketed |
-| Numeric ranges | stars, AR, CS, OD, HP, BPM, length, keys, favourites |
+| Mode / categories / special | Cycle with <kbd>space</kbd> / <kbd>↵</kbd>; all options render on the row, the active one is bracketed. `special` is `farm` / `stream` / `ranked mapper` from nzbasic's (BBD) database |
+| Sort / limit | Shape the result set rather than which maps match. `limit` caps result rows and only applies on the nzbasic route |
+| Numeric ranges | stars, AR, CS, OD, HP, BPM, length, keys, favourites; behind `advanced filters` |
 | Artist / mapper / title | Text matches; semantics differ per route (below) |
 | Ranked date | Its own range grammar (below) |
-| Limit | Caps result rows; only applies on the nzbasic route |
+
+Rows group under `preset`, `filters` and `results` headings; the `advanced filters` row expands the rest.
+
+## Supporter-only filters
+
+Six more filters appear when you are logged in with an account that has osu!supporter: `explicit` in the filters block, and `genre`, `language`, `extra`, `rank`, `played` at the top of `advanced filters`. osu! only honors these for a supporter token, so without one they are not shown at all.
+
+`extra` and `rank` take several values at once. Each of their chips carries a `●` when picked and a `○` when not; <kbd>⇧</kbd>+<kbd>←</kbd> / <kbd>⇧</kbd>+<kbd>→</kbd> move between chips and <kbd>space</kbd> toggles the one you are on. Plain <kbd>←</kbd> / <kbd>→</kbd> keep switching tabs, as everywhere else.
+
+All six force the osu! api route. Losing supporter status resets them to their defaults.
 
 ## Numeric filter syntax
 
@@ -43,10 +52,11 @@ One form, two backends underneath: the osu! api v2 search and nzbasic's [batch-b
 |---|---|
 | A special flag (`farm` / `stream` / `ranked mapper`) | A free text query |
 | Sort `bpm ↓` or `length ↑` | Sort `relevance`, `title ↑`, `artist ↑` |
-| Status `unranked` | Status `qualified` |
+| Category `unranked` | Category `qualified` |
 | | A keys, favourites, or ranked-date range |
+| | Any supporter-only filter set |
 
-Everything else runs on either backend; the default is the osu! api. Status `approved` works on both.
+Everything else runs on either backend; the default is the osu! api. Category `approved` works on both.
 
 ## Matching semantics per route
 

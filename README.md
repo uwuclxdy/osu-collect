@@ -27,7 +27,7 @@ osu!collect is a terminal app (TUI) that **downloads osu! beatmap collections fr
 ## Features
 
 - **Batch downloads** from any osu!collector collection. Paste a URL or ID, press <kbd>↵</kbd>.
-- **Find maps without a collection**: free-text search plus per-difficulty criteria (stars, AR, CS, OD, HP, BPM, length, keys, favourites, ranked date, farm/stream/ranked-mapper flags), auto-routed between the osu! api and nzbasic's community database. [Criteria + filter syntax.](https://github.com/uwuclxdy/osu-collect/wiki/Finding-Maps)
+- **Find maps without a collection**: free-text search plus per-difficulty criteria (stars, AR, CS, OD, HP, BPM, length, keys, favourites, ranked date, farm/stream/ranked-mapper flags), auto-routed between the osu! api and nzbasic's community database. Genre, language, video/storyboard, achieved rank, played state and explicit-content filters join them on a supporter account. [Criteria + filter syntax.](https://github.com/uwuclxdy/osu-collect/wiki/Finding-Maps)
 - **Mirrors with automatic failover**: osu!direct, Nerinyan, Sayobot, Nekoha, Beatconnect, osu!dl, catboy.best, the Hinamizawa cascade, the nzbasic CDN, your own custom mirrors. Logging in adds the official osu! servers. [Full list.](https://github.com/uwuclxdy/osu-collect/wiki/Mirrors)
 - **Rate-limit aware**: throttled mirrors sit out with per-map cooldown countdowns while the rest keep downloading; a map that hits a limit re-queues instead of getting dropped. [How it's handled.](https://github.com/uwuclxdy/osu-collect/wiki/Mirrors#rate-limit-handling)
 - **Collections updater**: re-check a collection later and download only the maps that are missing or newly added. [Guide.](https://github.com/uwuclxdy/osu-collect/wiki/Updating-Collections)
@@ -144,7 +144,7 @@ Run osu!collect, paste the collection URL, press <kbd>↵</kbd>. Downloads come 
 Yes. See [Importing into osu!](#importing-into-osu). The generated `collection.db` imports through lazer's "first-time-setup".
 
 **Do I need an osu! account?**
-No. Logging in is optional and only adds the official osu! servers as an extra source.
+No. Logging in is optional; it adds the official osu! servers as an extra source, and unlocks a few find filters osu! only honors for supporter accounts.
 
 **Can it update a collection I downloaded earlier?**
 Yes. The update source on the get maps tab diffs your downloaded collections against osu!collector and fetches only what's missing.

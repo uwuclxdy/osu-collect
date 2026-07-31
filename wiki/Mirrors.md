@@ -34,7 +34,9 @@ Add your own on the config tab: each URL template must contain the `{id}` placeh
 
 ## Logging in with your osu! account
 
-Logging in is optional; its only purpose is enabling the **osu! official** mirror. The account row on the config tab opens a login panel docked on the right, where you enter your osu! username and password (masked). It closes on <kbd>esc</kbd> or a tab switch.
+Logging in is optional. It enables the **osu! official** mirror, plus the supporter-only find filters when the account carries osu!supporter ([Finding maps](Finding-Maps#supporter-only-filters)). The account row on the config tab opens a login panel docked on the right, where you enter your osu! username and password (masked). It closes on <kbd>esc</kbd> or a tab switch.
+
+Once logged in the account row reads `logged in`, with `· supporter` appended when the account has it. The status is re-checked in the background each launch, so gaining or losing supporter shows up without logging out.
 
 The login goes through osu!lazer's first-party client, the only client allowed to request beatmap-download privilege. If osu! needs to verify a new device, the panel prompts for the emailed code. Your password is sent only to `osu.ppy.sh` and never stored; only the resulting token lives in a local `auth.json`.
 

@@ -1,6 +1,6 @@
 # Keybindings
 
-Press <kbd>?</kbd> anywhere in the app for this list as an overlay.
+Press <kbd>?</kbd> anywhere in the app for the in-app overlay. It carries the keys for the current tab; this page is the full list.
 
 ## Global
 
@@ -27,6 +27,7 @@ Press <kbd>?</kbd> anywhere in the app for this list as an overlay.
 | <kbd>1</kbd>-<kbd>3</kbd> | Jump straight to a source (find / collection / update) |
 | <kbd>←</kbd> <kbd>→</kbd> | Focus the list / preview pane inside a browse |
 | <kbd>↑</kbd> <kbd>↓</kbd> | Step through the difficulty list in a focused preview |
+| <kbd>⇧</kbd>+<kbd>←</kbd> / <kbd>⇧</kbd>+<kbd>→</kbd> | Move between chips on a multi-pick find row (`extra` / `rank`); <kbd>space</kbd> toggles the one you are on |
 | <kbd>s</kbd> | Jump to the last enabled action button (find / scan / view maps / download); cycle the sort in the update browse |
 | <kbd>a</kbd> / <kbd>A</kbd> | Select all / none (update browse) |
 | <kbd>i</kbd> / <kbd>I</kbd> | Mark a set / whole collection as installed (update preview) |
