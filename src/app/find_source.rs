@@ -502,10 +502,12 @@ impl SetBrowse {
         )
     }
 
-    /// Step the difficulty cursor by `delta`, clamped at the spread's ends (no
-    /// wrap). A no-op when the highlighted row has no spread. Only called while
-    /// the preview owns focus.
+    /// Step the difficulty cursor by `delta` in the order the preview LISTS the
+    /// spread ([`Self::diff_sort`]), wrapping at both ends like the row list. A
+    /// no-op when the highlighted row has no spread. Only called while the
+    /// preview owns focus.
     fn move_diff_cursor(&mut self, delta: i64) {
+        let sort = self.diff_sort;
         let next = self.highlighted_row().and_then(|row| {
             let beatmaps = &row.meta.as_ref()?.beatmaps;
             if beatmaps.is_empty() {
@@ -515,8 +517,10 @@ impl SetBrowse {
                 .diff_cursor
                 .map(|i| i.min(beatmaps.len() - 1))
                 .unwrap_or_else(|| hardest_beatmap_index(beatmaps));
-            let stepped = (current as i64 + delta).clamp(0, beatmaps.len() as i64 - 1) as usize;
-            Some(stepped)
+            let order = diff_order(beatmaps, sort);
+            let pos = order.iter().position(|&i| i == current).unwrap_or(0);
+            let stepped = (pos as i64 + delta).rem_euclid(order.len() as i64) as usize;
+            Some(order[stepped])
         });
         if let Some(next) = next {
             self.diff_cursor = Some(next);
@@ -538,6 +542,27 @@ impl SetBrowse {
     ) {
         self.enrich.seed(pruned_diff_ids(seeds, cache));
     }
+}
+
+/// The spread's original-array indices in the order the preview lists them.
+/// Ordering by `sort` here rather than in the render is what lets the difficulty
+/// cursor step by what is on screen: the API's `beatmaps[]` arrives in neither
+/// star order, so an index step walks the spread in an order nobody can see.
+/// `sort_by` is stable, so ties keep the array's own order — first-seen, the
+/// same tie-break [`hardest_beatmap_index`] takes.
+pub(crate) fn diff_order(beatmaps: &[Beatmap], sort: DiffSort) -> Vec<usize> {
+    let mut indices: Vec<usize> = (0..beatmaps.len()).collect();
+    indices.sort_by(|&a, &b| {
+        let (a, b) = match sort {
+            DiffSort::StarsAsc => (a, b),
+            DiffSort::StarsDesc => (b, a),
+        };
+        beatmaps[a]
+            .difficulty_rating
+            .partial_cmp(&beatmaps[b].difficulty_rating)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    indices
 }
 
 /// Index of the hardest diff (highest star rating) in `beatmaps`, first-seen

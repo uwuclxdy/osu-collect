@@ -9,7 +9,7 @@
 
 use crate::app::EnrichSink;
 use crate::app::covers::Covers;
-use crate::app::find_source::{BrowseRow, DiffSort, SetBrowse};
+use crate::app::find_source::{BrowseRow, DiffSort, SetBrowse, diff_order};
 use osu_downloader::filter::BeatmapDetails;
 use osu_downloader::search::{Beatmap, BeatmapSetMeta};
 use ratatui::{
@@ -395,23 +395,10 @@ fn spread_rows(
     width: u16,
 ) -> Vec<ListItem<'static>> {
     let focused = focused.min(beatmaps.len().saturating_sub(1));
-    // Build sorted indices from the original array — tracking by original index
-    // is id-independent, so tests with defaulted ids don't collapse.
-    let mut indices: Vec<usize> = (0..beatmaps.len()).collect();
-    match sort {
-        DiffSort::StarsAsc => indices.sort_by(|&a, &b| {
-            beatmaps[a]
-                .difficulty_rating
-                .partial_cmp(&beatmaps[b].difficulty_rating)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        }),
-        DiffSort::StarsDesc => indices.sort_by(|&a, &b| {
-            beatmaps[b]
-                .difficulty_rating
-                .partial_cmp(&beatmaps[a].difficulty_rating)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        }),
-    }
+    // Indices into the original array — tracking by original index is
+    // id-independent, so tests with defaulted ids don't collapse — in the same
+    // order `SetBrowse` steps the difficulty cursor through.
+    let indices = diff_order(beatmaps, sort);
     let focused = indices
         .iter()
         .position(|&i| i == focused)

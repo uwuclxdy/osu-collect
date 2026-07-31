@@ -471,6 +471,110 @@ fn diff_cursor_cycles_the_focused_detail() {
     );
 }
 
+/// Three diffs with distinct bpm (the focused detail block is identifiable by
+/// its bpm value), handed to the browse in `order` — the API's `beatmaps[]` is
+/// in neither star order, so a fixture in wire order that happens to match the
+/// display would not tell the two apart.
+fn browse_with_spread(order: [(&str, f64, f64); 3]) -> SetBrowse {
+    let meta = BeatmapSetMeta {
+        beatmaps: order
+            .iter()
+            .map(|&(version, stars, bpm)| Beatmap {
+                beatmapset_id: 7,
+                mode_int: 0,
+                version: version.to_string(),
+                difficulty_rating: stars,
+                bpm,
+                ..Beatmap::default()
+            })
+            .collect(),
+        ..sample_meta(7)
+    };
+    let mut browse = browse_with(vec![BrowseRow {
+        id: 7,
+        meta: Some(meta),
+    }]);
+    browse.descend();
+    browse.focus_preview();
+    browse
+}
+
+/// The focused diff's bpm, read back off the render — `{bpm:.0}` reaches the
+/// detail block for the focused diff alone, so the other two must be absent.
+#[track_caller]
+fn assert_focused_bpm(browse: &SetBrowse, bpm: &str, gone: [&str; 2], what: &str) {
+    let text = render_browse(browse);
+    assert!(text.contains(bpm), "{what} focuses bpm {bpm}:\n{text}");
+    for other in gone {
+        assert!(
+            !text.contains(other),
+            "{what} leaves bpm {other} out of the detail block:\n{text}"
+        );
+    }
+}
+
+#[test]
+fn diff_cursor_steps_in_the_displayed_order() {
+    // Wire order puts Expert first; the spread lists stars ascending, so Expert
+    // is the BOTTOM row and one step up is Normal. Stepping by array index
+    // instead walks off the top of the spread and sticks on Expert.
+    let mut browse = browse_with_spread([
+        ("Expert", 5.47, 180.0),
+        ("Easy", 2.0, 120.0),
+        ("Normal", 3.4, 150.0),
+    ]);
+    assert_focused_bpm(&browse, "180", ["120", "150"], "the default (hardest)");
+
+    browse.scroll_up();
+    assert_focused_bpm(
+        &browse,
+        "150",
+        ["120", "180"],
+        "one step up from the bottom",
+    );
+
+    browse.scroll_up();
+    assert_focused_bpm(&browse, "120", ["150", "180"], "two steps up");
+}
+
+#[test]
+fn diff_cursor_wraps_at_both_spread_ends() {
+    // Expert is the bottom row of an ascending spread: down wraps to the top,
+    // and up from the top comes back to it. The list cursor wraps, so the
+    // difficulty cursor inside one row does too.
+    let mut browse = browse_with_spread([
+        ("Easy", 2.0, 120.0),
+        ("Normal", 3.4, 150.0),
+        ("Expert", 5.47, 180.0),
+    ]);
+    assert_focused_bpm(&browse, "180", ["120", "150"], "the default (hardest)");
+
+    browse.scroll_down();
+    assert_focused_bpm(&browse, "120", ["150", "180"], "down past the bottom");
+
+    browse.scroll_up();
+    assert_focused_bpm(&browse, "180", ["120", "150"], "up past the top");
+}
+
+#[test]
+fn diff_cursor_follows_the_active_sort() {
+    // Under `stars ↓` the hardest diff is the TOP row, so down is Normal and up
+    // wraps to Easy — the mirror of what the same keys do under `stars ↑`.
+    let mut browse = browse_with_spread([
+        ("Easy", 2.0, 120.0),
+        ("Normal", 3.4, 150.0),
+        ("Expert", 5.47, 180.0),
+    ]);
+    browse.cycle_diff_sort();
+
+    browse.scroll_down();
+    assert_focused_bpm(&browse, "150", ["120", "180"], "down from the hardest");
+
+    browse.scroll_up();
+    browse.scroll_up();
+    assert_focused_bpm(&browse, "120", ["150", "180"], "up past the top");
+}
+
 #[test]
 fn spread_star_ratings_align_in_one_column() {
     // Names of differing width ("A" vs "LongerName") must not ragged the star
