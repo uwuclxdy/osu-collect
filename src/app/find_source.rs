@@ -1341,12 +1341,13 @@ impl FindSource {
     }
 
     /// Canonical string of ALL inputs (criteria + sort + limit) — the staleness
-    /// key for the `view N maps` button.
+    /// key for the `view N maps` button. Sort contributes its INDEX for the same
+    /// reason the criteria chips do: a reword must never read as an input edit.
     fn inputs_string(&self) -> String {
         format!(
             "{}|sort={}|limit={}",
             self.criteria_string(),
-            self.sort_label(),
+            self.sort_idx,
             self.limit.value.trim(),
         )
     }

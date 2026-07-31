@@ -573,20 +573,57 @@ fn canonical_criteria_string_is_stable_and_sort_limit_independent() {
     );
 
     // Sort/limit are excluded from the criteria string but present in the inputs
-    // string (the staleness key).
+    // string (the staleness key). Moved ONE AT A TIME: together, limit alone
+    // satisfies the `assert_ne!` and leaves sort's own contribution unpinned.
     let criteria_before = a.criteria_string();
+
     let inputs_before = a.inputs_string();
     a.cycle_sort(true);
-    a.limit.set_value("100");
     assert_eq!(
         a.criteria_string(),
         criteria_before,
-        "sort/limit do not change the criteria string"
+        "sort does not change the criteria string"
     );
     assert_ne!(
         a.inputs_string(),
         inputs_before,
-        "sort/limit change the staleness key"
+        "sort alone changes the staleness key"
+    );
+
+    let inputs_before = a.inputs_string();
+    a.limit.set_value("100");
+    assert_eq!(
+        a.criteria_string(),
+        criteria_before,
+        "limit does not change the criteria string"
+    );
+    assert_ne!(
+        a.inputs_string(),
+        inputs_before,
+        "limit alone changes the staleness key"
+    );
+}
+
+/// Sort reaches the staleness key by INDEX, not by its display label — the same
+/// rule the criteria chips follow. Lower stakes than the folder tag (this key is
+/// never persisted), but one label left in a canonical string reads as "the rule
+/// is mostly true", which is how it comes back.
+#[test]
+fn sort_rename_cannot_move_the_staleness_key() {
+    let mut source = FindSource::new();
+    set_sort(&mut source, "stars ↓");
+    let inputs = source.inputs_string();
+    let value = inputs
+        .split('|')
+        .find_map(|part| part.strip_prefix("sort="))
+        .unwrap_or_else(|| panic!("no sort field in {inputs}"));
+    assert!(
+        value.parse::<usize>().is_ok(),
+        "sort carries the display text {value:?}, not its index: {inputs}"
+    );
+    assert!(
+        !inputs.contains(source.sort_label()),
+        "the sort LABEL leaked into the staleness key: {inputs}"
     );
 }
 
