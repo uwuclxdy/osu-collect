@@ -544,10 +544,10 @@ fn shared_criteria_ride_the_resolved_route() {
 #[test]
 fn shared_mode_maps_per_backend() {
     // The same chip index maps to the backend-specific mode enum (`Fruits` vs
-    // `Catch` for "catch").
+    // `Catch` for "osu!catch").
     let mut source = FindSource::new();
-    source.set_mode_idx(3); // "catch"
-    assert_eq!(source.mode_label(), "catch");
+    source.set_mode_idx(3); // "osu!catch"
+    assert_eq!(source.mode_label(), "osu!catch");
     assert_eq!(osu(&source).mode, Some(SearchMode::Fruits));
 
     let mut source = FindSource::new();
@@ -616,17 +616,22 @@ fn criteria_string_is_byte_pinned() {
     // → `=8`, `<=4` → `<=4`); ranked/texts stay raw-trimmed.
     assert_eq!(
         source.criteria_string(),
-        "special=farm|mode=catch|status=approved|q=tekno|stars=>=6 <=7|ar=>=9|cs=<=4|od==8|hp=>=5.5 <=6.5|bpm=>=180|len=>=90 <=300|keys==7|fav=>=100|ranked=2024|artist=cam|creator=toby|title=night"
+        "special=farm|mode=osu!catch|status=approved|q=tekno|stars=>=6 <=7|ar=>=9|cs=<=4|od==8|hp=>=5.5 <=6.5|bpm=>=180|len=>=90 <=300|keys==7|fav=>=100|ranked=2024|artist=cam|creator=toby|title=night"
     );
 }
 
 /// Byte-pin of the folder-tag hash: FNV-1a-32 of the canonical criteria string,
 /// rendered as 8 lowercase hex. A hash-fn or canonical-shape change breaks this.
+///
+/// The canonical string carries CHIP LABELS, so rewording one moves the tag and
+/// a chip-only run lands in a fresh directory. That is what this pin is for.
 #[test]
 fn folder_tag_hash_is_byte_pinned() {
     let mut source = FindSource::new();
     source.stars.set_value("<=5");
-    assert_eq!(source.folder_tag(), "7f963648");
+    // FNV-1a-32 of `special=none|mode=any|status=has leaderboard|q=|stars=<=5|`
+    // + the remaining empty criteria.
+    assert_eq!(source.folder_tag(), "cffcf7e4");
 }
 
 /// Fix for raw-input hashing: equivalent numeric spellings share a folder tag

@@ -28,6 +28,27 @@ fn render_content(app: &App, width: u16, height: u16) -> String {
         .collect()
 }
 
+/// One string per screen row, symbols only — for assertions about where a row
+/// sits relative to another, which the flattened [`render_content`] can't hold.
+fn render_rows(app: &App, width: u16, height: u16) -> Vec<String> {
+    let buf = render_to_buffer(app, width, height);
+    (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect()
+}
+
+/// Screen row holding `needle`, panicking with the whole frame when it is
+/// absent — a missing row is a layout bug, not a subtle off-by-one.
+fn row_of(rows: &[String], needle: &str) -> usize {
+    rows.iter()
+        .position(|row| row.contains(needle))
+        .unwrap_or_else(|| panic!("no row contains {needle:?}:\n{}", rows.join("\n")))
+}
+
 /// Terminal caret position after a draw. `(0, 0)` means no caret was set this
 /// frame (a focused text field always parks the caret inside the panel, y > 0).
 fn cursor_pos(app: &App, width: u16, height: u16) -> (u16, u16) {
@@ -553,19 +574,45 @@ fn update_source_shows_client_toggle() {
 
 // ── config view ──────────────────────────────────────────────────────────────
 
+/// One leg per `AuthLoginState` arm, each pinning the literal copy that arm
+/// renders. The state is set explicitly because `ConfigTab::new` seeds it from
+/// `auth::load()` — a real `auth.json` on the developer's box otherwise decides
+/// which arm this renders, and the assertion silently changes meaning with it.
+///
+/// Substring, not equality: the chip's state segment carries suffixes (the
+/// supporter badge) that are not this test's boundary.
 #[test]
 fn config_tab_shows_auth_chip() {
-    let mut app = make_app();
-    app.next_tab();
-    app.next_tab(); // home → downloads → config
-    let content = render_content(&app, 120, 40);
-    assert!(
-        content.contains("signed out")
-            || content.contains("signed in")
-            || content.contains("log in")
-            || content.contains("login unavailable"),
-        "auth chip must render a visible auth state: {content}"
-    );
+    use osu_collect::app::AuthLoginState;
+
+    for (state, expect_label, expect_action, forbid) in [
+        (AuthLoginState::LoggedOut, " logged out", "log in", "manage"),
+        (
+            AuthLoginState::InProgress(String::new()),
+            " logging in…",
+            "view",
+            "manage",
+        ),
+        (AuthLoginState::LoggedIn, " logged in", "manage", "log in"),
+    ] {
+        let mut app = make_app();
+        app.next_tab();
+        app.next_tab(); // home → downloads → config
+        app.config.login_state = state.clone();
+        let content = render_content(&app, 120, 40);
+        assert!(
+            content.contains(expect_label),
+            "{state:?} must render {expect_label:?}: {content}"
+        );
+        assert!(
+            content.contains(expect_action),
+            "{state:?} must render the {expect_action:?} action: {content}"
+        );
+        assert!(
+            !content.contains(forbid),
+            "{state:?} must not render {forbid:?}: {content}"
+        );
+    }
 }
 
 // ── error / message footer ───────────────────────────────────────────────────
@@ -1392,5 +1439,128 @@ fn find_download_button_shows_approx_size_for_checked_osu_results() {
     assert!(
         content.contains("download (2) · ~50.0 MiB"),
         "osu find button shows the summed approx size: {content}"
+    );
+}
+
+// ── find source form ─────────────────────────────────────────────────────────
+
+#[test]
+fn find_query_renders_as_a_bordered_search_box() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    app.home.focus = HomeField::FindQuery;
+    let rows = render_rows(&app, 100, 34);
+
+    // Three rows: frame, the value line carrying the focus glyph, frame.
+    let text = row_of(&rows, "artist, title, mapper, tags…");
+    assert!(
+        rows[text - 1].contains('╭') && rows[text - 1].contains('╮'),
+        "the query row opens a frame above its text: {:?}",
+        rows[text - 1]
+    );
+    assert!(
+        rows[text + 1].contains('╰') && rows[text + 1].contains('╯'),
+        "the query row closes its frame below its text: {:?}",
+        rows[text + 1]
+    );
+    assert!(
+        rows[text].contains("❯ artist, title, mapper, tags…"),
+        "focus reads as a glyph inside the box, not colour alone: {:?}",
+        rows[text]
+    );
+    // The frame spans the panel: it ends one cell short of the right padding
+    // column the scrollbar owns.
+    let column = |glyph: char| rows[text - 1].chars().position(|c| c == glyph);
+    assert_eq!(
+        column('╭'),
+        Some(4),
+        "box is inset two cells inside the panel content"
+    );
+    assert_eq!(column('╮'), Some(97));
+}
+
+#[test]
+fn find_query_caret_parks_on_the_boxs_text_row() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    app.home.focus = HomeField::FindQuery;
+    app.editing = true;
+    for ch in "abc".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::empty()));
+    }
+    let rows = render_rows(&app, 100, 34);
+    let text = row_of(&rows, "✎ abc") as u16;
+    let (x, y) = cursor_pos(&app, 100, 34);
+    assert_eq!(
+        y, text,
+        "the caret sits on the box's text line, not its top border"
+    );
+    // Two-cell inset + left border + the edit glyph, then the three typed chars.
+    assert_eq!(x, 2 + 2 + 1 + 2 + 3);
+}
+
+#[test]
+fn find_form_groups_its_rows_under_section_eyebrows() {
+    use osu_collect::app::GetMapsSource;
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    let rows = render_rows(&app, 100, 34);
+
+    // The rendered order the tab order has to mirror (see the keybind suite's
+    // `find_form_tab_order_matches_the_rendered_order`).
+    let order = [
+        "artist, title, mapper, tags…",
+        "PRESET",
+        "preset ",
+        "FILTERS",
+        "mode ",
+        "categories ",
+        "special ",
+        "RESULTS",
+        "sort ",
+        "limit ",
+        "advanced filters",
+    ];
+    let indices: Vec<usize> = order.iter().map(|needle| row_of(&rows, needle)).collect();
+    assert!(
+        indices.windows(2).all(|pair| pair[0] < pair[1]),
+        "form rows must render in {order:?}, got rows {indices:?}"
+    );
+}
+
+#[test]
+fn find_form_drops_eyebrows_in_compact_chrome() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    // Focus scrolls the categories row into the short viewport, so the FILTERS
+    // eyebrow that normally sits directly above it would be on screen too.
+    app.home.focus = HomeField::FindStatus;
+    let content = render_content(&app, 100, 12);
+    assert!(content.contains("categories"), "the rows themselves stay");
+    assert!(
+        !content.contains("FILTERS"),
+        "below COMPACT_HEIGHT the form reclaims the eyebrow rows: {content}"
+    );
+}
+
+#[test]
+fn find_form_speaks_osu_vocabulary() {
+    use osu_collect::app::GetMapsSource;
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    let rows = render_rows(&app, 120, 34);
+    let modes = &rows[row_of(&rows, "mode ")];
+    assert!(
+        modes.contains("any  osu!  osu!taiko  osu!catch  osu!mania"),
+        "mode chips read as the website names them: {modes:?}"
+    );
+    let categories = &rows[row_of(&rows, "categories ")];
+    assert!(
+        categories.contains("any  has leaderboard  ranked"),
+        "the rank-status facet is `categories` with a `has leaderboard` chip: {categories:?}"
     );
 }

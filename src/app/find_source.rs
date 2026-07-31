@@ -774,7 +774,7 @@ const SORT: &[SortOption] = &[
 /// Mode chip labels; `mode_idx` indexes this plus both per-backend value arrays
 /// (the [`SearchMode::Fruits`] / [`FilterMode::Catch`] naming collision the plan
 /// flags — same slot, different enum). Expressible either route.
-const MODE_LABELS: &[&str] = &["any", "osu", "taiko", "catch", "mania"];
+const MODE_LABELS: &[&str] = &["any", "osu!", "osu!taiko", "osu!catch", "osu!mania"];
 const MODE_OSU: &[Option<SearchMode>] = &[
     None,
     Some(SearchMode::Osu),
@@ -792,12 +792,20 @@ const MODE_NZBASIC: &[Option<FilterMode>] = &[
 
 const _: () = assert!(MODE_LABELS.len() == MODE_OSU.len() && MODE_OSU.len() == MODE_NZBASIC.len());
 
+/// osu!standard's chip slot — where the farm/stream presets pin the mode.
+/// A named index rather than a lookup by display label: a label lookup answers
+/// a reworded chip with a silent fall back to `any`, so a preset quietly stops
+/// constraining mode. The assert below binds the index to the VALUE, which is
+/// what the preset actually means, so a reorder fails the build.
+const MODE_STD_IDX: usize = 1;
+const _: () = assert!(matches!(MODE_OSU[MODE_STD_IDX], Some(SearchMode::Osu)));
+
 /// Status chip labels; `status_idx` indexes this plus the two per-backend maps.
-/// `default` position is `leaderboard` (index [`STATUS_DEFAULT_IDX`]) — it
+/// `default` position is `has leaderboard` (index [`STATUS_DEFAULT_IDX`]) — it
 /// matches both backends' historical default.
 const STATUS_LABELS: &[&str] = &[
     "any",
-    "leaderboard",
+    "has leaderboard",
     "ranked",
     "approved",
     "qualified",
@@ -839,9 +847,21 @@ const STATUS_NZBASIC: &[Option<Option<FilterStatus>>] = &[
 const _: () =
     assert!(STATUS_LABELS.len() == STATUS_OSU.len() && STATUS_OSU.len() == STATUS_NZBASIC.len());
 
-/// The default status chip position (`leaderboard`), matching both backends'
+/// The default status chip position (`has leaderboard`), matching both backends'
 /// historical default so an untouched form never sweeps graveyard noise.
 const STATUS_DEFAULT_IDX: usize = 1;
+/// Chip slots the `all ranked` / `loved` presets seed, bound to their values for
+/// the same reason as [`MODE_STD_IDX`].
+const STATUS_RANKED_IDX: usize = 2;
+const STATUS_LOVED_IDX: usize = 5;
+const _: () = assert!(matches!(
+    STATUS_OSU[STATUS_RANKED_IDX],
+    Some(SearchStatus::Ranked)
+));
+const _: () = assert!(matches!(
+    STATUS_OSU[STATUS_LOVED_IDX],
+    Some(SearchStatus::Loved)
+));
 
 /// Special-tag chip labels; `special_idx` indexes this and [`SPECIAL_VALUES`].
 /// These flags exist only in nzbasic's database — a non-`none` value forces nzbasic.
@@ -854,6 +874,19 @@ const SPECIAL_VALUES: &[Option<FilterSpecial>] = &[
 ];
 
 const _: () = assert!(SPECIAL_LABELS.len() == SPECIAL_VALUES.len());
+
+/// Chip slots the farm / stream presets seed, bound to their values for the same
+/// reason as [`MODE_STD_IDX`].
+const SPECIAL_FARM_IDX: usize = 1;
+const SPECIAL_STREAM_IDX: usize = 2;
+const _: () = assert!(matches!(
+    SPECIAL_VALUES[SPECIAL_FARM_IDX],
+    Some(FilterSpecial::Farm)
+));
+const _: () = assert!(matches!(
+    SPECIAL_VALUES[SPECIAL_STREAM_IDX],
+    Some(FilterSpecial::Stream)
+));
 
 /// Preset chip labels. A preset is a seed-macro: selecting one RESETS the union
 /// criteria to defaults and seeds the fields below — every value stays visible
@@ -1040,16 +1073,16 @@ impl FindSource {
         }
 
         match PRESET_LABELS[idx] {
-            "all ranked" => self.status_idx = status_idx_of("ranked"),
-            "loved" => self.status_idx = status_idx_of("loved"),
+            "all ranked" => self.status_idx = STATUS_RANKED_IDX,
+            "loved" => self.status_idx = STATUS_LOVED_IDX,
             // BBD parity: its farm/stream presets pin mode to osu!standard.
             "farm" => {
-                self.mode_idx = mode_idx_of("osu");
-                self.special_idx = special_idx_of("farm");
+                self.mode_idx = MODE_STD_IDX;
+                self.special_idx = SPECIAL_FARM_IDX;
             }
             "stream" => {
-                self.mode_idx = mode_idx_of("osu");
-                self.special_idx = special_idx_of("stream");
+                self.mode_idx = MODE_STD_IDX;
+                self.special_idx = SPECIAL_STREAM_IDX;
             }
             "7★+" => self.stars.set_value("7+"),
             _ => {} // "none" = the plain reset above
@@ -1488,21 +1521,6 @@ fn cycle_idx(idx: usize, len: usize, forward: bool) -> usize {
 
 /// Union chip index for a status/mode/special label. The arrays are const-length
 /// and every seeded label appears in them, so a miss falls back to a safe slot.
-fn status_idx_of(label: &str) -> usize {
-    STATUS_LABELS
-        .iter()
-        .position(|&l| l == label)
-        .unwrap_or(STATUS_DEFAULT_IDX)
-}
-
-fn mode_idx_of(label: &str) -> usize {
-    MODE_LABELS.iter().position(|&l| l == label).unwrap_or(0)
-}
-
-fn special_idx_of(label: &str) -> usize {
-    SPECIAL_LABELS.iter().position(|&l| l == label).unwrap_or(0)
-}
-
 /// An exact-text osu criterion, or `None` when the field is blank.
 fn text_opt(field: &InputField) -> Option<String> {
     let value = field.value.trim();

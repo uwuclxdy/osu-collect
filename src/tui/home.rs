@@ -70,7 +70,8 @@ pub fn render(
 }
 
 /// Caret column for whichever text input is focused in edit mode: the update
-/// source's osu! path lives on `library` (width 0); find-source inputs align to
+/// source's osu! path lives on `library` (width 0); the find query is a boxed
+/// search input with its own fixed value column; the other find inputs align to
 /// [`find_source::LABEL_WIDTH`]; every other input (collection, directory) is
 /// its own width. `None` when the focused row isn't an editing text field.
 fn home_cursor_col(form: &HomeTab, library: &LibraryState, editing: bool) -> Option<u16> {
@@ -79,6 +80,9 @@ fn home_cursor_col(form: &HomeTab, library: &LibraryState, editing: bool) -> Opt
     }
     if form.focus == HomeField::UpdateOsuPath {
         return Some(widgets::input_cursor_col(&library.osu_path, 0));
+    }
+    if form.focus == HomeField::FindQuery {
+        return Some(widgets::search_box_cursor_col(&form.find.query));
     }
     let label_width = if form.focus.is_find_input() {
         find_source::LABEL_WIDTH
@@ -254,9 +258,16 @@ fn render_form(
             tick,
             primary,
         ),
-        GetMapsSource::Find => {
-            find_source::push_form_rows(&mut items, &form.find, focus, editing, tick, primary)
-        }
+        GetMapsSource::Find => find_source::push_form_rows(
+            &mut items,
+            &form.find,
+            focus,
+            editing,
+            tick,
+            primary,
+            widgets::panel_content_width(area),
+            chrome,
+        ),
     }
 
     if chrome {
@@ -427,7 +438,9 @@ fn mirror_summary_item(
 /// The download button sits below all sections, so it maps to no header
 /// (`SECTION_NONE`): focusing it leaves every section title un-underlined. The
 /// mirrors summary now lives inside the shared `download` section, so it lights
-/// that header (not a standalone `mirrors` one).
+/// that header (not a standalone `mirrors` one). The find source pushes its own
+/// eyebrows and resolves their active state itself (`find_source::find_section`),
+/// so every find field maps to no header here.
 fn home_section(field: HomeField) -> &'static str {
     use HomeField::*;
     match field {

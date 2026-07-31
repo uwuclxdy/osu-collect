@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
     layout::Rect,
     style::{Color, Style, Stylize},
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{
         Block, BorderType, List, ListItem, ListState, Padding, Scrollbar, ScrollbarOrientation,
         ScrollbarState,
@@ -104,6 +104,71 @@ impl<T: Copy + PartialEq> FormItems<T> {
     }
 }
 
+/// Row heights of a form list's items, in item order.
+///
+/// ratatui sizes each list item by [`ListItem::height`], so an item index stops
+/// being a row offset the moment one row is taller than a line (the boxed search
+/// input). Every index→row conversion in this module — the scroll clamp, the
+/// visible window, the caret row — reads this map, so they cannot drift apart.
+/// With every item one line tall each method reduces to the plain arithmetic it
+/// replaced, so a form of single-line rows renders and parks its caret exactly
+/// as before (`one_line_rows_render_and_park_the_caret_unchanged`).
+pub struct ItemHeights(Vec<usize>);
+
+impl ItemHeights {
+    pub fn of(items: &[ListItem<'_>]) -> Self {
+        Self(items.iter().map(ListItem::height).collect())
+    }
+
+    /// Top offset that leaves the last item flush with the viewport's bottom
+    /// edge: the smallest index whose tail fits in `visible` rows.
+    fn last_page_offset(&self, visible: usize) -> usize {
+        let mut used = 0usize;
+        let mut first = self.0.len();
+        for (index, height) in self.0.iter().enumerate().rev() {
+            used += height;
+            if used > visible {
+                break;
+            }
+            first = index;
+        }
+        first
+    }
+
+    /// One past the last item fully inside a `visible`-row viewport topped at
+    /// item `start`. An item that would straddle the bottom edge is excluded,
+    /// matching `List::get_items_bounds`, which stops at the first item whose
+    /// height overruns the remaining space rather than clipping it.
+    fn visible_end(&self, start: usize, visible: usize) -> usize {
+        let mut used = 0usize;
+        let mut end = start.min(self.0.len());
+        for height in &self.0[end..] {
+            if used + height > visible {
+                break;
+            }
+            used += height;
+            end += 1;
+        }
+        end
+    }
+
+    /// Rows between the viewport's top edge (item `start`) and item `index`.
+    fn rows_before(&self, start: usize, index: usize) -> usize {
+        let len = self.0.len();
+        self.0[start.min(len)..index.min(len).max(start.min(len))]
+            .iter()
+            .sum()
+    }
+
+    /// The row within item `index` that the text caret parks on: the item's
+    /// vertical middle. Ceiling: the only taller-than-one row is the 3-row
+    /// bordered search box, whose text line IS its middle row. An item with two
+    /// content rows would need its caret row carried alongside the column.
+    fn caret_row(&self, index: usize) -> usize {
+        self.0.get(index).copied().unwrap_or(1).saturating_sub(1) / 2
+    }
+}
+
 /// Renders an item list into `inner` with `ListState`-driven scrolling and,
 /// when `highlight` is set, the [`highlight_style`] on the focused
 /// row, then draws the overflow [`render_scrollbar`] in the panel's right
@@ -130,6 +195,7 @@ pub(crate) fn render_list(
     offset: &Cell<usize>,
 ) -> usize {
     let total = items.len();
+    let heights = ItemHeights::of(&items);
     // Persist the scroll offset across frames: seed the list with the previous
     // offset so ratatui only scrolls when the focused row falls outside the
     // viewport. A fresh `ListState::default()` each frame re-pins the selection
@@ -142,7 +208,7 @@ pub(crate) fn render_list(
     // grows or the content shrinks (menu closes, terminal resizes taller), so a
     // stale large offset leaves blank rows below the last item. Clamping refills
     // the viewport from the bottom the moment the space appears.
-    let max_offset = total.saturating_sub(inner.height as usize);
+    let max_offset = heights.last_page_offset(inner.height as usize);
     let mut state = ListState::default().with_offset(offset.get().min(max_offset));
     // Always scroll the focused row into view; only the highlight bar is gated.
     // `ListState::select(None)` zeroes the offset, so a cursorless list keeps its
@@ -364,11 +430,17 @@ pub fn render_scrollable_panel(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let total = items.len();
+    let heights = ItemHeights::of(&items);
     let start = render_list(frame, inner, items, Some(focused_index), highlight, offset);
-    let end = (start + inner.height as usize).min(total);
 
-    set_panel_cursor(frame, inner, focused_index, start, end, cursor_col);
+    set_panel_cursor(frame, inner, &heights, focused_index, start, cursor_col);
+}
+
+/// Content width of a [`panel_block`] drawn over `area` — the cells a form row
+/// has to draw into. Read off the block itself so a border or padding change
+/// can't leave a width-aware row (the boxed [`search_box_item`]) one cell off.
+pub fn panel_content_width(area: Rect) -> u16 {
+    panel_block("", None, false, false).inner(area).width
 }
 
 /// Column offset (within a panel's inner area) of the text caret for a focused
@@ -390,19 +462,29 @@ pub fn input_cursor_col(field: &InputField, label_width: usize) -> u16 {
 /// requested or the row is scrolled out of view. The column is clamped to the
 /// last cell of `inner` so a long value never parks the cursor past the panel
 /// edge. ratatui applies the request after the buffer flush (no flash).
+///
+/// The row comes from `heights`, not from the item index: a multi-row item
+/// above the focused one pushes it further down, and the focused item's own
+/// caret sits on its middle row (see [`ItemHeights::caret_row`]).
+///
+/// `start` is the resolved top item (`ListState::offset`); the bottom edge is
+/// derived from `heights` rather than passed in, so the caret cannot be placed
+/// on a row the list did not draw.
 pub fn set_panel_cursor(
     frame: &mut Frame,
     inner: Rect,
+    heights: &ItemHeights,
     focused_index: usize,
     start: usize,
-    end: usize,
     cursor_col: Option<u16>,
 ) {
     let Some(col) = cursor_col else { return };
+    let end = heights.visible_end(start, inner.height as usize);
     if inner.width == 0 || inner.height == 0 || focused_index < start || focused_index >= end {
         return;
     }
-    let y = inner.y + (focused_index - start) as u16;
+    let row = heights.rows_before(start, focused_index) + heights.caret_row(focused_index);
+    let y = inner.y + row as u16;
     let max_x = inner.x + inner.width - 1;
     let x = (inner.x + col).min(max_x);
     frame.set_cursor_position((x, y));
@@ -597,6 +679,77 @@ pub fn password_input_item(
         value,
     ];
     ListItem::new(Line::from(spans))
+}
+
+/// Left inset of the boxed search input, matching [`FOCUS_PAD`] on every other
+/// form row.
+const SEARCH_BOX_INSET: usize = 2;
+/// Cells the box's own chrome eats on its text row: the two border cells plus
+/// the 2-cell focus glyph.
+const SEARCH_BOX_CHROME: usize = 2 + FOCUS_PAD.len();
+/// Column the value starts at, shared by [`search_box_item`] and
+/// [`search_box_cursor_col`] so the caret can't drift off the text.
+const SEARCH_BOX_VALUE_COL: usize = SEARCH_BOX_INSET + 1 + FOCUS_PAD.len();
+
+/// A free-text input drawn as a 3-row bordered search box — top border, text,
+/// bottom border — spanning `width` (the panel's [`panel_content_width`]) less
+/// the left inset.
+///
+/// The box carries no label column: it IS the label, so the value starts at a
+/// fixed [`SEARCH_BOX_VALUE_COL`] rather than at a group-aligned one. The focus
+/// glyph sits inside the frame at the text row's left edge, so focus never rests
+/// on the border colour alone.
+///
+/// The frame is hand-drawn rather than a [`Block`]: a `List` item is `Text`, so
+/// there is no seam to hang a widget on inside a row. [`ItemHeights`] is what
+/// keeps the surrounding index math honest about the extra rows.
+pub fn search_box_item(
+    field: &InputField,
+    focused: bool,
+    editing: bool,
+    width: u16,
+) -> ListItem<'static> {
+    let box_width = (width as usize).saturating_sub(SEARCH_BOX_INSET);
+    let rail = box_width.saturating_sub(2);
+    let text_width = box_width.saturating_sub(SEARCH_BOX_CHROME);
+    // Focus is the box's own state, so the frame takes ACCENT while it holds the
+    // cursor and the recessive LINE otherwise.
+    let border = Style::default().fg(if focused { accent() } else { line() });
+
+    let (value, value_style) = if field.value.is_empty() {
+        (field.placeholder.clone(), Style::default().fg(text_faint()))
+    } else {
+        (field.value.clone(), Style::default().fg(accent()))
+    };
+    // Clipped, not wrapped: the frame owns the right edge, and a value long
+    // enough to reach it parks the caret on the last cell like any other row.
+    let (value, used) = truncate_to_width(&value, text_width as u16);
+    let pad = text_width.saturating_sub(used as usize);
+
+    ListItem::new(Text::from(vec![
+        Line::from(vec![
+            Span::raw(FOCUS_PAD),
+            Span::styled(format!("╭{}╮", "─".repeat(rail)), border),
+        ]),
+        Line::from(vec![
+            Span::raw(FOCUS_PAD),
+            Span::styled("│", border),
+            input_focus_span(focused, editing),
+            Span::styled(value, value_style),
+            Span::raw(" ".repeat(pad)),
+            Span::styled("│", border),
+        ]),
+        Line::from(vec![
+            Span::raw(FOCUS_PAD),
+            Span::styled(format!("╰{}╯", "─".repeat(rail)), border),
+        ]),
+    ]))
+}
+
+/// Caret column (within a panel's inner area) for a focused [`search_box_item`]:
+/// the box's fixed value column plus the caret's char offset into the value.
+pub fn search_box_cursor_col(field: &InputField) -> u16 {
+    (SEARCH_BOX_VALUE_COL + field.caret()) as u16
 }
 
 /// A stepper row showing a numeric value with an optional "recommended N" chip.

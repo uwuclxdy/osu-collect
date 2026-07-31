@@ -1,7 +1,9 @@
 use super::{
-    ButtonProminence, ListRows, button_item, button_item_with_loading_cue,
-    download_button_label_with_size, input_cursor_col, input_item, message_style, render_list,
-    render_scrollbar, render_windowed_list, set_panel_cursor, truncate_to_width,
+    ButtonProminence, ItemHeights, ListRows, button_item, button_item_with_loading_cue,
+    download_button_label_with_size, input_cursor_col, input_item, message_style,
+    panel_content_width, render_list, render_scrollable_panel, render_scrollbar,
+    render_windowed_list, search_box_cursor_col, search_box_item, set_panel_cursor,
+    truncate_to_width,
 };
 use crate::app::InputField;
 use crate::download::BeatmapStage;
@@ -9,21 +11,57 @@ use crate::tui::{
     FILL_BLOCK, FILL_SHADE, FILL_SPACE, GLYPH_BLOCK, GLYPH_SHADE, GLYPH_SPACE, accent, bg_hover,
     danger, glyph_fill, success, text, text_dim, text_faint, warning,
 };
-use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Modifier, widgets::ListItem};
+use ratatui::{
+    Terminal,
+    backend::TestBackend,
+    layout::Rect,
+    style::Modifier,
+    text::{Line, Text},
+    widgets::ListItem,
+};
+
+/// `n` list items, each `height` lines tall. Heights are read back off the real
+/// [`ListItem::height`] the renderer uses, so a fixture can't claim a shape
+/// ratatui would not agree with.
+fn items_tall(n: usize, height: usize) -> Vec<ListItem<'static>> {
+    (0..n)
+        .map(|index| ListItem::new(Text::from(vec![Line::from(format!("row {index}")); height])))
+        .collect()
+}
+
+/// One string per buffer row, symbols only. `assert_buffer_lines` compares
+/// styles too, and every colour here comes from the runtime theme, so a
+/// style-aware assertion would pin the palette instead of the layout.
+fn buffer_rows(buf: &ratatui::buffer::Buffer) -> Vec<String> {
+    (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect()
+}
 
 /// Drives [`set_panel_cursor`] through a real frame and reads back the terminal
 /// caret. Returns `None` when the frame left the cursor hidden, or `Some((x, y))`
 /// when it was positioned (ratatui applies the request after the buffer flush).
+///
+/// `heights` is the row height of each item, in item order.
 fn panel_cursor(
     inner: Rect,
+    heights: &[usize],
     focused_index: usize,
     start: usize,
-    end: usize,
     cursor_col: Option<u16>,
 ) -> Option<(u16, u16)> {
+    let items: Vec<ListItem<'static>> = heights
+        .iter()
+        .flat_map(|&height| items_tall(1, height))
+        .collect();
+    let heights = ItemHeights::of(&items);
     let mut terminal = Terminal::new(TestBackend::new(64, 24)).expect("test backend");
     terminal
-        .draw(|frame| set_panel_cursor(frame, inner, focused_index, start, end, cursor_col))
+        .draw(|frame| set_panel_cursor(frame, inner, &heights, focused_index, start, cursor_col))
         .expect("frame renders");
     let backend = terminal.backend();
     backend
@@ -55,25 +93,167 @@ fn input_cursor_col_tracks_caret_offset_not_value_length() {
     assert_eq!(input_cursor_col(&field, 0), 11);
 }
 
+/// Every row one line tall — the shape every form list had before the boxed
+/// search input, and the shape the parity pins below hold fixed.
+const FLAT: &[usize] = &[1; 16];
+
 #[test]
 fn panel_cursor_none_when_no_column() {
     let inner = Rect::new(2, 3, 40, 10);
-    assert_eq!(panel_cursor(inner, 5, 0, 10, None), None);
+    assert_eq!(panel_cursor(inner, FLAT, 5, 0, None), None);
 }
 
 #[test]
 fn panel_cursor_none_when_row_scrolled_out() {
     let inner = Rect::new(2, 3, 40, 10);
-    assert_eq!(panel_cursor(inner, 12, 0, 10, Some(4)), None);
+    assert_eq!(panel_cursor(inner, FLAT, 12, 0, Some(4)), None);
 }
 
 #[test]
 fn panel_cursor_maps_row_and_clamps_column() {
     let inner = Rect::new(2, 3, 10, 10); // x=2, width=10 → last col 11
     // focused row 4, window starts at 2 → visible row 2 → y = 3 + 2 = 5
-    assert_eq!(panel_cursor(inner, 4, 2, 10, Some(5)), Some((7, 5)));
+    assert_eq!(panel_cursor(inner, FLAT, 4, 2, Some(5)), Some((7, 5)));
     // column past the edge clamps to inner.x + width - 1 = 11
-    assert_eq!(panel_cursor(inner, 4, 2, 10, Some(99)), Some((11, 5)));
+    assert_eq!(panel_cursor(inner, FLAT, 4, 2, Some(99)), Some((11, 5)));
+}
+
+#[test]
+fn panel_cursor_counts_rows_not_items_past_a_tall_row() {
+    let inner = Rect::new(2, 3, 10, 10);
+    // Item 1 is the 3-row search box: item 3 starts 2 rows further down than a
+    // flat list would put it (1 + 3 + 1 = 5 rows in, not 3).
+    let heights = &[1, 3, 1, 1, 1];
+    assert_eq!(panel_cursor(inner, heights, 3, 0, Some(4)), Some((6, 8)));
+    // The tall row's own caret parks on its middle line, not its top border.
+    assert_eq!(panel_cursor(inner, heights, 1, 0, Some(4)), Some((6, 5)));
+}
+
+/// The parity pin for the flat path: a panel whose rows are all one line tall
+/// must render byte-for-byte and park its caret on the same cell as it did
+/// before list rows could be taller than a line. Every index→row conversion in
+/// `ItemHeights` runs here, so a change that only holds for multi-row items
+/// reds this instead of silently shifting Config, Login, and Downloads.
+#[test]
+fn one_line_form_renders_and_parks_the_caret_unchanged() {
+    let offset = std::cell::Cell::new(0);
+    let mut terminal = Terminal::new(TestBackend::new(20, 8)).expect("test backend");
+    terminal
+        .draw(|frame| {
+            render_scrollable_panel(
+                frame,
+                Rect::new(0, 0, 20, 8),
+                " FORM ",
+                None,
+                items_tall(6, 1),
+                2,
+                true,
+                Some(3),
+                true,
+                true,
+                &offset,
+            );
+        })
+        .expect("frame renders");
+    assert_eq!(
+        buffer_rows(terminal.backend().buffer()),
+        [
+            "╭ FORM ────────────╮",
+            "│ row 0            │",
+            "│ row 1            │",
+            "│ row 2            │",
+            "│ row 3            │",
+            "│ row 4            │",
+            "│ row 5            │",
+            "╰──────────────────╯",
+        ]
+    );
+    let backend = terminal.backend();
+    assert!(backend.cursor_visible(), "a caret column parks the cursor");
+    // inner starts at (2, 1) (border + left padding); focused item 2 with the
+    // window at the top sits 2 rows in, and the caret column is 3 past that.
+    assert_eq!(
+        (backend.cursor_position().x, backend.cursor_position().y),
+        (5, 3)
+    );
+    assert_eq!(offset.get(), 0, "a form that fits never scrolls");
+}
+
+#[test]
+fn panel_cursor_hidden_when_a_tall_row_does_not_fit() {
+    // A 2-row viewport can't hold the 3-row box at all, so ratatui draws none of
+    // it and no caret is placed — a flat row count would have said row 1 fits.
+    let inner = Rect::new(2, 3, 10, 2);
+    assert_eq!(panel_cursor(inner, &[1, 3], 1, 0, Some(4)), None);
+}
+
+#[test]
+fn panel_content_width_is_the_block_inner() {
+    // Two border cells plus the panel's 1-cell padding on each side.
+    assert_eq!(panel_content_width(Rect::new(0, 0, 24, 5)), 20);
+    // Narrower than its own chrome collapses to nothing rather than underflowing.
+    assert_eq!(panel_content_width(Rect::new(0, 0, 3, 5)), 0);
+}
+
+#[test]
+fn search_box_frames_the_value_across_the_panel_width() {
+    let mut field = InputField::new("query", "", "artist, title, mapper, tags…");
+    field.set_value("nekodex");
+    let offset = std::cell::Cell::new(0);
+    let mut terminal = Terminal::new(TestBackend::new(24, 4)).expect("test backend");
+    terminal
+        .draw(|frame| {
+            let _ = render_list(
+                frame,
+                Rect::new(0, 0, 24, 4),
+                vec![search_box_item(&field, true, true, 24)],
+                Some(0),
+                false,
+                &offset,
+            );
+        })
+        .expect("frame renders");
+    let rows = buffer_rows(terminal.backend().buffer());
+    assert_eq!(
+        rows,
+        [
+            "  ╭────────────────────╮",
+            "  │✎ nekodex           │",
+            "  ╰────────────────────╯",
+            "                        ",
+        ]
+    );
+    // The caret column is what the panel hands `set_panel_cursor`, so it has to
+    // land on the value the row actually drew, not merely agree with itself.
+    field.caret_home();
+    let col = search_box_cursor_col(&field) as usize;
+    assert_eq!(rows[1].chars().nth(col), Some('n'));
+}
+
+#[test]
+fn search_box_clips_a_value_wider_than_its_frame() {
+    let mut field = InputField::new("query", "", "");
+    field.set_value("a very long free text query that overruns the box");
+    let offset = std::cell::Cell::new(0);
+    let mut terminal = Terminal::new(TestBackend::new(20, 3)).expect("test backend");
+    terminal
+        .draw(|frame| {
+            let _ = render_list(
+                frame,
+                Rect::new(0, 0, 20, 3),
+                vec![search_box_item(&field, false, false, 20)],
+                Some(0),
+                false,
+                &offset,
+            );
+        })
+        .expect("frame renders");
+    // The frame owns the right edge: the value is cut with an ellipsis rather
+    // than pushing the border off the row.
+    assert_eq!(
+        buffer_rows(terminal.backend().buffer())[1],
+        "  │  a very long f…│"
+    );
 }
 
 #[test]
