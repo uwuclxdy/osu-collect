@@ -37,7 +37,7 @@ pub(super) fn handle_auth_event(event: AuthEvent, app: &mut App) {
             if outcome.needs_verification {
                 // The token is saved but device verification is pending, so it
                 // can't download yet — treat as logged-out until verified.
-                app.config.set_logged_out();
+                app.set_logged_out();
                 // The open panel advances to the verification step and shows the
                 // instruction inline; only toast when it's closed (a login can
                 // finish after the panel was dismissed mid-flight).
@@ -50,7 +50,7 @@ pub(super) fn handle_auth_event(event: AuthEvent, app: &mut App) {
                     );
                 }
             } else {
-                app.config.set_login_complete(outcome.supporter);
+                app.set_login_complete(outcome.supporter);
                 if let Some(login) = app.login.as_mut() {
                     login.enter_logged_in();
                 } else {
@@ -59,14 +59,14 @@ pub(super) fn handle_auth_event(event: AuthEvent, app: &mut App) {
             }
         }
         AuthEvent::LazerLoginComplete(Err(err)) => {
-            app.config.set_login_failed();
+            app.set_login_failed();
             if let Some(login) = app.login.as_mut() {
                 login.reset_credentials();
             }
             app.push_toast(Toast::danger("login failed").with_detail(err));
         }
         AuthEvent::VerificationComplete(Ok(supporter)) => {
-            app.config.set_login_complete(supporter);
+            app.set_login_complete(supporter);
             // The open panel shows the logged-in state inline; only toast when
             // it's closed.
             if let Some(login) = app.login.as_mut() {
@@ -78,7 +78,7 @@ pub(super) fn handle_auth_event(event: AuthEvent, app: &mut App) {
         AuthEvent::VerificationComplete(Err(err)) => {
             // Stay on the verification step (phase unchanged) so the user can
             // re-enter the code; just drop the in-progress status.
-            app.config.set_logged_out();
+            app.set_logged_out();
             app.push_toast(Toast::danger("verification failed").with_detail(err));
         }
         AuthEvent::ReissueComplete(Ok(())) => {
@@ -88,18 +88,18 @@ pub(super) fn handle_auth_event(event: AuthEvent, app: &mut App) {
             app.push_toast(Toast::danger("could not resend code").with_detail(err));
         }
         AuthEvent::LogoutComplete(Ok(())) => {
-            app.config.set_logged_out();
+            app.set_logged_out();
             if let Some(login) = app.login.as_mut() {
                 login.reset_credentials();
             }
             app.toast_ok("logged out");
         }
         AuthEvent::LogoutComplete(Err(err)) => {
-            app.config.set_login_failed();
+            app.set_login_failed();
             app.push_toast(Toast::danger("logout failed").with_detail(err));
         }
         AuthEvent::SupporterRefreshed(supporter) => {
-            app.config.set_supporter(supporter);
+            app.set_supporter(supporter);
         }
     }
 }

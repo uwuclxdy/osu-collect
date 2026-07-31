@@ -1173,9 +1173,14 @@ impl FindSource {
 
     /// Whether any advanced-section control carries a value: the five supporter
     /// facets that live there, or one of the 13 per-attribute range/text inputs.
-    /// A non-supporter can never move a facet off default, so this reduces to the
-    /// inputs there. `explicit` is deliberately absent — it renders in the main
-    /// FILTERS block, not behind the disclosure.
+    /// The facets count unconditionally — a supporter CAN set one and then lose
+    /// the gate, and skipping them here would only swap one stranding for
+    /// another (a live value hidden instead of a disclosure pinned open).
+    /// [`clear_supporter_facets`] is what settles that case, at the flip.
+    /// `explicit` is deliberately absent — it renders in the main FILTERS block,
+    /// not behind the disclosure.
+    ///
+    /// [`clear_supporter_facets`]: Self::clear_supporter_facets
     fn has_any_advanced_input(&self) -> bool {
         self.genre_idx != 0
             || self.language_idx != 0
@@ -1195,6 +1200,25 @@ impl FindSource {
             || !self.artist.value.is_empty()
             || !self.creator.value.is_empty()
             || !self.title.value.is_empty()
+    }
+
+    /// Return the six supporter facets to their defaults.
+    ///
+    /// Run whenever the supporter gate closes, because the rows stop rendering
+    /// but the values do not stop applying: a stray facet keeps forcing the osu
+    /// route, keeps naming itself in a conflict message for a field with no row
+    /// on screen, keeps [`show_advanced_filters`] pinned true so the disclosure
+    /// no longer responds, and keeps riding into the folder tag. Cycling the
+    /// preset chip was the only way out, which nobody would find.
+    ///
+    /// [`show_advanced_filters`]: Self::show_advanced_filters
+    pub fn clear_supporter_facets(&mut self) {
+        self.explicit_idx = 0;
+        self.genre_idx = 0;
+        self.language_idx = 0;
+        self.played_idx = 0;
+        self.extra.clear();
+        self.rank.clear();
     }
 
     // ── presets ───────────────────────────────────────────────────────────────
@@ -1219,12 +1243,7 @@ impl FindSource {
         // The six supporter facets are osu-forcers too, so a leftover one turns
         // a nzbasic-seeding preset (farm, stream) into a routing conflict — the
         // exact failure the reset above exists to prevent.
-        self.explicit_idx = 0;
-        self.genre_idx = 0;
-        self.language_idx = 0;
-        self.played_idx = 0;
-        self.extra.clear();
-        self.rank.clear();
+        self.clear_supporter_facets();
         for field in [
             &mut self.query,
             &mut self.stars,
