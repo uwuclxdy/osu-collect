@@ -24,13 +24,25 @@ use super::{accent, danger, focused_label, line, spinner_str, text_dim, text_fai
 const LABEL_PRESET: &str = "preset";
 const LABEL_SPECIAL: &str = "special";
 const LABEL_MODE: &str = "mode";
-const LABEL_STATUS: &str = "status";
+/// osu!'s own word for the rank-status facet.
+const LABEL_STATUS: &str = "categories";
 const LABEL_SORT: &str = "sort";
 const LABEL_ADVANCED: &str = "advanced filters";
 const LABEL_CTA: &str = "find";
 
-/// Shared label width so chips and inputs align their values. The widest label
-/// is the `favourites` range input, so every row's value stacks at that column.
+/// Eyebrow headers grouping the chips, so the form reads as three decisions
+/// (which macro / what to match / how to order) instead of one wall of rows.
+/// The query box, the `advanced filters` disclosure and its range inputs, and
+/// the CTAs sit outside every section.
+const SECTION_PRESET: &str = "preset";
+const SECTION_FILTERS: &str = "filters";
+const SECTION_RESULTS: &str = "results";
+/// Sentinel for a field under no eyebrow; never equals a rendered header label.
+const SECTION_NONE: &str = "";
+
+/// Shared label width so chips and inputs align their values. The widest labels
+/// are `favourites` and `categories` (10 each), so every row's value stacks at
+/// that column.
 /// `pub(crate)` so the Home view computes the caret column with the same offset.
 pub(crate) const LABEL_WIDTH: usize = "favourites".len();
 
@@ -43,6 +55,11 @@ pub const BROWSE_LIST_TITLE: &str = " RESULTS ";
 const CREDIT: &str = "data by nzbasic (batch beatmap downloader)";
 
 /// Push the find-source FORM rows into the Home panel.
+///
+/// `width` is the panel's content width, which the query box spans; `chrome`
+/// (off below `COMPACT_HEIGHT`) drops the section eyebrows, as it does for the
+/// shared download section.
+#[allow(clippy::too_many_arguments)]
 pub fn push_form_rows(
     items: &mut widgets::FormItems<HomeField>,
     find: &FindSource,
@@ -50,18 +67,33 @@ pub fn push_form_rows(
     editing: bool,
     tick: u64,
     primary: HomeField,
+    width: u16,
+    chrome: bool,
 ) {
     let route = find.resolved_route();
+    let active_section = find_section(focus);
+    let section = |items: &mut widgets::FormItems<HomeField>, label: &str| {
+        if chrome {
+            items.push(widgets::section_header(label, active_section == label));
+        }
+    };
 
-    push_input(
+    // The query is the form's headline control, so it renders as a search box
+    // spanning the panel rather than as one more labelled row.
+    items.push_focusable(
+        HomeField::FindQuery,
+        widgets::search_box_item(&find.query, focus == HomeField::FindQuery, editing, width),
+    );
+    push_hint(
         items,
         HomeField::FindQuery,
         &find.query,
         focus,
-        editing,
-        find,
+        field_error(find, HomeField::FindQuery),
     );
+    items.push(widgets::spacer());
 
+    section(items, SECTION_PRESET);
     items.push_focusable(
         HomeField::FindPreset,
         widgets::cycle_item(
@@ -73,16 +105,9 @@ pub fn push_form_rows(
         ),
     );
     items.push(widgets::spacer());
-    items.push_focusable(
-        HomeField::FindSpecial,
-        widgets::cycle_item(
-            LABEL_SPECIAL,
-            find.special_labels(),
-            find.special_label(),
-            focus == HomeField::FindSpecial,
-            LABEL_WIDTH,
-        ),
-    );
+
+    // Mode before categories, matching the osu! website's own facet order.
+    section(items, SECTION_FILTERS);
     items.push_focusable(
         HomeField::FindMode,
         widgets::cycle_item(
@@ -103,6 +128,21 @@ pub fn push_form_rows(
             LABEL_WIDTH,
         ),
     );
+    items.push_focusable(
+        HomeField::FindSpecial,
+        widgets::cycle_item(
+            LABEL_SPECIAL,
+            find.special_labels(),
+            find.special_label(),
+            focus == HomeField::FindSpecial,
+            LABEL_WIDTH,
+        ),
+    );
+    items.push(widgets::spacer());
+
+    // Sort and limit both shape the result SET rather than which maps match, so
+    // they group away from the criteria chips.
+    section(items, SECTION_RESULTS);
     let sort_labels = find.sort_labels();
     items.push_focusable(
         HomeField::FindSort,
@@ -113,6 +153,14 @@ pub fn push_form_rows(
             focus == HomeField::FindSort,
             LABEL_WIDTH,
         ),
+    );
+    push_input(
+        items,
+        HomeField::FindLimit,
+        &find.limit,
+        focus,
+        editing,
+        find,
     );
     items.push(widgets::spacer());
 
@@ -144,16 +192,6 @@ pub fn push_form_rows(
             push_input(items, field, input, focus, editing, find);
         }
     }
-    items.push(widgets::spacer());
-
-    push_input(
-        items,
-        HomeField::FindLimit,
-        &find.limit,
-        focus,
-        editing,
-        find,
-    );
     items.push(widgets::spacer());
 
     // A run in flight mirrors the scan CTA: the static `find` label swaps for an
@@ -207,6 +245,19 @@ pub fn push_form_rows(
         items.push(ListItem::new(Line::from(
             format!("  {CREDIT}").fg(text_faint()),
         )));
+    }
+}
+
+/// The eyebrow a focused find field sits under, driving its underline cue. The
+/// query box, the `advanced filters` disclosure and its range inputs, and the
+/// CTAs render outside every section, so focusing them lights no header.
+fn find_section(field: HomeField) -> &'static str {
+    use HomeField::*;
+    match field {
+        FindPreset => SECTION_PRESET,
+        FindMode | FindStatus | FindSpecial => SECTION_FILTERS,
+        FindSort | FindLimit => SECTION_RESULTS,
+        _ => SECTION_NONE,
     }
 }
 

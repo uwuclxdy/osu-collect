@@ -1476,7 +1476,7 @@ fn filter_chips_cycle_on_space_and_presets_seed_fields() {
         app.handle_key(press(KeyCode::Char(' ')));
     }
     assert_eq!(app.home.find.preset_label(), "farm");
-    assert_eq!(app.home.find.mode_label(), "osu");
+    assert_eq!(app.home.find.mode_label(), "osu!");
     assert_eq!(app.home.find.special_label(), "farm");
 }
 
@@ -1580,4 +1580,46 @@ fn request_find_download_nzbasic_route_uses_label_tag_and_ids() {
     let mut ids = request.beatmapset_ids.clone();
     ids.sort_unstable();
     assert_eq!(ids, vec![10, 20]);
+}
+
+/// Tab order must walk the form top to bottom. The rendered order is pinned
+/// separately by `find_form_groups_its_rows_under_section_eyebrows`, so a field
+/// list that drifts from the eyebrows reds one of the two.
+#[test]
+fn find_form_tab_order_matches_the_rendered_order() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    app.home.focus = HomeField::Source;
+    for expected in [
+        HomeField::FindQuery,
+        HomeField::FindPreset,
+        HomeField::FindMode,
+        HomeField::FindStatus,
+        HomeField::FindSpecial,
+        HomeField::FindSort,
+        HomeField::FindLimit,
+        HomeField::FindAdvanced,
+        HomeField::FindRun,
+        HomeField::FindBrowse,
+    ] {
+        app.handle_key(press(KeyCode::Down));
+        assert_eq!(app.home.focus, expected);
+    }
+}
+
+/// With the disclosure open the 13 range inputs slot in after it and before the
+/// CTAs, so the expanded list walks the same visual order.
+#[test]
+fn find_form_expanded_tab_order_runs_the_ranges_after_the_disclosure() {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    app.home.focus = HomeField::FindAdvanced;
+    app.handle_key(press(KeyCode::Char(' '))); // open the disclosure
+    app.handle_key(press(KeyCode::Down));
+    assert_eq!(app.home.focus, HomeField::FindStars);
+    app.home.focus = HomeField::FindTitle; // the last range input
+    app.handle_key(press(KeyCode::Down));
+    assert_eq!(app.home.focus, HomeField::FindRun);
 }

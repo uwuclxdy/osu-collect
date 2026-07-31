@@ -302,24 +302,27 @@ const COLLECTION_FIELDS: &[HomeField] = &[
     HomeField::Download,
 ];
 
-/// Find-source focus order: the strip, the free-text query, the chips (preset →
-/// special → mode → status → sort), the `advanced filters` disclosure, [the 13
-/// per-attribute range inputs when expanded], the limit, the `find` / `view N
-/// maps` CTAs, then the shared download section (mirrors / directory / threads /
-/// overwrite / video) and its `Download` button. One union list — the resolved
-/// backend is an implementation detail, so there is no per-backend field split.
-/// The download section is the same run settings every source shares
-/// (`self.home.*`), rendered inline on all three. Descending into the results
-/// browse suspends this nav (`SetBrowse::descend`); the download fires from
-/// `Download`.
+/// Find-source focus order: the strip, the free-text query box, the `preset`
+/// chip, the `filters` chips (mode → categories → special), the `results` rows
+/// (sort → limit), the `advanced filters` disclosure, [the 13 per-attribute
+/// range inputs when expanded], the `find` / `view N maps` CTAs, then the shared
+/// download section (mirrors / directory / threads / overwrite / video) and its
+/// `Download` button. Mirrors the rendered order section for section — a
+/// tab order that disagrees with the eyebrows is the bug this pairing prevents.
+/// One union list — the resolved backend is an implementation detail, so there
+/// is no per-backend field split. The download section is the same run settings
+/// every source shares (`self.home.*`), rendered inline on all three. Descending
+/// into the results browse suspends this nav (`SetBrowse::descend`); the
+/// download fires from `Download`.
 const FIND_FIELDS: &[HomeField] = &[
     HomeField::Source,
     HomeField::FindQuery,
     HomeField::FindPreset,
-    HomeField::FindSpecial,
     HomeField::FindMode,
     HomeField::FindStatus,
+    HomeField::FindSpecial,
     HomeField::FindSort,
+    HomeField::FindLimit,
     HomeField::FindAdvanced,
     HomeField::FindStars,
     HomeField::FindAr,
@@ -334,7 +337,6 @@ const FIND_FIELDS: &[HomeField] = &[
     HomeField::FindArtist,
     HomeField::FindCreator,
     HomeField::FindTitle,
-    HomeField::FindLimit,
     HomeField::FindRun,
     HomeField::FindBrowse,
     HomeField::Mirrors,
@@ -353,12 +355,12 @@ const FIND_FIELDS_COLLAPSED: &[HomeField] = &[
     HomeField::Source,
     HomeField::FindQuery,
     HomeField::FindPreset,
-    HomeField::FindSpecial,
     HomeField::FindMode,
     HomeField::FindStatus,
+    HomeField::FindSpecial,
     HomeField::FindSort,
-    HomeField::FindAdvanced,
     HomeField::FindLimit,
+    HomeField::FindAdvanced,
     HomeField::FindRun,
     HomeField::FindBrowse,
     HomeField::Mirrors,
