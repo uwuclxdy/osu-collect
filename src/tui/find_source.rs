@@ -102,6 +102,7 @@ pub fn push_form_rows(
             find.preset_label(),
             focus == HomeField::FindPreset,
             LABEL_WIDTH,
+            width,
         ),
     );
     items.push(widgets::spacer());
@@ -116,6 +117,7 @@ pub fn push_form_rows(
             find.mode_label(),
             focus == HomeField::FindMode,
             LABEL_WIDTH,
+            width,
         ),
     );
     items.push_focusable(
@@ -126,6 +128,7 @@ pub fn push_form_rows(
             find.status_label(),
             focus == HomeField::FindStatus,
             LABEL_WIDTH,
+            width,
         ),
     );
     items.push_focusable(
@@ -136,6 +139,7 @@ pub fn push_form_rows(
             find.special_label(),
             focus == HomeField::FindSpecial,
             LABEL_WIDTH,
+            width,
         ),
     );
     items.push(widgets::spacer());
@@ -152,6 +156,7 @@ pub fn push_form_rows(
             find.sort_label(),
             focus == HomeField::FindSort,
             LABEL_WIDTH,
+            width,
         ),
     );
     push_input(

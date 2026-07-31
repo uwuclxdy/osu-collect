@@ -114,7 +114,14 @@ pub fn render(
     mirror_latency: &HashMap<MirrorKind, Option<ProbeResult>>,
 ) {
     let show_chrome = area.height >= super::COMPACT_HEIGHT;
-    let items = build_config_items(form, show_chrome, editing, library_db_hint, mirror_latency);
+    let items = build_config_items(
+        form,
+        show_chrome,
+        editing,
+        library_db_hint,
+        mirror_latency,
+        widgets::panel_content_width(area),
+    );
 
     let cursor_col = editing
         .then(|| {
@@ -169,6 +176,7 @@ fn build_config_items(
     editing: bool,
     library_db_hint: &str,
     mirror_latency: &HashMap<MirrorKind, Option<ProbeResult>>,
+    width: u16,
 ) -> widgets::FormItems<ConfigField> {
     let focus = form.focus;
     let active_section = focus_section(focus);
@@ -194,6 +202,7 @@ fn build_config_items(
             theme_mode_label(form.theme),
             focus == ConfigField::Theme,
             0,
+            width,
         ),
     );
     items.push_focusable(
@@ -305,6 +314,7 @@ fn build_config_items(
             archive_validation_label(form.archive_validation),
             focus == ConfigField::DownloadArchiveValidation,
             0,
+            width,
         ),
     );
     if show_chrome && focus == ConfigField::DownloadArchiveValidation {
@@ -320,6 +330,7 @@ fn build_config_items(
             retry_failed_label(form.retry_failed_on_download),
             focus == ConfigField::RetryFailedOnDownload,
             0,
+            width,
         ),
     );
     if show_chrome && focus == ConfigField::RetryFailedOnDownload {
@@ -385,6 +396,7 @@ fn build_config_items(
             log_level_label(form.logging_level),
             focus == ConfigField::LoggingLevel,
             0,
+            width,
         ),
     );
     items.push_focusable(
@@ -395,6 +407,7 @@ fn build_config_items(
             log_format_label(form.logging_format),
             focus == ConfigField::LoggingFormat,
             0,
+            width,
         ),
     );
     items.push_focusable(
