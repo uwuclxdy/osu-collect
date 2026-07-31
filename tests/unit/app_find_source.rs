@@ -613,25 +613,47 @@ fn criteria_string_is_byte_pinned() {
     source.creator.set_value("toby");
     source.title.set_value("night");
     // Ranges render from parsed bounds in operator form (`9+` → `>=9`, bare `8`
-    // → `=8`, `<=4` → `<=4`); ranked/texts stay raw-trimmed.
+    // → `=8`, `<=4` → `<=4`); ranked/texts stay raw-trimmed. Chips contribute
+    // their index (`farm` = special 1, `osu!catch` = mode 3, `approved` =
+    // status 3), never their display text.
     assert_eq!(
         source.criteria_string(),
-        "special=farm|mode=osu!catch|status=approved|q=tekno|stars=>=6 <=7|ar=>=9|cs=<=4|od==8|hp=>=5.5 <=6.5|bpm=>=180|len=>=90 <=300|keys==7|fav=>=100|ranked=2024|artist=cam|creator=toby|title=night"
+        "special=1|mode=3|status=3|q=tekno|stars=>=6 <=7|ar=>=9|cs=<=4|od==8|hp=>=5.5 <=6.5|bpm=>=180|len=>=90 <=300|keys==7|fav=>=100|ranked=2024|artist=cam|creator=toby|title=night"
     );
+}
+
+/// Renaming a chip must NOT move the folder tag: the canonical string carries
+/// indices, so a label edit is invisible to the on-disk layout.
+#[test]
+fn chip_rename_cannot_move_the_criteria_string() {
+    let mut source = FindSource::new();
+    set_status(&mut source, "has leaderboard");
+    let canonical = source.criteria_string();
+    for key in ["special", "mode", "status"] {
+        let value = canonical
+            .split('|')
+            .find_map(|part| part.strip_prefix(&format!("{key}=")))
+            .unwrap_or_else(|| panic!("no {key} field in {canonical}"));
+        assert!(
+            value.parse::<usize>().is_ok(),
+            "{key} carries the display text {value:?}, not its index: {canonical}"
+        );
+    }
+    assert!(canonical.starts_with("special=0|mode=0|status=1|"));
 }
 
 /// Byte-pin of the folder-tag hash: FNV-1a-32 of the canonical criteria string,
 /// rendered as 8 lowercase hex. A hash-fn or canonical-shape change breaks this.
 ///
-/// The canonical string carries CHIP LABELS, so rewording one moves the tag and
-/// a chip-only run lands in a fresh directory. That is what this pin is for.
+/// The canonical string carries CHIP INDICES, so this pin moves only on a
+/// hash-fn, field-order, or chip-ORDER change — never on a reword.
 #[test]
 fn folder_tag_hash_is_byte_pinned() {
     let mut source = FindSource::new();
     source.stars.set_value("<=5");
-    // FNV-1a-32 of `special=none|mode=any|status=has leaderboard|q=|stars=<=5|`
-    // + the remaining empty criteria.
-    assert_eq!(source.folder_tag(), "cffcf7e4");
+    // FNV-1a-32 of `special=0|mode=0|status=1|q=|stars=<=5|ar=|cs=|od=|hp=|bpm=
+    // |len=|keys=|fav=|ranked=|artist=|creator=|title=`.
+    assert_eq!(source.folder_tag(), "a43c05c2");
 }
 
 /// Fix for raw-input hashing: equivalent numeric spellings share a folder tag
