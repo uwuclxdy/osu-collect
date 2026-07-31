@@ -17,8 +17,8 @@ use std::collections::HashMap;
 
 use super::widgets;
 use super::{
-    HELP_CUSTOM_MIRROR, HELP_OSU_OFFICIAL_LOCKED, bg_hover, bg_raised, danger, mirror_label,
-    success, text, text_dim, warning,
+    HELP_CUSTOM_MIRROR, HELP_OSU_OFFICIAL_LOCKED, accent, bg_hover, bg_raised, danger,
+    mirror_label, success, text, text_dim, warning,
 };
 use osu_downloader::MirrorKind;
 
@@ -49,6 +49,7 @@ const LABEL_PRERELEASES: &str = "prerelease channel";
 
 const CHIP_LOGGED_OUT: &str = " logged out";
 const CHIP_LOGGED_IN: &str = " logged in";
+const CHIP_SUPPORTER: &str = " · supporter";
 const CHIP_ACTION_LOGIN: &str = "log in";
 const CHIP_ACTION_MANAGE: &str = "manage";
 const CHIP_ACTION_VIEW: &str = "view";
@@ -467,20 +468,24 @@ fn focus_section(field: ConfigField) -> Option<&'static str> {
 
 /// Renders the auth state chip: a single styled row at the top of the config
 /// tab. The action segment opens the login split (which owns the actual
-/// login / verify / logout flow); the state segment mirrors `login_state`.
+/// login / verify / logout flow); the state segment mirrors `login_state`
+/// (plus a supporter badge appended only when logged in and confirmed).
 ///
-/// - Logged in:   ` logged in   manage`
-/// - Logged out:  ` logged out   log in`
-/// - In progress: ` logging in…   view`
+/// - Logged in, supporter:     ` logged in · supporter   manage`
+/// - Logged in, no supporter:  ` logged in   manage`
+/// - Logged out:                ` logged out   log in`
+/// - In progress:                ` logging in…   view`
 fn auth_chip_item(form: &ConfigTab) -> ListItem<'static> {
     let focused = form.focus == ConfigField::AuthChip;
     let chip_bg = Style::default().bg(bg_raised());
 
     // State segment (semantic when charged, TEXT_DIM neutral) then a 2-space
-    // gap on the chip fill, then the action segment — no mid-dot separator.
-    let (state, action_label) = match &form.login_state {
+    // gap on the chip fill, then the action segment — no mid-dot separator
+    // between state and action (the supporter badge's own mid-dot, inside the
+    // state segment, is a different join and unaffected by that rule).
+    let (mut spans, action_label) = match &form.login_state {
         AuthLoginState::LoggedOut => (
-            Span::styled(CHIP_LOGGED_OUT, chip_bg.fg(text_dim())),
+            vec![Span::styled(CHIP_LOGGED_OUT, chip_bg.fg(text_dim()))],
             CHIP_ACTION_LOGIN,
         ),
         AuthLoginState::InProgress(step) => {
@@ -490,19 +495,26 @@ fn auth_chip_item(form: &ConfigTab) -> ListItem<'static> {
                 format!(" {step} ").into()
             };
             // No italic — italic is reserved for panel/modal titles.
-            (Span::styled(label, chip_bg.fg(warning())), CHIP_ACTION_VIEW)
+            (
+                vec![Span::styled(label, chip_bg.fg(warning()))],
+                CHIP_ACTION_VIEW,
+            )
         }
-        AuthLoginState::LoggedIn => (
-            Span::styled(CHIP_LOGGED_IN, chip_bg.fg(success())),
-            CHIP_ACTION_MANAGE,
-        ),
+        AuthLoginState::LoggedIn => {
+            let mut spans = vec![Span::styled(CHIP_LOGGED_IN, chip_bg.fg(success()))];
+            // Absence, not a "no" label, marks the non-supporter case — same
+            // idiom as the mirror latency suffix (`latency_span`).
+            if form.supporter {
+                spans.push(Span::styled(CHIP_SUPPORTER, chip_bg.fg(accent())));
+            }
+            (spans, CHIP_ACTION_MANAGE)
+        }
     };
 
-    ListItem::new(Line::from(vec![
-        state,
-        Span::styled("  ", chip_bg),
-        chip_action_span(action_label, focused, chip_bg),
-    ]))
+    spans.push(Span::styled("  ", chip_bg));
+    spans.push(chip_action_span(action_label, focused, chip_bg));
+
+    ListItem::new(Line::from(spans))
 }
 
 /// The chip's inline action segment.
@@ -558,3 +570,7 @@ fn theme_mode_label(mode: ThemeMode) -> &'static str {
         ThemeMode::Compatible => "compatible",
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/tui_config.rs"]
+mod tests;

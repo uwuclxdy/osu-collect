@@ -17,6 +17,7 @@ fn make_auth(expires_at: u64) -> StoredAuth {
         refresh_token: Some("rtok".into()),
         expires_at,
         scopes: vec!["public".into(), "identify".into()],
+        supporter: None,
     }
 }
 
