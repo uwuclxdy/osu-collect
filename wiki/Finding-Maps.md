@@ -20,7 +20,7 @@ Rows group under `preset`, `filters` and `results` headings; the `advanced filte
 
 Six more filters appear when you are logged in with an account that has osu!supporter: `explicit` in the filters block, and `genre`, `language`, `extra`, `rank`, `played` at the top of `advanced filters`. osu! only honors these for a supporter token, so without one they are not shown at all.
 
-`extra` and `rank` take several values at once. Each of their chips carries a `●` when picked and a `○` when not; <kbd>⇧</kbd>+<kbd>←</kbd> / <kbd>⇧</kbd>+<kbd>→</kbd> move between chips and <kbd>space</kbd> toggles the one you are on. Plain <kbd>←</kbd> / <kbd>→</kbd> keep switching tabs, as everywhere else.
+`extra` and `rank` take several values at once. Each of their chips shows `[x]` when picked and `[ ]` when not. Press <kbd>↵</kbd> or <kbd>space</kbd> to open the row: its gutter mark turns `✎` and a `❯` caret picks out one chip. <kbd>←</kbd> / <kbd>→</kbd> then walk the caret, <kbd>space</kbd> toggles the chip under it. <kbd>↵</kbd>, <kbd>esc</kbd> or <kbd>q</kbd> close the row again; <kbd>↑</kbd> / <kbd>↓</kbd> close it on the way to another row. With the row closed, <kbd>←</kbd> / <kbd>→</kbd> switch tabs as everywhere else.
 
 All six force the osu! api route. Losing supporter status resets them to their defaults.
 
