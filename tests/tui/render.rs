@@ -1607,3 +1607,135 @@ fn find_form_speaks_osu_vocabulary() {
         "the rank-status facet is `categories` with a `has leaderboard` chip: {categories:?}"
     );
 }
+
+// ── supporter-gated find rows ─────────────────────────────────────────────────
+
+/// A find form with the advanced disclosure open, for the supporter facets that
+/// live behind it. `supporter` is the gate under test, so each caller sets it —
+/// a fixture that fixed it either way would test nothing.
+fn find_app(supporter: bool) -> App {
+    use osu_collect::app::GetMapsSource;
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    app.config.supporter = supporter;
+    app.home.find.toggle_advanced_filters();
+    app
+}
+
+/// Every one of the six labels, so a row that slipped past the gate is caught by
+/// name rather than by an aggregate count. Matched with a trailing space, which
+/// is what separates the `rank` row from the `ranked` one it sits above.
+const FACET_LABELS: [&str; 6] = [
+    "explicit ",
+    "genre ",
+    "language ",
+    "extra ",
+    "rank ",
+    "played ",
+];
+
+#[test]
+fn supporter_facets_do_not_render_without_supporter() {
+    let content = render_content(&find_app(false), 90, 60);
+    for label in FACET_LABELS {
+        assert!(
+            !content.contains(label),
+            "{label} renders for a non-supporter: {content}"
+        );
+    }
+    // The rows the gate must NOT touch are still there, so this is a targeted
+    // absence and not an empty render.
+    assert!(content.contains("categories") && content.contains("special"));
+    assert!(content.contains("favourites"), "advanced section is open");
+}
+
+#[test]
+fn supporter_facets_render_with_their_chips_for_a_supporter() {
+    let content = render_content(&find_app(true), 90, 60);
+    for label in FACET_LABELS {
+        assert!(
+            content.contains(label),
+            "{label} row missing for a supporter: {content}"
+        );
+    }
+    // Chip values, not just the labels: one per row, including both multi-selects.
+    for chip in ["anime", "japanese", "storyboard", "unplayed"] {
+        assert!(content.contains(chip), "{chip} chip missing: {content}");
+    }
+    assert!(content.contains("XH"), "rank chips render: {content}");
+}
+
+/// The chip cursor and the picked members are separate cues: `[brackets]` follow
+/// the cursor (focus), `ACCENT` marks every picked chip (selection). Both must be
+/// readable at once, which is the whole reason the row is not a cycle.
+#[test]
+fn multi_select_row_brackets_the_cursor_and_accents_the_picked() {
+    use osu_collect::app::HomeField;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = find_app(true);
+    app.home.focus = HomeField::FindExtra;
+    // Cursor starts on the first chip, nothing picked.
+    let content = render_content(&app, 90, 60);
+    assert!(
+        content.contains("[video]"),
+        "cursor brackets chip 0: {content}"
+    );
+
+    // `space` picks it, `⇧→` walks the cursor on: the bracket moves, the pick stays.
+    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
+    let buf = render_to_buffer(&app, 90, 60);
+    let rows: Vec<String> = (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect();
+    // Anchored on `storyboard`: `video` alone also matches the genre row's
+    // `video game` chip, which would silently test the wrong row.
+    let row = rows
+        .iter()
+        .find(|line| line.contains("storyboard"))
+        .unwrap_or_else(|| panic!("no extra row: {rows:?}"));
+    assert!(
+        row.contains("[storyboard]") && !row.contains("[video]"),
+        "the bracket follows the cursor, not the pick: {row}"
+    );
+
+    // The picked chip is the accented one; the cursor chip is not.
+    let accent = osu_collect::tui::theme().accent;
+    let picked_at = row.find("video").expect("video on the row") as u16;
+    let y = rows.iter().position(|line| line == row).expect("row index") as u16;
+    assert_eq!(
+        buf[(picked_at, y)].style().fg,
+        Some(accent),
+        "a picked chip carries the selection colour: {row}"
+    );
+    let cursor_at = row.find("[storyboard]").expect("cursor chip") as u16 + 1;
+    assert_ne!(
+        buf[(cursor_at, y)].style().fg,
+        Some(accent),
+        "an unpicked chip under the cursor is not accented: {row}"
+    );
+}
+
+/// A sub-cursor nobody can find is a sub-cursor nobody uses: the key that moves
+/// it must be advertised while such a row holds focus.
+#[test]
+fn multi_select_row_advertises_the_chip_cursor_key() {
+    use osu_collect::app::HomeField;
+    let mut app = find_app(true);
+    app.home.focus = HomeField::FindRank;
+    let content = render_content(&app, 120, 60);
+    assert!(
+        content.contains("⇧←→ pick"),
+        "footer must name the chip-cursor key: {content}"
+    );
+    // And in place on the row itself, where the user is looking.
+    assert!(
+        content.contains("shift+←→"),
+        "the row states its own grammar: {content}"
+    );
+}

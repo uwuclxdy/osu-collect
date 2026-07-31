@@ -1591,6 +1591,8 @@ fn find_form_tab_order_matches_the_rendered_order() {
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
     app.home.focus = HomeField::Source;
+    // Default account, so the supporter gate is shut — this is the NON-supporter
+    // order. Both legs are pinned at the model level in `app::home`'s tests.
     for expected in [
         HomeField::FindQuery,
         HomeField::FindPreset,
@@ -1609,7 +1611,8 @@ fn find_form_tab_order_matches_the_rendered_order() {
 }
 
 /// With the disclosure open the 13 range inputs slot in after it and before the
-/// CTAs, so the expanded list walks the same visual order.
+/// CTAs, so the expanded list walks the same visual order. Non-supporter, so the
+/// five gated facets that would otherwise open the section are absent.
 #[test]
 fn find_form_expanded_tab_order_runs_the_ranges_after_the_disclosure() {
     use osu_collect::app::{GetMapsSource, HomeField};
@@ -1622,4 +1625,95 @@ fn find_form_expanded_tab_order_runs_the_ranges_after_the_disclosure() {
     app.home.focus = HomeField::FindTitle; // the last range input
     app.handle_key(press(KeyCode::Down));
     assert_eq!(app.home.focus, HomeField::FindRun);
+}
+
+// ── multi-select chip rows (extra / rank) ─────────────────────────────────────
+
+fn find_app_on(field: osu_collect::app::HomeField) -> App {
+    use osu_collect::app::GetMapsSource;
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    app.config.supporter = true;
+    app.home.find.toggle_advanced_filters();
+    app.home.focus = field;
+    app
+}
+
+/// The contract the chip cursor had to survive: PLAIN `←`/`→` keep switching
+/// tabs, on a multi-select row exactly as everywhere else. Only the shifted pair
+/// is carved out. Break this and the sub-cursor has eaten a global key.
+#[test]
+fn plain_arrows_still_switch_tabs_on_a_multi_select_row() {
+    use osu_collect::app::{HomeField, Tab};
+    let mut app = find_app_on(HomeField::FindRank);
+    assert_eq!(app.active_tab(), Tab::Home);
+
+    app.handle_key(press(KeyCode::Right));
+    assert_ne!(app.active_tab(), Tab::Home, "→ must still leave the tab");
+
+    let mut app = find_app_on(HomeField::FindExtra);
+    app.handle_key(press(KeyCode::Left));
+    assert_ne!(app.active_tab(), Tab::Home, "← must still leave the tab");
+
+    // And the row itself is untouched by them — no cursor move, no pick.
+    let mut app = find_app_on(HomeField::FindExtra);
+    app.handle_key(press(KeyCode::Right));
+    assert_eq!(app.home.find.extra.cursor(), 0);
+    assert!(app.home.find.extra.is_empty());
+}
+
+#[test]
+fn shift_arrows_walk_the_chip_cursor_without_leaving_the_tab() {
+    use osu_collect::app::{HomeField, Tab};
+    let mut app = find_app_on(HomeField::FindRank);
+
+    app.handle_key(shift(KeyCode::Right));
+    assert_eq!(app.active_tab(), Tab::Home, "⇧→ is consumed by the row");
+    assert_eq!(app.home.find.rank.cursor(), 1);
+    app.handle_key(shift(KeyCode::Right));
+    assert_eq!(app.home.find.rank.cursor(), 2);
+    app.handle_key(shift(KeyCode::Left));
+    assert_eq!(app.home.find.rank.cursor(), 1);
+    // Walking alone picks nothing.
+    assert!(app.home.find.rank.is_empty());
+}
+
+/// `space` and `enter` both toggle the chip under the cursor — the shipped chip
+/// convention, not a third binding.
+#[test]
+fn space_and_enter_both_toggle_the_chip_under_the_cursor() {
+    use osu_collect::app::HomeField;
+    for key in [KeyCode::Char(' '), KeyCode::Enter] {
+        let mut app = find_app_on(HomeField::FindExtra);
+        app.handle_key(shift(KeyCode::Right)); // cursor → storyboard
+        app.handle_key(press(key));
+        assert!(
+            !app.home.find.extra.contains(0) && app.home.find.extra.contains(1),
+            "{key:?} toggled the wrong chip"
+        );
+        app.handle_key(press(key));
+        assert!(
+            app.home.find.extra.is_empty(),
+            "{key:?} must toggle back off"
+        );
+    }
+}
+
+/// The shifted binding is gated on the supporter flag as well as the row, so the
+/// keys and the render can never disagree about whether the row exists.
+#[test]
+fn shift_arrows_switch_tabs_again_once_the_supporter_gate_closes() {
+    use osu_collect::app::{HomeField, Tab};
+    let mut app = find_app_on(HomeField::FindExtra);
+    app.config.supporter = false;
+
+    app.handle_key(shift(KeyCode::Right));
+    assert_ne!(
+        app.active_tab(),
+        Tab::Home,
+        "with the gate shut the row is gone, so ⇧→ falls through to the tab switch"
+    );
+    assert_eq!(app.home.find.extra.cursor(), 0, "and moves no cursor");
+    // The focus clamp fired on the same keypress, so the caret is off the row.
+    assert_eq!(app.home.focus, HomeField::Source);
 }

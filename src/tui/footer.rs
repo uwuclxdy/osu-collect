@@ -56,6 +56,11 @@ const HINT_SOURCE_JUMP: &str = "1-3 switch source";
 const HINT_CYCLE: &str = "space cycle";
 /// Find form's advanced-filters disclosure: `space` expands / collapses it.
 const HINT_DISCLOSE: &str = "space toggle";
+/// Find form multi-select chip row (`extra` / `rank`): `⇧←→` walks the row's own
+/// chip cursor — plain `←→` still switch tabs — and `space` toggles the chip it
+/// rests on. One segment, because half of it advertises a key that does nothing
+/// without the other half.
+const HINT_CHIP_PICK: &str = "⇧←→ pick · space toggle";
 /// Find form's CTA: run the resolved query (osu search or nzbasic filter).
 const HINT_FIND: &str = "↵ find";
 /// Find browse (list pane): load the next page of results.
@@ -479,6 +484,7 @@ fn home_form_hints(form: &HomeTab) -> Vec<&'static str> {
         HomeField::Mirrors => segments.push(HINT_ENTER_OPEN),
         HomeField::FindRun => segments.push(HINT_FIND),
         f if f.is_find_chip() => segments.push(HINT_CYCLE),
+        f if f.is_find_multi_chip() => segments.push(HINT_CHIP_PICK),
         f if f.is_disclosure() => segments.push(HINT_DISCLOSE),
         f if f.is_stepper() => segments.push(HINT_PLUS_MINUS),
         f if f.is_toggle() => segments.push(HINT_ENTER_TOGGLE),

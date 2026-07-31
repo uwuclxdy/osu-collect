@@ -422,3 +422,125 @@ fn collection_subset_picked_gates_on_current_collection() {
         "a pick from collection 42 must not label/dispatch collection 99"
     );
 }
+
+// ── supporter gate on the find form ───────────────────────────────────────────
+
+use crate::app::GetMapsSource;
+
+/// Walk the whole tab order from the source strip, returning the fields reached.
+/// Drives `next_field` the way `↓` does rather than reading the const list, so a
+/// row hidden from the render but left in the list still shows up here.
+fn tab_order(home: &mut HomeTab, supporter: bool) -> Vec<HomeField> {
+    home.focus = HomeField::Source;
+    let mut seen = vec![HomeField::Source];
+    loop {
+        home.next_field(supporter);
+        if home.focus == HomeField::Source {
+            return seen;
+        }
+        assert!(seen.len() < 64, "tab order never wrapped: {seen:?}");
+        seen.push(home.focus);
+    }
+}
+
+const SUPPORTER_ROWS: [HomeField; 6] = [
+    HomeField::FindExplicit,
+    HomeField::FindGenre,
+    HomeField::FindLanguage,
+    HomeField::FindExtra,
+    HomeField::FindRank,
+    HomeField::FindPlayed,
+];
+
+fn find_home(open_advanced: bool) -> HomeTab {
+    let mut home = HomeTab::new(&Config::default());
+    home.source = GetMapsSource::Find;
+    if open_advanced {
+        home.find.toggle_advanced_filters();
+    }
+    home
+}
+
+/// A hidden row must not be reachable by tab. Both legs of the gate, and both
+/// disclosure states — the two dimensions are independent, so a filter keyed on
+/// only one of them passes the other leg by accident.
+#[test]
+fn supporter_rows_leave_the_tab_order_for_a_non_supporter() {
+    for open_advanced in [false, true] {
+        let mut home = find_home(open_advanced);
+        let gated = tab_order(&mut home, false);
+        for row in SUPPORTER_ROWS {
+            assert!(
+                !gated.contains(&row),
+                "{row:?} is tab-reachable without supporter (advanced open: {open_advanced})"
+            );
+        }
+        // The rows around them are untouched, so the gate removed exactly the six.
+        assert!(gated.contains(&HomeField::FindStatus) && gated.contains(&HomeField::FindSpecial));
+    }
+}
+
+#[test]
+fn supporter_rows_join_the_tab_order_for_a_supporter() {
+    // Collapsed: only `explicit` (it lives in the main filters block); the other
+    // five are behind the disclosure and stay out until it opens.
+    let mut home = find_home(false);
+    let collapsed = tab_order(&mut home, true);
+    assert!(collapsed.contains(&HomeField::FindExplicit));
+    for row in [
+        HomeField::FindGenre,
+        HomeField::FindLanguage,
+        HomeField::FindExtra,
+        HomeField::FindRank,
+        HomeField::FindPlayed,
+    ] {
+        assert!(
+            !collapsed.contains(&row),
+            "{row:?} before the disclosure opens"
+        );
+    }
+
+    let mut home = find_home(true);
+    let open = tab_order(&mut home, true);
+    for row in SUPPORTER_ROWS {
+        assert!(
+            open.contains(&row),
+            "{row:?} missing from the supporter tab order"
+        );
+    }
+    // Order follows the render: explicit between categories and special; the
+    // five facets open the advanced section, ahead of `stars`.
+    let at = |field: HomeField| {
+        open.iter()
+            .position(|&f| f == field)
+            .expect("field in order")
+    };
+    assert!(at(HomeField::FindStatus) < at(HomeField::FindExplicit));
+    assert!(at(HomeField::FindExplicit) < at(HomeField::FindSpecial));
+    assert!(at(HomeField::FindAdvanced) < at(HomeField::FindGenre));
+    assert!(at(HomeField::FindGenre) < at(HomeField::FindLanguage));
+    assert!(at(HomeField::FindLanguage) < at(HomeField::FindExtra));
+    assert!(at(HomeField::FindExtra) < at(HomeField::FindRank));
+    assert!(at(HomeField::FindRank) < at(HomeField::FindPlayed));
+    assert!(at(HomeField::FindPlayed) < at(HomeField::FindStars));
+}
+
+/// The gate can close under a focused row (a logout, a `/me` re-probe that comes
+/// back negative). Focus must leave, or the caret parks on a row that no longer
+/// renders.
+#[test]
+fn focus_leaves_a_supporter_row_when_the_gate_closes() {
+    for row in SUPPORTER_ROWS {
+        let mut home = find_home(true);
+        home.focus = row;
+        home.clamp_supporter_focus(true);
+        assert_eq!(home.focus, row, "a confirmed supporter keeps {row:?}");
+        home.clamp_supporter_focus(false);
+        assert_eq!(home.focus, HomeField::Source, "{row:?} must release focus");
+    }
+    // A non-supporter row is never displaced by the clamp.
+    let mut home = find_home(true);
+    home.focus = HomeField::FindStars;
+    home.clamp_supporter_focus(false);
+    assert_eq!(home.focus, HomeField::FindStars);
+}
