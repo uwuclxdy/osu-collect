@@ -2278,13 +2278,17 @@ impl App {
             // these rows like everywhere else, so the global binding keeps its
             // contract, and ⇧+arrow is the shape this app already uses for a
             // row-local action (the Config tab's ⇧↑/⇧↓ mirror reorder below).
-            // Guarded on the supporter flag as well as the row, so the pair that
-            // renders the rows and the pair that keys them can never disagree.
+            // Focus is the whole gate, as it is for the `space`/`enter` toggle on
+            // these same rows: a supporter row is reachable only through
+            // `HomeTab::active_fields`, which drops it without supporter, and
+            // `settle_supporter_gate` moves focus off it the moment the flag
+            // flips. A second read of the flag here could never be the deciding
+            // one, and having one of the row's two handlers check it invites the
+            // reading that the other forgot to.
             KeyCode::Left | KeyCode::Right
                 if key.modifiers.contains(KeyModifiers::SHIFT)
                     && self.active_tab() == Tab::Home
                     && !self.home_set_browsing()
-                    && self.config.supporter
                     && self.home.focus.is_find_multi_chip() =>
             {
                 self.move_find_chip_cursor(key.code == KeyCode::Right);
