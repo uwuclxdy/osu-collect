@@ -974,9 +974,12 @@ const _: () = assert!(RANK_LABELS.len() == Rank::ALL.len());
 /// chip cursor `⇧←`/`⇧→` walk. One shape for both rows — the library bitset each
 /// converts to at build time is the only difference between them.
 ///
-/// Members are addressed by POSITION in the row's label table, which the const
-/// asserts above bind to the library's own `ALL` order. Nothing here stores a
-/// label, so a reword cannot reach the mask (and through it the folder tag).
+/// Members are addressed by POSITION in the row's label table. The const asserts
+/// above only pin those tables' LENGTH; what binds each position to the library's
+/// own `ALL` order is `every_chip_label_names_its_own_library_variant`, which
+/// compares every label against its variant's own name. Nothing here stores a
+/// label, so a reword cannot reach the mask (and through it the folder tag) — but
+/// a REORDER reaches both, which is what that test exists for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChipSet {
     mask: u8,

@@ -784,6 +784,87 @@ fn pick(chips: &mut ChipSet, indices: &[usize]) {
     }
 }
 
+/// A chip label and its variant's `Debug` name, reduced to what the two are
+/// meant to share: the same word, ignoring case and word-split (`VideoGame` vs
+/// `"video game"`, `Xh` vs `"XH"`).
+fn squash(text: &str) -> String {
+    text.chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_lowercase()
+}
+
+/// The one thing binding a chip's DISPLAY text to the value it sends is its
+/// position, and the four length asserts on the label tables pass any reorder:
+/// swap two entries and the form offers `rock` while sending `g=3` (anime), with
+/// the whole suite green and both the results and the on-disk folder tag wrong.
+///
+/// The expected side is derived from the LIBRARY enum, never from the table
+/// under test — the `every_*_maps_to_its_library_variant` tests read
+/// `GENRE_LABELS[idx]` on both sides, so they only ever proved the cycle steps
+/// by one.
+#[test]
+fn every_chip_label_names_its_own_library_variant() {
+    // `any_slots` is how many leading "no parameter" entries the label table
+    // carries before it starts tracking `ALL` position for position.
+    let rows: [(&str, &[&str], Vec<String>, usize); 4] = [
+        (
+            "genre",
+            GENRE_LABELS,
+            Genre::ALL.iter().map(|v| format!("{v:?}")).collect(),
+            1,
+        ),
+        (
+            "language",
+            LANGUAGE_LABELS,
+            Language::ALL.iter().map(|v| format!("{v:?}")).collect(),
+            1,
+        ),
+        (
+            "extra",
+            EXTRA_LABELS,
+            Extra::ALL.iter().map(|v| format!("{v:?}")).collect(),
+            0,
+        ),
+        (
+            "rank",
+            RANK_LABELS,
+            Rank::ALL.iter().map(|v| format!("{v:?}")).collect(),
+            0,
+        ),
+    ];
+    for (chip, labels, variants, any_slots) in rows {
+        assert_eq!(
+            labels.len(),
+            variants.len() + any_slots,
+            "{chip}: label table and `ALL` disagree on length"
+        );
+        for (slot, label) in labels.iter().take(any_slots).enumerate() {
+            assert_eq!(*label, "any", "{chip}: slot {slot} sends no parameter");
+        }
+        for (slot, variant) in variants.iter().enumerate() {
+            let label = labels[slot + any_slots];
+            assert_eq!(
+                squash(label),
+                squash(variant),
+                "{chip} chip {} reads {label:?} but sends {variant}",
+                slot + any_slots
+            );
+        }
+        // Two labels that normalize alike would make a swap between them
+        // invisible here, so the pin asserts it can still fail.
+        let mut normalized: Vec<String> = labels.iter().map(|l| squash(l)).collect();
+        let count = normalized.len();
+        normalized.sort();
+        normalized.dedup();
+        assert_eq!(
+            normalized.len(),
+            count,
+            "{chip}: two labels normalize alike, so this test cannot see them swap"
+        );
+    }
+}
+
 /// Every genre slot must resolve to the library variant at the same position in
 /// [`Genre::ALL`]. Enumerated rather than spot-checked: osu!'s genre ids skip 8,
 /// so an off-by-one against `ALL` is invisible until the exact slot is asked for.
