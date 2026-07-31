@@ -574,45 +574,94 @@ fn update_source_shows_client_toggle() {
 
 // ── config view ──────────────────────────────────────────────────────────────
 
-/// One leg per `AuthLoginState` arm, each pinning the literal copy that arm
-/// renders. The state is set explicitly because `ConfigTab::new` seeds it from
-/// `auth::load()` — a real `auth.json` on the developer's box otherwise decides
-/// which arm this renders, and the assertion silently changes meaning with it.
-///
-/// Substring, not equality: the chip's state segment carries suffixes (the
-/// supporter badge) that are not this test's boundary.
-#[test]
-fn config_tab_shows_auth_chip() {
-    use osu_collect::app::AuthLoginState;
-
-    for (state, expect_label, expect_action, forbid) in [
-        (AuthLoginState::LoggedOut, " logged out", "log in", "manage"),
-        (
-            AuthLoginState::InProgress(String::new()),
-            " logging in…",
-            "view",
-            "manage",
-        ),
-        (AuthLoginState::LoggedIn, " logged in", "manage", "log in"),
-    ] {
-        let mut app = make_app();
-        app.next_tab();
-        app.next_tab(); // home → downloads → config
-        app.config.login_state = state.clone();
-        let content = render_content(&app, 120, 40);
-        assert!(
-            content.contains(expect_label),
-            "{state:?} must render {expect_label:?}: {content}"
-        );
-        assert!(
-            content.contains(expect_action),
-            "{state:?} must render the {expect_action:?} action: {content}"
-        );
-        assert!(
-            !content.contains(forbid),
-            "{state:?} must not render {forbid:?}: {content}"
-        );
+/// Render the config tab with `OSU_COLLECT_AUTH` pointed at a temp dir, so the
+/// chip reflects `auth_json` and not whatever login the machine running the
+/// test happens to have stored.
+fn config_tab_with_stored_auth(auth_json: Option<&str>) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("auth.json");
+    if let Some(json) = auth_json {
+        std::fs::write(&path, json).unwrap();
     }
+    let _env = osu_collect::test_env::TempEnvVar::set(
+        osu_collect::auth::AUTH_ENV_PATH,
+        path.to_str().unwrap(),
+    );
+
+    // `App::new` reads the stored auth once, so the override must be live here.
+    let mut app = make_app();
+    app.next_tab();
+    app.next_tab(); // home → downloads → config
+    render_content(&app, 120, 40)
+}
+
+/// Built through `StoredAuth` rather than a JSON literal so a field rename is a
+/// compile error instead of a silently logged-out render.
+fn stored_auth_json() -> String {
+    let auth = osu_collect::auth::StoredAuth {
+        client_id: "5".to_string(),
+        client_secret: "secret".to_string(),
+        redirect_uri: String::new(),
+        access_token: "token".to_string(),
+        refresh_token: None,
+        expires_at: u64::MAX,
+        scopes: vec!["*".to_string()],
+        // No badge, so the assertions below can pin the chip's exact two
+        // segments. The supporter-badge render is pinned in `tui_config`.
+        supporter: None,
+    };
+    serde_json::to_string(&auth).unwrap()
+}
+
+#[test]
+fn config_tab_auth_chip_reads_logged_out_without_stored_auth() {
+    let content = config_tab_with_stored_auth(None);
+    assert!(
+        content.contains(" logged out  log in"),
+        "no stored auth must render the logged-out chip beside its `log in` action: {content}"
+    );
+    assert!(
+        !content.contains(" logged in"),
+        "no stored auth must not render the logged-in chip: {content}"
+    );
+}
+
+#[test]
+fn config_tab_auth_chip_reads_logged_in_with_stored_auth() {
+    let content = config_tab_with_stored_auth(Some(&stored_auth_json()));
+    assert!(
+        content.contains(" logged in  manage"),
+        "stored auth must render the logged-in chip beside its `manage` action: {content}"
+    );
+    assert!(
+        !content.contains(" logged out"),
+        "stored auth must not render the logged-out chip: {content}"
+    );
+}
+
+/// `InProgress` is a transient in-memory phase that no stored file can produce,
+/// so this leg sets it directly. The two above drive the real store instead.
+#[test]
+fn config_tab_auth_chip_reads_an_in_flight_login() {
+    use osu_collect::app::AuthLoginState;
+    let mut app = make_app();
+    app.next_tab();
+    app.next_tab(); // home → downloads → config
+    app.config.login_state = AuthLoginState::InProgress(String::new());
+    let content = render_content(&app, 120, 40);
+    // CHIP_LOGGING_IN carries its own trailing space, then the chip's 2-cell gap.
+    assert!(
+        content.contains(" logging in\u{2026}   view"),
+        "an in-flight login must render the logging-in chip beside its `view` action: {content}"
+    );
+    assert!(
+        !content.contains(" logged out"),
+        "an in-flight login must not render the logged-out chip: {content}"
+    );
+    assert!(
+        !content.contains(" logged in "),
+        "an in-flight login must not render the logged-in chip: {content}"
+    );
 }
 
 // ── error / message footer ───────────────────────────────────────────────────
