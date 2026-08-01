@@ -24,7 +24,7 @@ use crate::mirrors::Mirror;
 use crate::osu_db::OsuClient;
 use fs2::available_space;
 use osu_downloader::size::SizeFetcher;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use tokio::{sync::watch, task::JoinHandle};
@@ -103,10 +103,14 @@ pub struct DownloadRequest {
     pub collection_input: String,
     pub config: DownloadConfig,
     pub auto_overwrite: bool,
-    /// Whether beatmaps that failed in a previous run for this collection
-    /// should be retried as part of this download. Resolved by the
-    /// pre-download retry prompt (see `RetryFailedOnDownload`).
-    pub include_previously_failed: bool,
+    /// Beatmapsets that failed a previous run for this collection and that the
+    /// user chose *not* to retry, resolved by the pre-download retry prompt
+    /// (see `RetryFailedOnDownload`). They are dropped from the run's target
+    /// list before precheck, so the page's total, its gauge denominator and its
+    /// queued count all describe only what the run enqueues. The resolved
+    /// collection payload is left whole, so `collection.db` still records every
+    /// set. Empty means retry them (the whole collection is targeted).
+    pub previously_failed_skipped: HashSet<u32>,
     /// Pre-skip beatmapsets already in the osu! library before downloading
     /// (they still land in `collection.db`). The owned-id set is resolved off
     /// the UI thread in the pipeline task; `osu_client` + `osu_path` are the

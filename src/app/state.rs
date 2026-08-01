@@ -276,13 +276,17 @@ pub struct RetryAllConfirmModal {
 /// previously failed beatmaps for this collection are persisted on disk.
 ///
 /// Buttons (left→right): `cancel`, `skip`, `retry`. ←/→ move `focus`, `enter`
-/// activates the focused button — `retry` dispatches with
-/// `include_previously_failed = true`, `skip` dispatches with it `false`, and
-/// `cancel` (or `esc`) discards the queued download.
+/// activates the focused button — `retry` dispatches targeting the whole
+/// collection, `skip` dispatches with [`previously_failed`](Self::previously_failed)
+/// moved onto the request so the run never enqueues them, and `cancel` (or
+/// `esc`) discards the queued download.
 #[derive(Debug)]
 pub struct RetryOnStartModal {
     pub id: DownloadId,
-    pub failed_count: usize,
+    /// The previously-failed beatmapsets of this collection: the set the prompt
+    /// counts and the exact set `skip` drops from the run. One field so the
+    /// number shown and the ids acted on cannot drift apart.
+    pub previously_failed: HashSet<u32>,
     pub pending: DownloadRequest,
     /// Selected button index into [`RETRY_ON_START_BUTTONS`].
     pub focus: usize,
@@ -1128,22 +1132,19 @@ impl App {
         // "collection X · N mapsets" line; hand it over so `prepare` doesn't refetch.
         request.prefetched =
             collection_id.and_then(|id| self.home.collection_cache.get_fresh(id).cloned());
-        let failed_count = collection_id
-            .map(|id| self.previously_failed_count(id))
-            .unwrap_or(0);
+        let previously_failed = collection_id
+            .map(|id| self.previously_failed_ids(id))
+            .unwrap_or_default();
 
         // No prior failures for this collection — skip the modal entirely.
-        if failed_count == 0 {
+        if previously_failed.is_empty() {
             return Some(self.queue_download(request));
         }
 
         match self.config.retry_failed_on_download {
-            RetryFailedOnDownload::Yes => {
-                request.include_previously_failed = true;
-                Some(self.queue_download(request))
-            }
+            RetryFailedOnDownload::Yes => Some(self.queue_download(request)),
             RetryFailedOnDownload::No => {
-                request.include_previously_failed = false;
+                request.previously_failed_skipped = previously_failed;
                 Some(self.queue_download(request))
             }
             RetryFailedOnDownload::Ask => {
@@ -1151,7 +1152,7 @@ impl App {
                 self.next_download_id += 1;
                 self.confirm_retry_on_start = Some(RetryOnStartModal {
                     id,
-                    failed_count,
+                    previously_failed,
                     pending: request,
                     focus: RETRY_ON_START_DEFAULT_FOCUS,
                 });
@@ -1192,33 +1193,36 @@ impl App {
         self.focus_new_download_run();
     }
 
-    /// Count beatmaps in `failed-beatmapsets.json` that belong to
-    /// `collection_id`. The persisted file is not collection-scoped, so we
-    /// pull the resolved id list from the `HomeTab` auto-resolve cache and
-    /// intersect.
+    /// Beatmapsets in `failed-beatmapsets.json` that belong to `collection_id`.
+    /// The persisted file is not collection-scoped, so we pull the resolved id
+    /// list from the `HomeTab` auto-resolve cache and intersect. This one set
+    /// both sizes the prompt and, when the user declines the retry, becomes the
+    /// run's exclusion — so what the prompt counts is what the run drops.
     ///
-    /// Returns 0 when:
+    /// Returns an empty set when:
     /// - the failed-maps file path is unavailable, OR
     /// - no resolved collection metadata is cached for `collection_id` (the
     ///   user hit `enter` before the 300 ms debounce fired). Suppressing the
     ///   prompt in that case matches "no prior context to compare" — the
     ///   pipeline will retry persisted failures in its normal flow.
-    fn previously_failed_count(&self, collection_id: u32) -> usize {
+    fn previously_failed_ids(&self, collection_id: u32) -> HashSet<u32> {
         let path = self
             .failed_maps_path_override
             .clone()
             .or_else(failed_maps::failed_maps_path);
-        let Some(path) = path else { return 0 };
+        let Some(path) = path else {
+            return HashSet::new();
+        };
 
         let Some((cached_id, ids)) = self.home.resolved_collection.as_ref() else {
-            return 0;
+            return HashSet::new();
         };
         if *cached_id != collection_id {
-            return 0;
+            return HashSet::new();
         }
 
         let resolved_set: HashSet<u32> = ids.iter().copied().collect();
-        intersect_failed_ids(&path, &resolved_set).len()
+        intersect_failed_ids(&path, &resolved_set)
     }
 
     pub fn request_selective_download(&mut self) -> Option<(DownloadId, SelectiveDownloadRequest)> {
@@ -2050,7 +2054,10 @@ impl App {
                         return None;
                     }
                     let mut request = modal.pending;
-                    request.include_previously_failed = modal.focus == RETRY_ON_START_DEFAULT_FOCUS;
+                    if modal.focus != RETRY_ON_START_DEFAULT_FOCUS {
+                        // `skip`: the run drops exactly the set the prompt counted.
+                        request.previously_failed_skipped = modal.previously_failed;
+                    }
                     let (id, request) = self.dispatch_pending(modal.id, request);
                     return Some(AppCommand::StartDownload { id, request });
                 }
@@ -3511,7 +3518,7 @@ impl App {
 
 /// Load the persisted failed-maps file at `path` and intersect its ids with
 /// `collection_ids`. Returns the intersection.
-pub(crate) fn intersect_failed_ids(path: &Path, collection_ids: &HashSet<u32>) -> Vec<u32> {
+pub(crate) fn intersect_failed_ids(path: &Path, collection_ids: &HashSet<u32>) -> HashSet<u32> {
     let file = failed_maps::load(path);
     file.beatmapset_ids
         .iter()

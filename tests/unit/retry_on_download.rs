@@ -8,6 +8,7 @@ use crate::{
     config::{Config, RetryFailedOnDownload},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+use std::collections::HashSet;
 use tempfile::TempDir;
 
 const COLLECTION_ID: u32 = 1234;
@@ -107,8 +108,8 @@ fn yes_mode_skips_modal_and_includes_failed_ids() {
     assert!(result.is_some(), "Yes mode must dispatch without a modal");
     let (_id, request) = result.unwrap();
     assert!(
-        request.include_previously_failed,
-        "Yes mode must mark the request to include previously failed ids"
+        request.previously_failed_skipped.is_empty(),
+        "Yes mode must exclude nothing, so the run retries every previously failed id"
     );
     assert!(
         app.confirm_retry_on_start.is_none(),
@@ -123,9 +124,10 @@ fn no_mode_skips_modal_and_excludes_failed_ids() {
     let result = app.request_download();
     assert!(result.is_some(), "No mode must dispatch without a modal");
     let (_id, request) = result.unwrap();
-    assert!(
-        !request.include_previously_failed,
-        "No mode must mark the request to skip previously failed ids"
+    assert_eq!(
+        request.previously_failed_skipped,
+        HashSet::from([10, 20]),
+        "No mode must hand the run exactly this collection's previously failed ids"
     );
     assert!(
         app.confirm_retry_on_start.is_none(),
@@ -147,8 +149,9 @@ fn ask_mode_opens_modal_when_failures_intersect() {
         .as_ref()
         .expect("modal must be open");
     assert_eq!(
-        modal.failed_count, 2,
-        "intersection of [10,20,30] and [10,20,99,100] is 2"
+        modal.previously_failed,
+        HashSet::from([10, 20]),
+        "intersection of [10,20,30] and [10,20,99,100] is {{10,20}}"
     );
 }
 
@@ -167,8 +170,8 @@ fn ask_mode_enter_dispatches_with_retry() {
         panic!("enter must emit StartDownload, got {cmd:?}");
     };
     assert!(
-        request.include_previously_failed,
-        "enter must dispatch with include_previously_failed = true"
+        request.previously_failed_skipped.is_empty(),
+        "enter (retry) must dispatch with nothing excluded from the run"
     );
 }
 
@@ -189,9 +192,10 @@ fn ask_mode_skip_button_dispatches_without_retry() {
     let Some(AppCommand::StartDownload { request, .. }) = cmd else {
         panic!("skip must emit StartDownload, got {cmd:?}");
     };
-    assert!(
-        !request.include_previously_failed,
-        "skip must dispatch with include_previously_failed = false"
+    assert_eq!(
+        request.previously_failed_skipped,
+        HashSet::from([10, 20]),
+        "skip must dispatch handing the run exactly the ids the prompt counted"
     );
 }
 

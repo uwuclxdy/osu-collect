@@ -19,7 +19,11 @@ use crate::{
     utils::{CompletionResult, complete_dir, expand_tilde, parse_collection_id, pretty_path},
 };
 use osu_downloader::search::BeatmapSetMeta;
-use std::{collections::HashMap, env, str::FromStr};
+use std::{
+    collections::{HashMap, HashSet},
+    env,
+    str::FromStr,
+};
 
 /// Indicates what the collection-resolve row should look like.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1301,10 +1305,10 @@ impl HomeTab {
             collection_input: collection_input.to_string(),
             config,
             auto_overwrite: self.auto_overwrite,
-            // Default `false`; `App::request_download` resolves the
-            // retry-failed-on-download policy and overrides it (or surfaces a
+            // Empty (retry everything); `App::request_download` resolves the
+            // retry-failed-on-download policy and fills it in (or surfaces a
             // modal under `Ask` before the download is dispatched).
-            include_previously_failed: false,
+            previously_failed_skipped: HashSet::new(),
             // Placeholders; `App::request_download` fills these from the live
             // config + `App.library` client/path + the session collection cache
             // before the request is dispatched.

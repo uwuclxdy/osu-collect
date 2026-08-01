@@ -158,10 +158,7 @@ async fn run_collection(
         collection_input,
         config,
         auto_overwrite,
-        // Carried into the pipeline for future use (e.g. logging the user's
-        // pre-download retry decision). The library re-downloads the whole
-        // collection either way, so no branching is required here.
-        include_previously_failed: _,
+        previously_failed_skipped,
         skip_already_imported,
         osu_client,
         osu_path,
@@ -184,6 +181,7 @@ async fn run_collection(
         target: PrepareTarget::Collection {
             collection_input: &collection_input,
             prefetched,
+            skip_previously_failed: &previously_failed_skipped,
         },
         overwrite: auto_overwrite,
         owned_ids,

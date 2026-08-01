@@ -44,17 +44,6 @@ pub(crate) enum SessionTarget {
 }
 
 impl SessionTarget {
-    pub(crate) fn expectation_index(&self, beatmapset_ids: &[u32]) -> Arc<HashSet<u32>> {
-        match self {
-            SessionTarget::Collection(collection) => {
-                Arc::new(collection.beatmapsets.iter().map(|s| s.id).collect())
-            }
-            SessionTarget::Selective { .. } | SessionTarget::Ids { .. } => {
-                Arc::new(beatmapset_ids.iter().copied().collect())
-            }
-        }
-    }
-
     pub(crate) fn announce_ready(
         &self,
         emit: &impl Fn(DownloadEvent),
@@ -68,7 +57,11 @@ impl SessionTarget {
                     id,
                     collection_name: collection.name.to_string(),
                     uploader: collection.uploader.username.to_string(),
-                    total_maps: collection.beatmapsets.len(),
+                    // The target list, not `collection.beatmapsets`: the total
+                    // the page shows (and its gauge denominator) must count only
+                    // what the run enqueues, and the list is already deduped and
+                    // stripped of any declined-retry sets.
+                    total_maps: beatmapset_ids.len(),
                     output_dir: output.display.clone(),
                 });
             }
@@ -140,6 +133,12 @@ pub(crate) enum PrepareTarget<'a> {
         collection_input: &'a str,
         /// A still-fresh payload from the app's session cache; `None` fetches.
         prefetched: Option<Collection>,
+        /// Beatmapsets the user chose not to retry (they failed a previous run
+        /// for this collection). Removed from the run's target list, which is
+        /// also what the run announces as its total — so no count describes a
+        /// map the run never enqueues. The `Collection` payload itself keeps
+        /// them, so `collection.db` still records the whole collection.
+        skip_previously_failed: &'a HashSet<u32>,
     },
     Selective {
         collection_ids: &'a [u32],
@@ -185,6 +184,7 @@ impl DownloadSession {
             PrepareTarget::Collection {
                 collection_input,
                 prefetched,
+                skip_previously_failed,
             } => {
                 let collection = match prefetched {
                     Some(collection) => collection,
@@ -201,6 +201,19 @@ impl DownloadSession {
                     collection.beatmapsets.iter().map(|b| b.id).collect();
                 beatmapset_ids.sort_unstable();
                 beatmapset_ids.dedup();
+                // The declined-retry set leaves the run entirely: it is filtered
+                // before the target list reaches precheck, the announced total,
+                // or the failed-maps reconcile, so a map the user chose not to
+                // retry is neither downloaded nor reported as resolved.
+                if !skip_previously_failed.is_empty() {
+                    let before = beatmapset_ids.len();
+                    beatmapset_ids.retain(|id| !skip_previously_failed.contains(id));
+                    info!(
+                        collection_id = collection.id,
+                        skipped = before - beatmapset_ids.len(),
+                        "excluding previously-failed beatmapsets from this run"
+                    );
+                }
                 let output = prepare_output_dir(directory, &collection.folder_name()).await?;
                 (
                     SessionTarget::Collection(collection),
@@ -301,7 +314,12 @@ impl DownloadSession {
         owned_ids: HashSet<u32>,
         emit: super::Emit<'_>,
     ) -> Result<Option<Self>, DownloadError> {
-        let expectations = target.expectation_index(&beatmapset_ids);
+        // Precheck may only count ids the run actually targets. For a collection
+        // that list is its sets minus any the user declined to retry, so a
+        // dropped map can never be counted as satisfied against a total that
+        // excludes it — nor reach `initial_satisfied` and clear itself out of
+        // the failed-maps file without ever being downloaded.
+        let expectations: Arc<HashSet<u32>> = Arc::new(beatmapset_ids.iter().copied().collect());
         emit(DownloadEvent::StageChanged {
             id,
             stage: DownloadStage::Rechecking,

@@ -1,13 +1,18 @@
 use super::{
-    OutputPreparation, SessionTarget, ids_folder_name, partition_pending, resolve_selective_with,
+    DownloadSession, OutputPreparation, PrepareParams, PrepareTarget, SessionTarget,
+    ids_folder_name, partition_pending, resolve_selective_with,
 };
 use crate::core::collection::{Beatmap, Beatmapset, Collection, CollectionService, Uploader};
 use crate::download::IdsRunSource;
-use crate::download::{DownloadEvent, SelectiveDownloadCollection};
+use crate::download::{
+    ActiveDownloadRegistry, ArchiveValidation, DownloadConfig, DownloadEvent,
+    SelectiveDownloadCollection,
+};
 use crate::utils;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use tokio::sync::watch;
 
 struct MockService {
     responses: Vec<(u32, Result<Collection, &'static str>)>,
@@ -228,6 +233,167 @@ async fn resolve_selective_skips_the_fetch_for_a_prefetched_collection() {
     assert_eq!(ticks, vec![0, 1, 2]);
 }
 
+// ── declined-retry exclusion: what the run actually enqueues ─────────────────
+
+/// Run the real `prepare` over a prefetched collection into a fresh output dir
+/// (nothing on disk, so precheck satisfies nothing and `pending_ids` is exactly
+/// the run's target list). Returns the session plus every event it announced.
+async fn prepare_collection_run(
+    collection: Collection,
+    skip_previously_failed: &HashSet<u32>,
+    base_dir: &Path,
+) -> (DownloadSession, Vec<DownloadEvent>) {
+    let registry = ActiveDownloadRegistry::new();
+    let (_cancel_tx, cancel_rx) = watch::channel(false);
+    let config = DownloadConfig {
+        directory: base_dir.to_string_lossy().into_owned(),
+        mirrors: Vec::new(),
+        concurrent: 1,
+        archive_validation: ArchiveValidation::Off,
+        auto_skip_rate_limited: false,
+        rate_limit_skip_secs: 60,
+    };
+    let events = Mutex::new(Vec::new());
+    let emit = |event: DownloadEvent| events.lock().unwrap().push(event);
+
+    let session = DownloadSession::prepare(PrepareParams {
+        id: 7,
+        cancel_rx,
+        config: &config,
+        registry: &registry,
+        emit: &emit,
+        target: PrepareTarget::Collection {
+            collection_input: "",
+            prefetched: Some(collection),
+            skip_previously_failed,
+        },
+        overwrite: false,
+        owned_ids: HashSet::new(),
+    })
+    .await
+    .expect("prepare must succeed")
+    .expect("prepare must not abort");
+
+    (session, events.into_inner().unwrap())
+}
+
+/// The map count the run page shows (and divides its gauge by).
+fn announced_total(events: &[DownloadEvent]) -> usize {
+    events
+        .iter()
+        .find_map(|event| match event {
+            DownloadEvent::CollectionReady { total_maps, .. } => Some(*total_maps),
+            _ => None,
+        })
+        .expect("prepare must announce CollectionReady")
+}
+
+/// The `N queued` figure on the run page's tally line.
+fn announced_queued(events: &[DownloadEvent]) -> usize {
+    events
+        .iter()
+        .find_map(|event| match event {
+            DownloadEvent::DownloadTarget { remaining, .. } => Some(*remaining),
+            _ => None,
+        })
+        .expect("prepare must announce DownloadTarget")
+}
+
+/// `skip` on the pre-download retry prompt: the declined sets leave the run
+/// entirely — not enqueued, not in the announced total, not in the queued count.
+/// The collection payload keeps them, so `collection.db` still records all four.
+#[tokio::test]
+async fn declined_retry_drops_previously_failed_from_the_run() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let skipped = HashSet::from([10, 20]);
+    let (session, events) = prepare_collection_run(
+        collection(1, "alpha", &[10, 20, 30, 40]),
+        &skipped,
+        dir.path(),
+    )
+    .await;
+
+    assert_eq!(
+        session.pending_ids,
+        vec![30, 40],
+        "a declined-retry set must never be enqueued"
+    );
+    assert_eq!(session.beatmapset_ids, vec![30, 40]);
+    // Every count the page shows describes only what the run enqueues.
+    assert_eq!(announced_total(&events), 2);
+    assert_eq!(announced_queued(&events), 2);
+    // …while collection.db still gets the whole collection.
+    let recorded: Vec<u32> = session
+        .target
+        .collection()
+        .expect("a collection run carries its collection")
+        .beatmapsets
+        .iter()
+        .map(|set| set.id)
+        .collect();
+    assert_eq!(recorded, vec![10, 20, 30, 40]);
+}
+
+/// `retry` on the same prompt: nothing is excluded, so the run enqueues the
+/// whole collection and its counts match. Same fixture, only the exclusion set
+/// differs — so a green here with a red above isolates the exclusion itself.
+#[tokio::test]
+async fn accepted_retry_enqueues_every_previously_failed_set() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (session, events) = prepare_collection_run(
+        collection(1, "alpha", &[10, 20, 30, 40]),
+        &HashSet::new(),
+        dir.path(),
+    )
+    .await;
+
+    assert_eq!(
+        session.pending_ids,
+        vec![10, 20, 30, 40],
+        "an accepted retry must enqueue the previously failed sets too"
+    );
+    assert_eq!(announced_total(&events), 4);
+    assert_eq!(announced_queued(&events), 4);
+}
+
+/// The run's output dir already holds an archive for a DECLINED id. Precheck
+/// must not see it: counting it would make a map the run never targeted show up
+/// as skipped against a total that excludes it, and would carry it into
+/// `initial_satisfied` → `reconcile_failed_maps`, clearing it out of
+/// `failed-beatmapsets.json` without ever downloading it.
+///
+/// `30.osz` is the positive control — a targeted id's archive in the very same
+/// directory, so an unseen `10` means the expectation filter dropped it rather
+/// than the fixture being inert.
+#[tokio::test]
+async fn declined_retry_is_not_counted_by_precheck() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let payload = collection(1, "alpha", &[10, 20, 30, 40]);
+    let output_dir = dir.path().join(payload.folder_name());
+    std::fs::create_dir_all(&output_dir).expect("output dir");
+    std::fs::write(output_dir.join("10.osz"), b"stub archive bytes").expect("declined archive");
+    std::fs::write(output_dir.join("30.osz"), b"stub archive bytes").expect("targeted archive");
+
+    let skipped = HashSet::from([10, 20]);
+    let (session, _events) = prepare_collection_run(payload, &skipped, dir.path()).await;
+
+    assert!(
+        session.initial_satisfied.contains(&30),
+        "control: a targeted id's archive in this dir must be counted, else the \
+         fixture proves nothing about 10"
+    );
+    assert!(
+        !session.initial_satisfied.contains(&10),
+        "a declined id's archive must not be counted, or reconcile would clear \
+         it from the failed-maps file without downloading it"
+    );
+    assert_eq!(
+        session.skipped_existing, 1,
+        "only the targeted archive may count toward the run's skipped tally"
+    );
+    assert_eq!(session.pending_ids, vec![40]);
+}
+
 #[test]
 fn partition_pending_skips_owned_keeps_satisfied_and_drops_unverified() {
     let beatmapset_ids = vec![1, 2, 3, 4];
@@ -308,10 +474,8 @@ fn session_target_ids_has_no_collection() {
     // A raw-ids run carries no collection metadata (skips `collection.db`).
     assert!(target.collection().is_none());
     assert!(target.selective_collections().is_none());
-    // The expectation index is the requested id set, not a collection's contents.
-    let ids = [10u32, 20, 30];
-    let index = target.expectation_index(&ids);
-    assert_eq!(*index, HashSet::from([10, 20, 30]));
+    // What precheck may count is pinned against a real output dir by
+    // `declined_retry_is_not_counted_by_precheck`, not from a target kind.
 }
 
 #[test]
