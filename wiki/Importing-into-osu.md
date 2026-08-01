@@ -4,7 +4,7 @@ Every download produces the `.osz` files and a ready-to-import `collection.db`, 
 
 ## Where the files land
 
-Everything goes into the download directory you picked on the get maps tab; `find` runs get their own `search-`/`filter-` subfolder per search. The generated `collection.db` sits in that folder, next to the `.osz` files. That folder is what you point lazer's import at.
+Everything goes into the download directory you picked on the get maps tab, in a subfolder per run: a whole collection gets `<name>-<id>`, a `find` run gets `search-`/`filter-` plus its search, and `update` runs (plus a part-picked collection) get `update-<id>` or `update-<n>-collections`. Focus the download directory field and the form shows you the exact path before you start. The generated `collection.db` sits in that folder, next to the `.osz` files. That folder is what you point lazer's import at.
 
 ## osu! lazer
 
