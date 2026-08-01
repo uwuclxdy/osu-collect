@@ -182,6 +182,7 @@ fn home_directory_tooltip_tracks_the_per_source_run_folder() {
 #[test]
 fn home_directory_tooltip_drops_a_resolve_the_field_moved_off() {
     use crate::app::{BrowseRow, HomeField};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     let mut app = App::new(Config::default());
     app.home.focus = HomeField::Directory;
@@ -197,11 +198,23 @@ fn home_directory_tooltip_drops_a_resolve_the_field_moved_off() {
         "a current resolve must show its collection folder: {output}"
     );
 
-    // Retype to another valid id. `schedule_resolve` sends `Cleared` only for an
-    // UNPARSEABLE field, so the 1234 snapshot survives the debounce and survives
-    // a failed fetch outright — while `can_download` already lets the run fire
-    // against 5678, which writes a different folder.
-    app.home.collection.set_value("5678");
+    // Retype to another valid id, through the key path so the snapshot goes the
+    // way production drops it: `settle_collection_resolve` clears it in the same
+    // press, rather than the render filtering a snapshot that is still standing.
+    // `can_download` already lets the run fire against 5678, which writes a
+    // different folder, so the hint must stop naming 1234's before then.
+    app.home.focus = HomeField::Collection;
+    app.editing = true;
+    for ch in "5678".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    app.editing = false;
+    app.home.focus = HomeField::Directory;
+    assert_eq!(app.home.collection.value, "12345678");
+    assert_eq!(
+        app.home.resolved_collection, None,
+        "the settle drops the snapshot the field moved off"
+    );
     let output = render_app(&app, 80, 24);
     assert!(
         output.contains("<collection>") && !output.contains("Farm-1234"),
@@ -209,8 +222,14 @@ fn home_directory_tooltip_drops_a_resolve_the_field_moved_off() {
     );
 
     // A picked subset routes through the selective path, which writes
-    // `update-<id>` rather than the whole collection's folder.
+    // `update-<id>` rather than the whole collection's folder. Seeded the way a
+    // landed resolve for the field's own id leaves it — field, snapshot and
+    // folder name all naming 1234 — so the `Farm-1234` assertion below is the
+    // subset arm winning over a live whole-collection name, not passing because
+    // there is no name to render.
     app.home.collection.set_value("1234");
+    app.home.set_resolved_collection(1234, vec![7, 8, 9]);
+    app.home.resolved_folder_name = Some("Farm-1234".to_string());
     let rows = vec![
         BrowseRow { id: 7, meta: None },
         BrowseRow { id: 8, meta: None },

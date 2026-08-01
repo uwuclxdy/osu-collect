@@ -385,6 +385,13 @@ fn latency_range_excludes_disabled_mirror() {
 /// The adaptive collection download button reads `download (N)` only for a
 /// proper nonempty subset of the *currently-resolved* collection; all/none
 /// picked, or a browse left over from a different collection, reads `download`.
+///
+/// Every leg keeps the URL field naming whatever is resolved, because that is
+/// now the only pairing the app can produce: the settle drops a snapshot the
+/// field moved off, and a landing for a collection the field does not name is
+/// dropped before it installs. A fixture holding a resolve under a field naming
+/// something else would leave this — the test whose name is about gating on the
+/// current collection — unable to catch the gate becoming field-sensitive.
 #[test]
 fn collection_subset_picked_gates_on_current_collection() {
     use crate::app::BrowseRow;
@@ -395,6 +402,7 @@ fn collection_subset_picked_gates_on_current_collection() {
     assert!(!home.collection_subset_picked());
 
     // Browse&pick collection 42 and uncheck one of its two sets → subset.
+    home.collection.set_value("42");
     home.set_resolved_collection(42, vec![10, 20]);
     home.collection_browse.set_rows(
         vec![
@@ -415,12 +423,306 @@ fn collection_subset_picked_gates_on_current_collection() {
         "a proper subset flips the label"
     );
 
-    // A resolve to a different collection makes the left-over pick stale.
+    // The user retypes to 99 and its resolve lands: the field and the snapshot
+    // move together (the only way they can), leaving the browse bound to 42.
+    home.collection.set_value("99");
     home.set_resolved_collection(99, vec![30, 40, 50]);
     assert!(
         !home.collection_subset_picked(),
         "a pick from collection 42 must not label/dispatch collection 99"
     );
+}
+
+// ── a retyped collection id vs the loaded resolve ─────────────────────────────
+//
+// `schedule_resolve` clears the snapshot only on an UNPARSEABLE field, so
+// retyping one valid id over another left the previous collection standing
+// through the debounce and permanently past a failed fetch. Both sides of
+// `collection_subset_picked` had drifted together, so it stayed true and a press
+// dispatched the OLD collection's picks under the new id.
+
+/// A form exactly as a landed resolve for 42 plus an opened browse leaves it:
+/// the field naming 42, the snapshot and everything derived from it, the browse
+/// bound to 42, and one of its two sets unchecked — a proper subset.
+fn collection_42_with_a_picked_subset() -> HomeTab {
+    use crate::app::BrowseRow;
+    use crate::app::home::ResolveState;
+
+    let mut home = HomeTab::new(&Config::default());
+    home.collection.set_value("42");
+    home.set_collection_resolve(ResolveState::Success, "\"Farm\" · 2 mapsets");
+    home.set_resolved_collection(42, vec![10, 20]);
+    home.resolved_enrich_pairs = vec![(10, 101), (20, 202)];
+    home.resolved_folder_name = Some("Farm-42".to_string());
+    home.collection_browse.set_rows(
+        vec![
+            BrowseRow { id: 10, meta: None },
+            BrowseRow { id: 20, meta: None },
+        ],
+        &home.meta_cache,
+    );
+    home.collection_browse.set_all_selected(true);
+    home.collection_browse_id = Some(42);
+    home.collection_browse.toggle_selected(); // drop the cursor row → 1 of 2
+    home
+}
+
+/// Retyping a different valid id drops the snapshot and everything derived from
+/// it, so no surface is left naming 42 — the label, the browse button, the
+/// folder and the dispatch all read the same cleared state in one frame. The
+/// picks are PARKED, not destroyed: they stay bound to the collection they came
+/// from, which is what the mistype case below rides on.
+#[test]
+fn retyping_a_different_valid_id_drops_the_resolve_it_moved_off() {
+    let mut home = collection_42_with_a_picked_subset();
+    assert!(
+        home.collection_subset_picked(),
+        "precondition: a proper subset of the resolved collection"
+    );
+
+    home.collection.set_value("99");
+    home.settle_collection_resolve();
+
+    assert_eq!(home.resolved_collection, None, "snapshot");
+    assert_eq!(home.resolved_folder_name, None, "folder name");
+    assert!(home.resolved_enrich_pairs.is_empty(), "enrichment seeds");
+    assert!(
+        home.collection_resolve.is_none(),
+        "the status line still naming 42"
+    );
+    assert_eq!(home.picked_collection_id(), None, "the picks are not 99's");
+    assert!(
+        !home.collection_subset_picked(),
+        "so the button cannot read `download (1)` over 99"
+    );
+    assert!(
+        !home.button_enabled(HomeField::CollectionBrowse),
+        "`view N mapsets` has no collection left to open"
+    );
+    assert_eq!(
+        home.planned_folder_name(),
+        "<collection>",
+        "the hint must not name 42's folder under 99"
+    );
+
+    assert_eq!(home.collection_browse.rows.len(), 2, "rows");
+    assert_eq!(home.collection_browse.selected_count(), 1, "checks");
+    assert_eq!(
+        home.collection_browse_id,
+        Some(42),
+        "the rows still belong to 42 — that pairing was never the stale one"
+    );
+}
+
+/// The mistype: one wrong character typed and immediately backspaced away passes
+/// through a DIFFERENT parsed id and back. Clearing the picks on that pass would
+/// cost a selection nothing can rebuild — `open_collection_browse` re-selects
+/// every set once the browse id stops matching, and no cache restores a choice
+/// that was never fetched. Parking them costs nothing: the round trip ends where
+/// it started.
+#[test]
+fn a_mistyped_id_backspaced_away_keeps_the_picks() {
+    let mut home = collection_42_with_a_picked_subset();
+    let picked = home.collection_browse.selected_ids();
+    assert_eq!(picked.len(), 1, "fixture: exactly one of the two checked");
+
+    // A stray `1` on the end — a valid id, and not 42.
+    home.collection.set_value("421");
+    home.settle_collection_resolve();
+    assert!(
+        !home.collection_subset_picked(),
+        "42's picks must not dispatch while the field names 421"
+    );
+
+    // Backspace, then the debounced resolve for 42 lands again.
+    home.collection.set_value("42");
+    home.settle_collection_resolve();
+    home.set_resolved_collection(42, vec![10, 20]);
+
+    assert_eq!(home.picked_collection_id(), Some(42));
+    assert!(
+        home.collection_subset_picked(),
+        "the picks come back with the collection that owns them"
+    );
+    assert_eq!(
+        home.collection_browse.selected_ids(),
+        picked,
+        "and they are the SAME picks, not a re-selected default"
+    );
+}
+
+/// The negative that keeps this from being a form that clears itself on any
+/// edit: the settle compares PARSED ids, so respelling 42 as its collector URL
+/// changes the field text without naming a different collection. Same fixture,
+/// same kind of edit, differing only in whether it moves the collection.
+#[test]
+fn respelling_the_same_collection_is_not_a_move() {
+    let mut home = collection_42_with_a_picked_subset();
+
+    home.collection
+        .set_value("https://osucollector.com/collections/42");
+    // Reports the collection as already resolved, so the caller skips the fetch.
+    // The fixture holds no cached payload, which is what isolates this to the
+    // "already current" early return rather than the cache re-arm below it.
+    assert!(
+        home.settle_collection_resolve(),
+        "a respelling of the resolved id owes no request"
+    );
+
+    assert_eq!(
+        home.resolved_collection,
+        Some((42, vec![10, 20])),
+        "snapshot"
+    );
+    assert_eq!(home.resolved_folder_name.as_deref(), Some("Farm-42"));
+    assert_eq!(home.resolved_enrich_pairs, vec![(10, 101), (20, 202)]);
+    assert!(
+        home.collection_resolve.is_some(),
+        "the status line describes a collection the field still names"
+    );
+    assert!(
+        home.collection_subset_picked(),
+        "a respelling must not drop the picks"
+    );
+    assert_eq!(home.planned_folder_name(), "update-42");
+}
+
+/// The payload collection 42's own resolve parked in the session cache: the two
+/// sets the fixture's browse rows came from, one diff each.
+fn cached_collection_42() -> crate::core::collection::Collection {
+    use crate::core::collection::{test_beatmapset, test_collection};
+    test_collection(
+        42,
+        vec![test_beatmapset(10, &["aaa"]), test_beatmapset(20, &["bbb"])],
+    )
+}
+
+/// The mistype, with 42 still in the session cache — which is what a landed
+/// resolve for 42 always leaves. The keystroke itself re-arms: no debounce, no
+/// request, and the snapshot is the full one `adopt_collection` derives, not a
+/// stub standing in for one.
+///
+/// Parking the picks is only half the design; without this they would sit dead
+/// until a fresh network reply landed, and dead for good if it failed.
+#[test]
+fn a_cached_id_rearms_the_picks_on_the_keystroke() {
+    use crate::app::home::ResolveState;
+
+    let mut home = collection_42_with_a_picked_subset();
+    home.collection_cache.insert(42, cached_collection_42());
+    let picked = home.collection_browse.selected_ids();
+    assert_eq!(picked.len(), 1, "fixture: one of the two checked");
+
+    // 421 is not cached, so the settle reports a fetch is still owed.
+    home.collection.set_value("421");
+    assert!(
+        !home.settle_collection_resolve(),
+        "an uncached id owes a fetch"
+    );
+    assert!(!home.collection_subset_picked(), "unarmed while off 42");
+
+    // Backspace: 42 is cached, so nothing is owed and the picks are live again.
+    home.collection.set_value("42");
+    assert!(
+        home.settle_collection_resolve(),
+        "a cached id is resolved without a fetch"
+    );
+    assert!(
+        home.collection_subset_picked(),
+        "the picks re-arm on the keystroke, not on a reply"
+    );
+    assert_eq!(home.collection_browse.selected_ids(), picked);
+
+    // The whole snapshot comes back, derived the same way a landed fetch derives
+    // it — a re-arm that installed only the id would leave the folder name and
+    // the enrichment seeds behind.
+    assert_eq!(home.resolved_collection, Some((42, vec![10, 20])));
+    assert_eq!(
+        home.resolved_folder_name.as_deref(),
+        Some("collection-42-42")
+    );
+    assert_eq!(home.resolved_enrich_pairs, vec![(10, 0), (20, 0)]);
+    assert!(
+        matches!(home.collection_resolve, Some((ResolveState::Success, ref t)) if t.contains("collection-42") && t.contains("2 mapsets")),
+        "the status line names the collection again: {:?}",
+        home.collection_resolve
+    );
+}
+
+/// A cache miss must fall through to today's behaviour rather than fabricate a
+/// snapshot. Staleness is the same branch by construction: `get_fresh` is the
+/// only reader of the store and holds the TTL inside it, so the settle cannot
+/// see an expired entry at all — that boundary is pinned where it lives, in
+/// `expired_entry_misses` (`tests/unit/collection_cache.rs`).
+#[test]
+fn an_uncached_id_does_not_rearm() {
+    let mut home = collection_42_with_a_picked_subset();
+    home.collection_cache.insert(42, cached_collection_42());
+
+    home.collection.set_value("99");
+    assert!(
+        !home.settle_collection_resolve(),
+        "99 was never fetched — the caller still owes a request"
+    );
+    assert_eq!(
+        home.resolved_collection, None,
+        "a miss must not invent a snapshot"
+    );
+    assert!(home.collection_resolve.is_none(), "nor a status line");
+    assert!(home.resolved_folder_name.is_none(), "nor a folder name");
+    assert!(!home.collection_subset_picked(), "nor re-arm 42's picks");
+}
+
+/// A settle that finds nothing resolved leaves the status line alone. Once the
+/// snapshot is gone the line is fetch-scoped — `resolving…` for the request the
+/// last keystroke started, or the error that request ended in, which is the only
+/// surface reporting a resolve failure — so a further keystroke must not reset
+/// it. The `resolved_collection.is_some()` conjunct is the whole of what stops
+/// that, since `clear_collection_resolve` nils the line too.
+#[test]
+fn a_settle_with_nothing_resolved_leaves_the_status_line_alone() {
+    use crate::app::home::ResolveState;
+
+    let mut home = collection_42_with_a_picked_subset();
+    home.collection.set_value("421");
+    home.settle_collection_resolve();
+    assert!(
+        home.collection_resolve.is_none(),
+        "the first keystroke drops 42's line with 42's snapshot"
+    );
+
+    // 421's own fetch reports itself, then the user types again.
+    home.set_collection_resolve(ResolveState::Loading, "resolving…");
+    home.collection.set_value("4210");
+    home.settle_collection_resolve();
+    let Some((state, ref text)) = home.collection_resolve else {
+        panic!("the in-flight fetch's busy cue must survive the next keystroke");
+    };
+    assert_eq!(state, ResolveState::Loading);
+    assert_eq!(text, "resolving…");
+
+    home.set_collection_resolve(ResolveState::Error, "collection not found");
+    home.collection.set_value("42100");
+    home.settle_collection_resolve();
+    assert!(
+        matches!(home.collection_resolve, Some((ResolveState::Error, _))),
+        "a failed fetch's reason has no second copy anywhere"
+    );
+}
+
+/// Emptying the field is a move too, and the settle reports it in the same press
+/// rather than waiting on the async `Cleared` — one predicate covers both an
+/// unparseable field and a different id, so there is no second path to forget.
+#[test]
+fn an_emptied_field_drops_the_resolve_without_waiting_for_the_clear_event() {
+    let mut home = collection_42_with_a_picked_subset();
+
+    home.collection.set_value("");
+    home.settle_collection_resolve();
+
+    assert_eq!(home.resolved_collection, None);
+    assert!(home.collection_resolve.is_none());
+    assert!(!home.collection_subset_picked());
 }
 
 // ── supporter gate on the find form ───────────────────────────────────────────

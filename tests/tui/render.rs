@@ -291,6 +291,66 @@ fn collection_view_maps_button_renders_above_download_section() {
     );
 }
 
+/// The frame that used to lie: the URL field names one collection while the
+/// `view N maps` count, the `download (N)` label and the `downloads to` folder
+/// all read a resolve the field moved off. The disagreement is only visible when
+/// every reading is taken from the same render, which is why this is one frame
+/// and not four accessor assertions.
+#[test]
+fn retyping_the_collection_id_leaves_no_count_or_folder_from_the_old_one() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use osu_collect::app::{GetMapsSource, HomeField};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::empty())
+    }
+
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Collection;
+    app.home.collection.set_value("42");
+    app.home.set_resolved_collection(42, vec![10, 20, 30]);
+    app.home.resolved_folder_name = Some("Farm-42".to_string());
+    app.home.directory.set_value("/tmp/oc");
+    app.home.focus = HomeField::CollectionBrowse;
+    app.handle_key(key(KeyCode::Enter)); // descend, all three selected
+    app.handle_key(key(KeyCode::Enter)); // uncheck the cursor row → 2 of 3
+    app.handle_key(key(KeyCode::Esc)); // back to the form
+    // The hint is focus-scoped to the directory field; the button and the browse
+    // CTA draw regardless, so one frame carries all three readings.
+    app.home.focus = HomeField::Directory;
+
+    let before = render_content(&app, 100, 40);
+    for expected in ["view 3 maps", "download (2)", "update-42"] {
+        assert!(
+            before.contains(expected),
+            "precondition — every reading describes collection 42, missing {expected}: {before}"
+        );
+    }
+
+    // Retype through the key handler: 42 → 421 is a different collection.
+    app.home.focus = HomeField::Collection;
+    app.editing = true;
+    app.handle_key(key(KeyCode::Char('1')));
+    app.editing = false;
+    app.home.focus = HomeField::Directory;
+
+    let after = render_content(&app, 100, 40);
+    assert!(
+        after.contains("421"),
+        "the field shows the id the user typed: {after}"
+    );
+    for stale in ["view 3 maps", "download (2)", "update-42", "Farm-42"] {
+        assert!(
+            !after.contains(stale),
+            "the frame still carries {stale} from a collection the field left: {after}"
+        );
+    }
+    assert!(
+        after.contains("<collection>"),
+        "the folder falls back to its placeholder until 421 resolves: {after}"
+    );
+}
+
 #[test]
 fn collection_browse_shows_focus_caret_and_uppercase_title() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};

@@ -10,6 +10,7 @@ use super::{
 use crate::{
     app::runtime::ProbeResult,
     config::{Config, MirrorConfig},
+    core::collection::Collection,
     download::{
         ArchiveValidation, DownloadConfig, DownloadRequest, IdsRunSource, ids_folder_name,
         selective_folder_name,
@@ -611,6 +612,11 @@ pub struct HomeTab {
     /// Resolve status shown below the collection URL field.
     /// Unlike `message`, this is not TTL-expired; it persists until the field changes.
     pub collection_resolve: Option<(ResolveState, String)>,
+    /// Monotonic id of the newest resolve request. Every event a request emits
+    /// is stamped with the value this held when it was scheduled, and the handler
+    /// drops anything that no longer matches — so a superseded response cannot
+    /// touch the form regardless of what it had to say.
+    resolve_generation: u64,
     /// Cache of the last successfully resolved collection: `(id, beatmapset_ids)`.
     /// Used by `App::request_download` to intersect with the persisted
     /// failed-maps file before dispatching the pipeline.
@@ -725,6 +731,7 @@ impl HomeTab {
             focus: HomeField::Collection,
             message: None,
             collection_resolve: None,
+            resolve_generation: 0,
             resolved_collection: None,
             resolved_enrich_pairs: Vec::new(),
             resolved_folder_name: None,
@@ -771,16 +778,71 @@ impl HomeTab {
         self.resolved_collection = Some((collection_id, beatmapset_ids));
     }
 
+    /// Adopt `collection` as the resolved snapshot for `collection_id`: the
+    /// status line, the id list a download intersects, the browse&pick
+    /// enrichment seeds, and the per-collection folder name.
+    ///
+    /// One derivation for both doors a snapshot arrives through — a landed fetch
+    /// and a session-cache re-arm ([`settle_collection_resolve`]) — so the two
+    /// cannot install different things from one payload. Every diff id of every
+    /// unique set feeds the pager, so each set gains a full difficulty spread
+    /// (the endpoint returns per-diff attributes, the set metadata rides nested
+    /// in each row); sets with no diffs stay id-only in the preview.
+    ///
+    /// [`settle_collection_resolve`]: Self::settle_collection_resolve
+    pub fn adopt_collection(&mut self, collection_id: u32, collection: &Collection) {
+        let map_count = collection.beatmapsets.len();
+        let maps_word = if map_count == 1 { "mapset" } else { "mapsets" };
+        self.set_collection_resolve(
+            ResolveState::Success,
+            format!("\"{}\" · {} {}", collection.name, map_count, maps_word),
+        );
+
+        let beatmapset_ids: Vec<u32> = collection.beatmapsets.iter().map(|set| set.id).collect();
+        let mut seen = HashSet::with_capacity(beatmapset_ids.len());
+        let mut enrich_pairs: Vec<(u32, u32)> = Vec::new();
+        for set in collection.beatmapsets.iter().filter(|s| seen.insert(s.id)) {
+            for diff in &set.beatmaps {
+                enrich_pairs.push((set.id, diff.id));
+            }
+        }
+
+        self.set_resolved_collection(collection_id, beatmapset_ids);
+        self.resolved_enrich_pairs = enrich_pairs;
+        // Derived from the full collection (the lib stays the single source of
+        // folder naming) since the app side keeps only name + id.
+        self.resolved_folder_name = Some(collection.folder_name());
+    }
+
+    /// The collection the browse&pick rows came from, and only while the form
+    /// still has that same collection resolved.
+    ///
+    /// The rows are OWNED by [`collection_browse_id`](Self::collection_browse_id),
+    /// and that pairing never goes stale — the rows really did come from that
+    /// collection. What goes stale is the other side: whether that collection is
+    /// still the one the form is showing. This is the single comparison that
+    /// answers it, so the picks go inert while the form points elsewhere and come
+    /// back live the moment it points back, with nothing discarded in between.
+    ///
+    /// [`settle_collection_resolve`](Self::settle_collection_resolve) is what
+    /// keeps the right-hand side honest against the typed field. Without it both
+    /// sides drift together on a retype and the comparison passes over two
+    /// equally stale values — which is what let a press dispatch the previous
+    /// collection's picks under a field naming a different one.
+    pub fn picked_collection_id(&self) -> Option<u32> {
+        let browsed = self.collection_browse_id?;
+        let resolved = self.resolved_collection.as_ref().map(|(id, _)| *id)?;
+        (browsed == resolved).then_some(browsed)
+    }
+
     /// Whether browse&pick holds a proper nonempty subset (some sets checked,
     /// but not all) **of the currently-resolved collection**. Drives the
     /// collection download button between `download all` (the whole resolved
-    /// collection) and `download N selected` (the picked subset, via the
-    /// selective path). Returns `false` when the browse is stale — its snapshot
-    /// id no longer matches the resolved collection (a resolve moved on), so a
-    /// left-over pick never mislabels or misdispatches the new collection.
+    /// collection) and `download (N)` (the picked subset, via the selective
+    /// path). Returns `false` whenever the browse is not paired with the resolved
+    /// collection, so a left-over pick never mislabels or misdispatches another.
     pub fn collection_subset_picked(&self) -> bool {
-        let current = self.resolved_collection.as_ref().map(|(id, _)| *id);
-        if self.collection_browse_id != current {
+        if self.picked_collection_id().is_none() {
             return false;
         }
         let total = self.collection_browse.rows.len();
@@ -814,18 +876,111 @@ impl HomeTab {
         }
     }
 
-    /// Whether the cached resolve still describes what the collection field
-    /// holds. [`schedule_resolve`] only clears the snapshot when the field turns
-    /// UNPARSEABLE, so retyping one valid id to another leaves the previous
-    /// collection's name and id in place for the whole debounce + fetch, and for
-    /// good if that fetch fails. Every read of the snapshot goes through here.
+    /// Supersede the in-flight resolve: bump the generation so every event still
+    /// carrying the old one is dropped at [`handle_home_resolve_event`]'s entry,
+    /// whatever it had to say. Returns the new value for the caller to stamp its
+    /// request with.
     ///
-    /// [`schedule_resolve`]: crate::app::runtime::schedule_resolve
+    /// Keyed on the REQUEST rather than on any payload, which is what lets one
+    /// check cover a `Cleared` — sent precisely because the field named no
+    /// collection, so it has no id anything could compare.
+    ///
+    /// [`handle_home_resolve_event`]: crate::app::runtime::handle_home_resolve_event
+    pub fn supersede_resolve(&mut self) -> u64 {
+        self.resolve_generation = self.resolve_generation.wrapping_add(1);
+        self.resolve_generation
+    }
+
+    /// The request generation a landing resolve event must match to be acted on.
+    pub fn resolve_generation(&self) -> u64 {
+        self.resolve_generation
+    }
+
+    /// Whether the URL field names `collection_id` right now.
+    ///
+    /// Compares PARSED ids rather than field text, which is what makes a
+    /// respelling not a change: `1234`, `  1234  ` and the full collector URL all
+    /// name one collection, and [`parse_collection_id`] trims for us. The sole
+    /// expression of "the field means this collection", read by the settle below,
+    /// by the folder namer, and by the resolve handler dropping a superseded
+    /// landing.
+    pub fn collection_field_names(&self, collection_id: u32) -> bool {
+        parse_collection_id(&self.collection.value).is_ok_and(|typed| typed == collection_id)
+    }
+
+    /// Whether the cached resolve still describes what the collection field
+    /// holds. False with no resolve cached at all, so a caller reads it as "the
+    /// snapshot is safe to name a collection with".
     fn collection_resolve_is_current(&self) -> bool {
-        let Some((resolved_id, _)) = self.resolved_collection.as_ref() else {
+        self.resolved_collection
+            .as_ref()
+            .is_some_and(|(id, _)| self.collection_field_names(*id))
+    }
+
+    /// Bring the resolved snapshot in line with the collection the URL field
+    /// names: drop one the field has moved off, and re-arm from the session
+    /// cache when the field's own collection is already in it.
+    ///
+    /// Returns whether the field's collection is resolved once this is done —
+    /// i.e. whether a caller still owes it a fetch.
+    ///
+    /// [`schedule_resolve`] clears the snapshot only when the field turns
+    /// UNPARSEABLE, so retyping one valid id over another left the previous
+    /// collection's name, id and mapset list standing for the whole debounce +
+    /// fetch, and permanently when that fetch failed. Every reader then agreed
+    /// with every other reader about a collection the user had stopped looking
+    /// at — [`collection_subset_picked`](Self::collection_subset_picked)
+    /// included, whose two sides had drifted together, which is what let a press
+    /// download the OLD collection's picks under the new id.
+    ///
+    /// **Invariant this establishes**: a `Some` [`resolved_collection`] always
+    /// names the collection the field parses to. It is the only writer that can
+    /// break the pairing and it repairs it here, while the one production write
+    /// of the snapshot ([`adopt_collection`], from the resolve handler) is
+    /// guarded on the same predicate — so no reachable state pairs a snapshot
+    /// with a field naming something else, and a test fixture that builds one is
+    /// testing a state the app cannot produce.
+    ///
+    /// The browse's rows and their checkmarks are deliberately NOT dropped. They
+    /// belong to [`collection_browse_id`](Self::collection_browse_id), which this
+    /// leaves alone, so [`picked_collection_id`](Self::picked_collection_id)
+    /// holds them inert while the field points elsewhere rather than discarding
+    /// a selection nothing can rebuild — `open_collection_browse` re-selects
+    /// every set once the browse id stops matching. What re-ARMS them is the
+    /// cache lookup below: parking alone would leave them dead until a fresh
+    /// network reply landed, and dead for good if it failed.
+    ///
+    /// The lookup goes through [`CollectionCache::get_fresh`], which is the only
+    /// reader of the store and holds the TTL inside it, so there is no second
+    /// notion of fresh here to drift from the one the download path uses; a miss
+    /// and a stale entry are one branch.
+    ///
+    /// Idempotent and self-disarming — the fields it writes are the ones it
+    /// reads — which is what lets a caller run it unconditionally instead of
+    /// deciding for itself whether its own edit was the one that moved the field.
+    ///
+    /// [`resolved_collection`]: Self::resolved_collection
+    /// [`adopt_collection`]: Self::adopt_collection
+    /// [`CollectionCache::get_fresh`]: crate::app::CollectionCache::get_fresh
+    /// [`schedule_resolve`]: crate::app::runtime::schedule_resolve
+    pub fn settle_collection_resolve(&mut self) -> bool {
+        if self.collection_resolve_is_current() {
+            return true;
+        }
+        if self.resolved_collection.is_some() {
+            self.clear_collection_resolve();
+        }
+        let Ok(collection_id) = parse_collection_id(&self.collection.value) else {
             return false;
         };
-        parse_collection_id(&self.collection.value).is_ok_and(|typed| typed == *resolved_id)
+        // One payload clone per re-arm, against data this session already paid
+        // the network for — the same `.cloned()` the two download-side readers of
+        // this cache do. It buys skipping a full fetch + parse of the same bytes.
+        let Some(cached) = self.collection_cache.get_fresh(collection_id).cloned() else {
+            return false;
+        };
+        self.adopt_collection(collection_id, &cached);
+        true
     }
 
     /// The per-run subdir a download dispatched right now would land in, under

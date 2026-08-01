@@ -20,7 +20,7 @@ pub use scan::{
 pub use cover::{HomeCoverEvent, handle_home_cover_event};
 pub use enrich::{EnrichEvent, handle_enrich_event};
 pub use filter::{HomeFilterEvent, handle_home_filter_event};
-pub use resolve::{HomeResolveEvent, handle_home_resolve_event};
+pub use resolve::{HomeResolveEvent, HomeResolveKind, handle_home_resolve_event};
 pub use search::{HomeSearchEvent, handle_home_search_event};
 pub use size::{HomeSizeEvent, handle_home_size_event};
 
@@ -46,7 +46,7 @@ use details::{HomeDetailsEvent, handle_home_details_event, schedule_details};
 use enrich::{enrich_sink_mut, schedule_enrichment};
 use filter::schedule_filter;
 use mirror_probe::{handle_mirror_probe_event, schedule_probe};
-use resolve::schedule_resolve;
+use resolve::{cancel_resolve, schedule_resolve};
 use scan::{handle_updates_event, spawn_failed_map_recheck_task, spawn_scan_task};
 use search::schedule_search;
 use size::schedule_size_probe;
@@ -357,8 +357,10 @@ pub async fn run(
             &tasks.mirror_probe_tx,
         );
         if !app.home.collection.value.trim().is_empty() {
+            let generation = app.home.supersede_resolve();
             schedule_resolve(
                 &app.home.collection.value,
+                generation,
                 &mut tasks.resolve,
                 &mut tasks.resolve_cancel,
                 &tasks.home_resolve_tx,
@@ -814,9 +816,17 @@ fn dispatch_command(
         Some(AppCommand::Logout) => {
             spawn_logout_task(auth_tx.clone());
         }
-        Some(AppCommand::ResolveCollectionUrl { value }) => {
+        Some(AppCommand::CancelResolve) => {
+            cancel_resolve(&mut tasks.resolve, &mut tasks.resolve_cancel);
+        }
+        Some(AppCommand::ResolveCollectionUrl { generation, value }) => {
+            // Cancel then schedule, sequenced HERE rather than folded into
+            // `schedule_resolve`: they are two effects, and the command that
+            // wants only the first one is right above this.
+            cancel_resolve(&mut tasks.resolve, &mut tasks.resolve_cancel);
             schedule_resolve(
                 &value,
+                generation,
                 &mut tasks.resolve,
                 &mut tasks.resolve_cancel,
                 &tasks.home_resolve_tx,

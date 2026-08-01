@@ -221,8 +221,19 @@ pub enum AppCommand {
     RetryAllFailed {
         download_id: DownloadId,
     },
-    /// Collection URL field changed; schedule a debounced metadata resolve.
+    /// Collection URL field changed and the form already holds that collection's
+    /// snapshot, so kill the in-flight resolve without starting one.
+    ///
+    /// Separate from [`ResolveCollectionUrl`](Self::ResolveCollectionUrl) rather
+    /// than a flag on it because cancelling and scheduling are separate effects
+    /// that happened to share a command: skipping the fetch by suppressing the
+    /// command also skipped the cancel, and the unnamed effect is the one that
+    /// goes missing.
+    CancelResolve,
+    /// Collection URL field changed; schedule a debounced metadata resolve under
+    /// `generation`, which every event that request emits is stamped with.
     ResolveCollectionUrl {
+        generation: u64,
         value: String,
     },
     /// Run an osu! API v2 search (the `search` CTA or `load more`). `append` marks
@@ -1765,17 +1776,29 @@ impl App {
     pub fn request_collection_pick_download(
         &mut self,
     ) -> Option<(DownloadId, SelectiveDownloadRequest)> {
+        // Every picked-subset dispatch converges here, which is the only place
+        // the check holds regardless of what reached it — `dispatch_form_download`
+        // testing `collection_subset_picked` first is a convention the compiler
+        // does not enforce, and this is `pub`. Neither half carries it alone: the
+        // settle drops a resolve the field moved off but deliberately leaves the
+        // browse's own id standing (the rows really did come from it), and
+        // `picked_collection_id` is what refuses the pair the settle just broke.
+        self.home.settle_collection_resolve();
+        // The id snapshotted at browse-open, and only while the form still has
+        // that collection resolved — so the run is paired with the rows it
+        // dispatches AND with the collection the URL field names. Checked before
+        // the selection: an unpaired browse is the more fundamental failure, and
+        // reporting "no mapsets selected" for it would send the user to fix the
+        // wrong thing.
+        let Some(collection_id) = self.home.picked_collection_id() else {
+            self.toast_warn("resolve a collection first");
+            return None;
+        };
         let beatmapset_ids = self.home.collection_browse.selected_ids();
         if beatmapset_ids.is_empty() {
             self.toast_warn("no mapsets selected for download");
             return None;
         }
-        // Use the id snapshotted at browse-open, not the live `resolved_collection`
-        // (which a late resolve may have moved to a different collection).
-        let Some(collection_id) = self.home.collection_browse_id else {
-            self.toast_warn("resolve a collection first");
-            return None;
-        };
         if self.home.mirror_count() == 0 {
             self.toast_warn("no mirrors enabled (configure in the config tab)");
             return None;
@@ -1842,11 +1865,22 @@ impl App {
     }
 
     /// Run `mutate` against the home form, then — only when focus is the
-    /// collection field AND its value actually changed — return a
-    /// `ResolveCollectionUrl` command carrying the new value.
+    /// collection field AND its value actually changed — settle the cached
+    /// resolve against the new value and return a `ResolveCollectionUrl` command
+    /// carrying it.
     ///
     /// No-op keystrokes (backspace on an empty field, digits typed into the
     /// threads input) thus do not spawn a wasted resolve task.
+    ///
+    /// Every key that can edit the collection field converges here — `handle_char`,
+    /// space, paste, `backspace`, `backspace_word`, `delete_forward` are the whole
+    /// set, and none of them is reachable from the Home tab any other way — which
+    /// is what makes this the place to settle rather than
+    /// [`handle_key`](Self::handle_key). The settle lands in the same press as the
+    /// edit, so the frame this key produces can neither name nor dispatch a
+    /// collection the field has stopped naming; the debounced fetch it also
+    /// schedules is 300 ms away and a failed one never arrives at all, so waiting
+    /// for a response to correct the form was never an option.
     fn mutate_collection_then_resolve(
         &mut self,
         mutate: impl FnOnce(&mut HomeTab),
@@ -1861,8 +1895,27 @@ impl App {
         if self.home.focus != HomeField::Collection || self.home.collection.value == before {
             return None;
         }
-        Some(AppCommand::ResolveCollectionUrl {
-            value: self.home.collection.value.clone(),
+        // A settle that re-armed from the session cache leaves the field's
+        // collection already resolved, so there is nothing left to FETCH — but the
+        // previous value's fetch still has to be CANCELLED, which is why this
+        // returns a command instead of `None`. The cache's TTL is the freshness
+        // contract the download path reads it under; firing a confirming request
+        // on a hit would be a second, stricter notion of fresh living only here,
+        // and its `Failed` could land an error line over a snapshot that is
+        // present and correct.
+        // Bump first: from here every exit is a command, and the single `Some(`
+        // is what makes that a compile-time fact rather than a convention three
+        // `return None`s above it happen to respect. Anything the superseded
+        // request still emits is dropped on the generation regardless, so a
+        // fourth exit that forgot to cancel would leak a request, not a defect.
+        let generation = self.home.supersede_resolve();
+        Some(if self.home.settle_collection_resolve() {
+            AppCommand::CancelResolve
+        } else {
+            AppCommand::ResolveCollectionUrl {
+                generation,
+                value: self.home.collection.value.clone(),
+            }
         })
     }
 

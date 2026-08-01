@@ -444,7 +444,7 @@ fn paste_into_collection_field_inserts_and_resolves() {
     let cmd = app.handle_paste("12345".to_string());
     assert_eq!(app.home.collection.value, "12345");
     assert!(
-        matches!(cmd, Some(AppCommand::ResolveCollectionUrl { value }) if value == "12345"),
+        matches!(cmd, Some(AppCommand::ResolveCollectionUrl { value, .. }) if value == "12345"),
         "pasting into the collection field re-resolves it"
     );
 }
@@ -1377,33 +1377,49 @@ fn update_view_button_rekicks_enrichment_only_when_unfetched() {
     assert!(app.home.update.is_browsing());
 }
 
+/// The dispatch names the collection the ROWS came from — the browse's own id —
+/// never something a later write to `resolved_collection` installed. A late
+/// resolve that moved it elsewhere is refused outright rather than dispatching
+/// either id: the rows belong to 111, so a run tagged 999 would write 999's
+/// `collection.db` over 111's sets, and a run tagged 111 would download a
+/// collection the form has stopped showing.
 #[test]
 fn collection_pick_download_uses_snapshotted_id_not_late_resolve() {
     use osu_collect::app::{BrowseRow, GetMapsSource};
-    let mut app = make_app();
-    app.home.source = GetMapsSource::Collection;
-    // The browse was opened against collection 111 (its sets are the rows).
-    app.home.collection_browse_id = Some(111);
-    app.home.collection_browse.set_rows(
-        vec![
-            BrowseRow { id: 10, meta: None },
-            BrowseRow { id: 20, meta: None },
-        ],
-        &std::collections::HashMap::new(),
-    );
-    app.home.collection_browse.set_all_selected(true);
-    // A late resolve then moved `resolved_collection` to a different collection.
-    app.home.set_resolved_collection(999, vec![77, 88]);
 
-    let (_, request) = app
+    fn browsing_111(resolved: u32) -> App {
+        let mut app = make_app();
+        app.home.source = GetMapsSource::Collection;
+        // The state an `open_collection_browse` for 111 leaves: the field naming
+        // it, the snapshot, and the browse bound to it.
+        app.home.collection.set_value("111");
+        app.home.collection_browse_id = Some(111);
+        app.home.collection_browse.set_rows(
+            vec![
+                BrowseRow { id: 10, meta: None },
+                BrowseRow { id: 20, meta: None },
+            ],
+            &std::collections::HashMap::new(),
+        );
+        app.home.collection_browse.set_all_selected(true);
+        app.home.set_resolved_collection(resolved, vec![77, 88]);
+        app
+    }
+
+    let (_, request) = browsing_111(111)
         .request_collection_pick_download()
         .expect("a selection with mirrors enabled builds a request");
-    // The dispatch pairs the picked rows with 111 (where they came from), not the
-    // 999 a late resolve installed.
     assert_eq!(request.collection_ids, vec![111]);
     let mut ids = request.beatmapset_ids.clone();
     ids.sort_unstable();
     assert_eq!(ids, vec![10, 20]);
+
+    assert!(
+        browsing_111(999)
+            .request_collection_pick_download()
+            .is_none(),
+        "rows from 111 must not dispatch while the form has a different collection resolved"
+    );
 }
 
 /// A part-picked collection carries the "skip already imported" toggle to the
@@ -1418,6 +1434,8 @@ fn collection_pick_download_carries_the_skip_imported_toggle() {
         let mut app = make_app();
         app.config.skip_already_imported = skip_already_imported;
         app.home.source = GetMapsSource::Collection;
+        app.home.collection.set_value("111");
+        app.home.set_resolved_collection(111, vec![10, 20]);
         app.home.collection_browse_id = Some(111);
         app.home.collection_browse.set_rows(
             vec![
@@ -1464,6 +1482,232 @@ fn reopening_collection_browse_preserves_picks() {
         2,
         "re-opening the same collection preserves the user's selection"
     );
+}
+
+/// A form with collection 42 resolved and a proper subset picked in browse&pick,
+/// driven entirely through the key handler so the browse id and the picks are
+/// whatever the real descend/toggle/ascend path writes.
+fn collection_42_picked_through_the_keys() -> App {
+    use osu_collect::app::{GetMapsSource, HomeField};
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Collection;
+    app.home.collection.set_value("42");
+    app.home.set_resolved_collection(42, vec![10, 20]);
+    app.home.resolved_folder_name = Some("Farm-42".to_string());
+    app.home.focus = HomeField::CollectionBrowse;
+
+    app.handle_key(press(KeyCode::Enter)); // descend, all selected
+    app.handle_key(press(KeyCode::Enter)); // uncheck the cursor row → 1 of 2
+    app.handle_key(press(KeyCode::Esc)); // back to the form
+    app
+}
+
+/// Typing one more digit into the URL field retargets the form in the SAME
+/// press: 42 → 421 is a different collection, so the picked-subset run stops
+/// being reachable at all. Before, both sides of the subset check had gone stale
+/// together, so a press queued 42's picks under a field reading 421 — through
+/// the whole debounce, and for good when the 421 fetch failed.
+///
+/// The direct call is the second half of the guard: `dispatch_form_download`
+/// consulting `collection_subset_picked` first is a convention nothing enforces,
+/// so the entry point every picked-subset run converges on refuses on its own.
+#[test]
+fn a_retyped_collection_id_cannot_dispatch_the_old_collections_picks() {
+    use osu_collect::app::HomeField;
+
+    let mut app = collection_42_picked_through_the_keys();
+    assert_eq!(app.home.collection_browse_id, Some(42));
+    assert_eq!(app.home.collection_browse.selected_count(), 1);
+    assert!(
+        app.home.collection_subset_picked(),
+        "precondition: a proper subset of the resolved collection"
+    );
+    assert!(
+        app.request_collection_pick_download().is_some(),
+        "precondition: that subset dispatches while the field still names 42"
+    );
+
+    let mut app = collection_42_picked_through_the_keys();
+    app.home.focus = HomeField::Collection;
+    app.editing = true;
+    let cmd = app.handle_key(press(KeyCode::Char('1')));
+    assert_eq!(app.home.collection.value, "421");
+    assert!(
+        matches!(cmd, Some(AppCommand::ResolveCollectionUrl { ref value, .. }) if value == "421"),
+        "the keystroke still schedules the new resolve, got {cmd:?}"
+    );
+
+    assert!(
+        !app.home.collection_subset_picked(),
+        "the router must not reach the picked-subset path for a collection the field left"
+    );
+    assert!(
+        app.request_collection_pick_download().is_none(),
+        "and the dispatch itself refuses, so no caller can queue 42's picks under 421"
+    );
+    assert!(
+        app.downloads.is_empty(),
+        "a refused dispatch queues no run page"
+    );
+}
+
+/// The settle inside the dispatch, with nothing having run it first. Today every
+/// collection-field edit funnels through `mutate_collection_then_resolve`, so
+/// this pair is not reachable from the keyboard — that is exactly what the guard
+/// is for, and a fixture built by hand is the only way to pin defence in depth.
+/// Both halves are load-bearing here: `picked_collection_id` alone accepts this
+/// pair (browse id and resolved id still agree on 42), and the settle alone
+/// leaves the browse id standing for a reader that goes straight to it.
+#[test]
+fn the_picked_subset_dispatch_settles_before_it_reads_the_browse_id() {
+    use osu_collect::app::{BrowseRow, GetMapsSource};
+
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Collection;
+    app.home.set_resolved_collection(42, vec![10, 20]);
+    app.home.collection_browse_id = Some(42);
+    app.home.collection_browse.set_rows(
+        vec![
+            BrowseRow { id: 10, meta: None },
+            BrowseRow { id: 20, meta: None },
+        ],
+        &std::collections::HashMap::new(),
+    );
+    app.home.collection_browse.set_all_selected(true);
+    app.home.collection.set_value("421");
+
+    assert!(
+        app.request_collection_pick_download().is_none(),
+        "the run must not be built against a collection the field left"
+    );
+    assert!(
+        app.downloads.is_empty(),
+        "a refused dispatch queues no run page"
+    );
+    assert_eq!(
+        app.home.resolved_collection, None,
+        "the settle ran, so the readers after it see the cleared snapshot too"
+    );
+    let toast = app.toasts.iter().next().expect("a refusal must say why");
+    assert_eq!(toast.title(), "resolve a collection first");
+
+    // Both guards failing at once is what fixes their order: the pairing failure
+    // is the more fundamental one and owns the message, because pointing the user
+    // at the selection would point them at the thing that is not wrong. Same
+    // fixture, differing only in whether anything is checked.
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Collection;
+    app.home.set_resolved_collection(42, vec![10, 20]);
+    app.home.collection_browse_id = Some(42);
+    app.home.collection_browse.set_rows(
+        vec![
+            BrowseRow { id: 10, meta: None },
+            BrowseRow { id: 20, meta: None },
+        ],
+        &std::collections::HashMap::new(),
+    );
+    app.home.collection_browse.set_all_selected(false);
+    app.home.collection.set_value("421");
+
+    assert!(app.request_collection_pick_download().is_none());
+    let toast = app.toasts.iter().next().expect("a refusal must say why");
+    assert_eq!(
+        toast.title(),
+        "resolve a collection first",
+        "an unpaired browse outranks an empty selection"
+    );
+}
+
+/// The other half of the tradeoff, asserted end to end rather than as the
+/// `fresh` predicate in isolation: once the field moves to another collection
+/// and that collection resolves, reopening the browse rebinds
+/// `collection_browse_id` and re-selects every set. That is exactly what
+/// clearing the browse id on a mistype would have cost — it would have put the
+/// user's own collection through this same path — so the case for parking the
+/// picks rests on this behaving the way it is argued to.
+#[test]
+fn reopening_after_the_field_moves_rebinds_the_browse_and_reselects_all() {
+    use osu_collect::app::HomeField;
+
+    let mut app = collection_42_picked_through_the_keys();
+    assert_eq!(app.home.collection_browse.selected_count(), 1);
+
+    // Retype to another collection; the settle drops 42's snapshot in the press.
+    app.home.focus = HomeField::Collection;
+    app.editing = true;
+    app.handle_key(press(KeyCode::Char('1')));
+    app.editing = false;
+    assert_eq!(app.home.resolved_collection, None);
+    assert_eq!(
+        app.home.collection_browse_id,
+        Some(42),
+        "the rows are still bound to the collection they came from"
+    );
+
+    // 421's own resolve lands.
+    app.home.set_resolved_collection(421, vec![30, 40, 50]);
+
+    app.home.focus = HomeField::CollectionBrowse;
+    app.handle_key(press(KeyCode::Enter));
+
+    assert!(app.home.collection_browse.is_browsing(), "browse opened");
+    assert_eq!(
+        app.home.collection_browse_id,
+        Some(421),
+        "the browse rebinds to the collection it was opened against"
+    );
+    assert_eq!(
+        app.home.collection_browse.selected_ids(),
+        vec![30, 40, 50],
+        "a browse id that changed re-selects every set — the pick from 42 is gone"
+    );
+    assert!(
+        !app.home.collection_subset_picked(),
+        "all selected is a whole-collection download, not a subset"
+    );
+}
+
+/// The picks are parked, not destroyed. Backspacing a mistyped digit away and
+/// letting the re-resolve land restores the exact selection — the state a clear
+/// would have thrown away with no undo, since reopening the browse re-selects
+/// every set once the browse id stops matching.
+///
+/// This is the UNCACHED path — the fixture seeds `resolved_collection` directly,
+/// so no session payload exists and the restore arrives with a landed fetch. The
+/// cached path, where the keystroke itself re-arms with no request at all, is
+/// pinned at `a_cached_id_rearms_the_picks_on_the_keystroke` (`tests/unit/home.rs`)
+/// and `returning_to_a_cached_id_schedules_no_fetch` (`tests/unit/home_resolve.rs`),
+/// both of which need crate-private access this integration crate does not have.
+#[test]
+fn backspacing_a_mistyped_digit_restores_the_picked_subset() {
+    use osu_collect::app::HomeField;
+
+    let mut app = collection_42_picked_through_the_keys();
+    let picked = app.home.collection_browse.selected_ids();
+    app.home.focus = HomeField::Collection;
+    app.editing = true;
+
+    app.handle_key(press(KeyCode::Char('1'))); // 42 → 421
+    assert!(!app.home.collection_subset_picked());
+    app.handle_key(press(KeyCode::Backspace)); // 421 → 42
+    assert_eq!(app.home.collection.value, "42");
+
+    // The debounced resolve for 42 lands.
+    app.home.set_resolved_collection(42, vec![10, 20]);
+
+    assert!(
+        app.home.collection_subset_picked(),
+        "the picks belong to 42 and the field names 42 again"
+    );
+    assert_eq!(
+        app.home.collection_browse.selected_ids(),
+        picked,
+        "the same selection, not a re-selected default"
+    );
+    let (_, request) = app
+        .request_collection_pick_download()
+        .expect("the restored subset dispatches");
+    assert_eq!(request.collection_ids, vec![42]);
 }
 
 // ── filter source ─────────────────────────────────────────────────────────────
