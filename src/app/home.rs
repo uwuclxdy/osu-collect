@@ -84,6 +84,19 @@ pub enum FindBackend {
     Nzbasic,
 }
 
+impl FindBackend {
+    /// The backend's user-facing name. One spelling for every surface that names
+    /// a route to the user — the form's `→ via <backend>` indicator and the toast
+    /// that fires when the criteria move off the loaded results' backend read it
+    /// from here, so the cue can't call it something the indicator doesn't.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Osu => "osu! api",
+            Self::Nzbasic => "nzbasic",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct InputField {
     pub label: &'static str,

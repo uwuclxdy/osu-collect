@@ -297,6 +297,31 @@ impl SetBrowse {
         self.details.get(&set_id)
     }
 
+    /// Drop every row and everything keyed to them, returning the browse to the
+    /// form.
+    ///
+    /// Distinct from `set_rows(Vec::new(), …)`, which leaves the browse
+    /// descended: that call always has a fresh identity behind it (an empty
+    /// result set the user just asked for), while this one is used when the rows
+    /// stop applying with nothing to replace them, so an open browse would sit
+    /// over a list with no rows and no way to have arrived there.
+    ///
+    /// Three of the struct's twelve fields are deliberately left alone, all for
+    /// the same reason `set_rows` leaves them: `list_offset` and
+    /// `preview_max_offset` are resolved and written back by the render, and
+    /// `resolve_list_offset` returns 0 at `total == 0`, so a carried-over offset
+    /// self-heals on the next frame rather than stranding the pane; `diff_sort`
+    /// is a view preference the user set, not state belonging to these rows.
+    /// Replacing the whole struct instead would also reset the [`EnrichPager`]
+    /// generation counter to 0, and its whole job is never to repeat a value an
+    /// in-flight page might still be carrying.
+    pub fn clear(&mut self) {
+        self.set_rows(Vec::new(), &HashMap::new());
+        self.list_cursor = None;
+        self.descended = false;
+        self.preview_focused = false;
+    }
+
     /// Append more rows (search `load more`), dropping ids already present so a
     /// page overlap (osu-web#9270) doesn't duplicate a set. Selections are kept.
     pub fn append_rows(&mut self, more: Vec<BrowseRow>) {
@@ -1736,6 +1761,79 @@ impl FindSource {
     pub fn run_backend(&self) -> FindBackend {
         self.results_backend
             .unwrap_or_else(|| self.planned_backend())
+    }
+
+    /// Invalidate the loaded results once the criteria stop resolving to the
+    /// backend that produced them.
+    ///
+    /// Returns the backend they moved TO, and only when the move dropped rows
+    /// the user could see — so a caller's cue fires only when something was lost,
+    /// and names the backend this comparison actually used rather than
+    /// re-deriving it from the criteria afterwards.
+    ///
+    /// The route indicator reads the live criteria while the dispatch and the
+    /// output folder read [`run_backend`](Self::run_backend), so clearing a
+    /// forcing chip after a run left the form reading `via osu! api` over rows
+    /// that would download into a `filter-*` directory. Dropping the rows is what
+    /// makes the two readings agree: with nothing loaded there is no second
+    /// source left to disagree with the form.
+    ///
+    /// Idempotent and self-disarming — it clears the very field it reads — which
+    /// is what lets every caller run it unconditionally rather than deciding for
+    /// itself whether its edit was the one that moved the route.
+    ///
+    /// A [conflict](FindRoute::Conflict) is deliberately not a move: it resolves
+    /// to no backend at all, the `find` CTA refuses to dispatch it, and the rows
+    /// still match the directory they would land in. Treating it as one would
+    /// also drop the results on the first keystroke of any two-step edit passing
+    /// through a conflict on its way to the other backend.
+    pub fn settle_route(&mut self) -> Option<FindBackend> {
+        let loaded = self.results_backend?;
+        let resolved = match self.resolved_route() {
+            FindRoute::Osu => FindBackend::Osu,
+            FindRoute::Nzbasic => FindBackend::Nzbasic,
+            FindRoute::Conflict { .. } => return None,
+        };
+        if resolved == loaded {
+            return None;
+        }
+        let had_rows = !self.browse.rows.is_empty();
+        self.clear_results();
+        had_rows.then_some(resolved)
+    }
+
+    /// Drop the loaded results and everything keyed to them.
+    ///
+    /// [`size_cache`](Self::size_cache) deliberately survives: a set's download
+    /// size is a fact about the beatmapset, not about the run that found it, and
+    /// every figure it feeds (the button's `· ~X` suffix, a run's size seed) sums
+    /// over the selection, which is now empty — so it can outlive the rows
+    /// without lending a stale number to anything.
+    ///
+    /// The status line splits by what it reports ON, not by variant. The
+    /// ROW-COUNTING ones (`ReadySearch`, `ReadyFilter`, `Empty`) describe the
+    /// result set being dropped, so they go with it. The FETCH-SCOPED ones
+    /// (`Loading`, `Error`) describe a request instead and survive: `Loading` is
+    /// still in flight, and resetting it would drop the busy cue and re-arm the
+    /// `find` CTA mid-request (an auth event can settle the route between a press
+    /// and its response, so that is reachable with no keypress in between);
+    /// `Error` is that same fetch's terminal state and is the **only** surface
+    /// reporting a find failure — neither `HomeSearchEvent::Failed` nor
+    /// `HomeFilterEvent::Failed` toasts, they set this line and nothing else — so
+    /// clearing it destroys the reason outright. It reads as past tense about a
+    /// request that already failed, which the forward-looking route indicator
+    /// does not contradict.
+    fn clear_results(&mut self) {
+        self.browse.clear();
+        self.results_inputs = None;
+        self.results_backend = None;
+        self.next_cursor = None;
+        if !matches!(
+            self.status_msg,
+            FindStatusMsg::Loading | FindStatusMsg::Error(_)
+        ) {
+            self.status_msg = FindStatusMsg::Idle;
+        }
     }
 
     // ── size backfill ─────────────────────────────────────────────────────────

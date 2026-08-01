@@ -334,3 +334,200 @@ fn the_gate_settles_without_waiting_for_a_keypress() {
     );
     assert_eq!(app.home.find.genre_label(), "any");
 }
+
+// ── the find route moving off the loaded results ──────────────────────────────
+//
+// Model-level coverage of the invalidation itself is in `app_find_source.rs`.
+// These pin the two ways it reaches the user: the key loop, and the auth event
+// that resets the supporter facets with no keypress behind it.
+
+/// The find form as a landed nzbasic run leaves it: the `special` chip that
+/// forced the route, rows, both picked, and the recorded backend. Focus parked
+/// on that chip, which is what the user walks back to clear it.
+fn find_with_nzbasic_results() -> App {
+    use crate::app::find_source::BrowseRow;
+    use crate::app::{FindBackend, GetMapsSource, HomeField};
+    use std::collections::HashMap;
+
+    let mut app = App::new(Config::default());
+    app.active_tab = Tab::Home;
+    app.home.source = GetMapsSource::Find;
+    app.home.find.cycle_special(true); // farm — the nzbasic forcer
+    app.home.find.browse.set_rows(
+        vec![
+            BrowseRow { id: 10, meta: None },
+            BrowseRow { id: 20, meta: None },
+        ],
+        &HashMap::new(),
+    );
+    app.home.find.browse.set_all_selected(true);
+    app.home.find.note_results_backend(FindBackend::Nzbasic);
+    app.home.find.mark_results_current();
+    app.home.focus = HomeField::FindSpecial;
+    app
+}
+
+/// Clearing the chip through the key handler drops the rows AND everything the
+/// download button reads, in the same press. The button's enabled state and its
+/// `download (N)` count both come off the selection, so a clear that left either
+/// standing would put the form back to advertising a run it can no longer make.
+///
+/// The walk back to `none` passes through the other nzbasic-forcing values,
+/// which are not route moves — the loop asserts the results survive those, so a
+/// settle that fired on any criteria edit rather than a route change reds here.
+#[test]
+fn clearing_the_forcing_chip_resets_the_download_button() {
+    use crate::app::{FindBackend, HomeField};
+    let mut app = find_with_nzbasic_results();
+    assert!(
+        app.home.button_enabled(HomeField::Download),
+        "precondition: two picked rows"
+    );
+    assert!(
+        app.home.button_enabled(HomeField::FindBrowse),
+        "precondition: fresh results to reopen"
+    );
+
+    for _ in 0..8 {
+        if app.home.find.special_label() == "none" {
+            break;
+        }
+        app.handle_key(key(KeyCode::Char(' ')));
+        if app.home.find.special_label() != "none" {
+            assert_eq!(
+                app.home.find.browse.rows.len(),
+                2,
+                "{} still forces nzbasic — not a route move",
+                app.home.find.special_label()
+            );
+        }
+    }
+    assert_eq!(app.home.find.special_label(), "none", "chip never cleared");
+
+    assert!(app.home.find.browse.rows.is_empty(), "rows");
+    assert_eq!(app.home.find.browse.selected_count(), 0, "checks");
+    assert!(
+        !app.home.button_enabled(HomeField::Download),
+        "the button must not stay live over results that are gone"
+    );
+    assert!(
+        !app.home.button_enabled(HomeField::FindBrowse),
+        "`view N mapsets` has nothing to reopen"
+    );
+    assert_eq!(
+        app.home.find.checked_known_bytes(),
+        0,
+        "the button's `· ~X` size suffix sums the checked sets"
+    );
+    assert_eq!(
+        app.home.find.run_backend(),
+        FindBackend::Osu,
+        "the dispatch now names the backend the indicator shows"
+    );
+    // Rows vanishing with no explanation is its own defect, so the cue names
+    // what went and the way back — and names the backend the indicator does.
+    let toast = app
+        .toasts
+        .iter()
+        .next()
+        .expect("no cue for the dropped rows");
+    assert_eq!(toast.title(), "find results cleared");
+    assert_eq!(
+        toast.detail(),
+        Some("criteria now route via osu! api · run find again")
+    );
+}
+
+/// The controller-level negative: the same fixture and the same kind of key
+/// (a chip cycle), differing only in whether the chip it moves steers the route.
+#[test]
+fn cycling_a_route_neutral_chip_keeps_the_download_button_live() {
+    use crate::app::HomeField;
+    let mut app = find_with_nzbasic_results();
+    // `mode` is expressible on both backends, so `special = farm` still decides.
+    app.home.focus = HomeField::FindMode;
+    app.handle_key(key(KeyCode::Char(' ')));
+
+    assert_eq!(app.home.find.browse.rows.len(), 2, "rows");
+    assert_eq!(app.home.find.browse.selected_count(), 2, "checks");
+    assert!(app.home.button_enabled(HomeField::Download));
+    assert!(
+        app.toasts.is_empty(),
+        "nothing was lost, so nothing to announce"
+    );
+}
+
+/// The guarantee that does not rest on a convention: the check sits where every
+/// find dispatch converges, so a drifted route refuses the run whatever reached
+/// it. Today no key both edits the criteria and dispatches in one press — the
+/// compiler does not enforce that, and a handler that did would otherwise tag the
+/// run with a backend the form stopped showing and drop it in that backend's
+/// directory. The criteria are moved here WITHOUT the key loop, standing in for
+/// exactly that handler.
+#[test]
+fn a_find_dispatch_cannot_run_on_a_route_the_form_left() {
+    let mut app = find_with_nzbasic_results();
+    app.home.directory.value = "/tmp/osu-collect-test".to_string();
+    assert!(
+        app.request_find_download().is_some(),
+        "precondition: the run dispatches while the route still matches"
+    );
+    let queued = app.downloads.len();
+
+    let mut app = find_with_nzbasic_results();
+    app.home.directory.value = "/tmp/osu-collect-test".to_string();
+    app.home.find.cycle_special(false); // back to `none` — the route is osu now
+    assert!(
+        app.request_find_download().is_none(),
+        "a run tagged with the backend the form left must not dispatch"
+    );
+    assert_eq!(app.downloads.len(), queued - 1, "no run page was pushed");
+}
+
+/// The one path a keypress cannot cover: an auth event closing the supporter
+/// gate resets the six facets, every one of them an osu-forcer, which can hand
+/// the route to nzbasic on its own. The conflict leg on the way in is the
+/// carve-out — a form that cleared its results there would lose them to the
+/// first keystroke of this very edit.
+#[test]
+fn the_supporter_gate_closing_settles_the_find_route() {
+    use crate::app::find_source::BrowseRow;
+    use crate::app::{FindBackend, FindRoute, GetMapsSource, HomeField};
+    use std::collections::HashMap;
+
+    let mut app = App::new(Config::default());
+    app.active_tab = Tab::Home;
+    app.home.source = GetMapsSource::Find;
+    app.set_login_complete(true);
+    app.home.find.cycle_genre(true); // a gated osu forcer — the route is osu
+    app.home
+        .find
+        .browse
+        .set_rows(vec![BrowseRow { id: 10, meta: None }], &HashMap::new());
+    app.home.find.browse.set_all_selected(true);
+    app.home.find.note_results_backend(FindBackend::Osu);
+    app.home.find.mark_results_current();
+
+    // `farm` over the facet is a conflict, so the results ride through it.
+    app.home.focus = HomeField::FindSpecial;
+    app.handle_key(key(KeyCode::Char(' ')));
+    assert!(matches!(
+        app.home.find.resolved_route(),
+        FindRoute::Conflict { .. }
+    ));
+    assert_eq!(
+        app.home.find.browse.rows.len(),
+        1,
+        "a conflict is not a move"
+    );
+
+    // No key from here: the facet reset alone hands the route to nzbasic.
+    app.set_logged_out();
+    assert_eq!(app.home.find.resolved_route(), FindRoute::Nzbasic);
+    assert!(
+        app.home.find.browse.rows.is_empty(),
+        "the settle has to fire where the facets are cleared, not on the next key"
+    );
+    assert_eq!(app.home.find.results_backend(), None);
+    assert!(!app.home.button_enabled(HomeField::Download));
+}

@@ -861,6 +861,10 @@ impl App {
         if self.home.clamp_supporter_focus(self.config.supporter()) {
             self.editing = false;
         }
+        // Every cleared facet was an osu-forcer, so the reset can hand the route
+        // to nzbasic on its own. An auth event drives this with no keypress
+        // behind it, which is the one path `handle_key`'s settle cannot reach.
+        self.settle_find_route();
     }
 
     /// Whether a login / verification request is currently in flight.
@@ -1691,6 +1695,14 @@ impl App {
     /// RESOLVED backend of the loaded results, falling back to the form's planned
     /// route when no fetch recorded one (e.g. test-seeded rows).
     pub fn request_find_download(&mut self) -> Option<(DownloadId, IdsDownloadRequest)> {
+        // Every find dispatch converges here, which is the only place the route
+        // check holds regardless of what reached it. `handle_key`'s settle covers
+        // the key paths, but "no key both edits the criteria and dispatches in
+        // one press" is a convention the compiler does not enforce — one that did
+        // would otherwise tag the run with a backend the form stopped showing and
+        // drop it in that backend's directory. A drifted route clears the rows
+        // here, so the empty-selection guard below refuses the run.
+        self.settle_find_route();
         let beatmapset_ids = self.home.find.browse.selected_ids();
         if beatmapset_ids.is_empty() {
             self.toast_warn("no mapsets selected for download");
@@ -1977,7 +1989,46 @@ impl App {
         }
     }
 
-    pub fn handle_key(&mut self, mut key: KeyEvent) -> Option<AppCommand> {
+    /// The controller's key entry point: dispatch the key, then settle whatever
+    /// it knocked out of line before the frame it produces is drawn.
+    ///
+    /// The settle runs AFTER the dispatch so the state the next render reads is
+    /// already consistent — settling first would leave one frame advertising a
+    /// route the loaded results didn't come from. The ordering costs nothing in
+    /// safety because it is not what carries it: the dispatch itself settles at
+    /// the point every find run converges ([`request_find_download`]), so a
+    /// handler that edited the criteria and dispatched in one press would still
+    /// be refused rather than relying on this call having run first.
+    ///
+    /// [`request_find_download`]: Self::request_find_download
+    pub fn handle_key(&mut self, key: KeyEvent) -> Option<AppCommand> {
+        let command = self.dispatch_key(key);
+        self.settle_find_route();
+        command
+    }
+
+    /// Bring the loaded find results back in line with the route the criteria
+    /// now resolve to, cueing the user when that drops rows they picked.
+    ///
+    /// Paired with every mutation of the find criteria the same way
+    /// [`settle_supporter_gate`](Self::settle_supporter_gate) is paired with
+    /// every write of the supporter flag: [`handle_key`](Self::handle_key)
+    /// covers the form edits, the supporter settle covers the facet reset that
+    /// an auth event can fire with no keypress behind it.
+    ///
+    /// Silent row loss is its own defect, so the drop gets the same treatment
+    /// the client switch gives its cleared scan — what went, and the way back.
+    fn settle_find_route(&mut self) {
+        let Some(backend) = self.home.find.settle_route() else {
+            return;
+        };
+        self.push_toast(Toast::info("find results cleared").with_detail(format!(
+            "criteria now route via {} · run find again",
+            backend.label()
+        )));
+    }
+
+    fn dispatch_key(&mut self, mut key: KeyEvent) -> Option<AppCommand> {
         // ctrl+c always quits unconditionally
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return Some(AppCommand::Quit);

@@ -750,6 +750,277 @@ fn note_results_backend_round_trips() {
     assert_eq!(source.results_backend(), Some(FindBackend::Nzbasic));
 }
 
+// ── the route moving off the loaded results' backend ──────────────────────────
+//
+// The indicator beside the `find` CTA reads the live criteria; the dispatch and
+// the output folder read the backend that produced the loaded rows. Left alone
+// the two drift, so the rows are dropped whenever the route moves off them.
+
+/// A find source exactly as a landed nzbasic run leaves it: the `special` chip
+/// that forced the route, rows, both picked, the recorded backend, the
+/// fresh-inputs snapshot, and the count the response reported.
+fn loaded_nzbasic_results() -> FindSource {
+    let mut source = FindSource::new();
+    set_special(&mut source, "farm");
+    source.browse.set_rows(rows(&[10, 20]), &HashMap::new());
+    source.browse.set_all_selected(true);
+    source.browse.descend();
+    source.status_msg = FindStatusMsg::ReadyFilter {
+        sets: 2,
+        total_bytes: 4096,
+    };
+    source.note_results_backend(FindBackend::Nzbasic);
+    source.mark_results_current();
+    source
+}
+
+/// The same, for a landed osu run: no forcing chip (osu is the default route),
+/// and the paging cursor a search response carries.
+fn loaded_osu_results() -> FindSource {
+    let mut source = FindSource::new();
+    source.browse.set_rows(rows(&[10, 20]), &HashMap::new());
+    source.browse.set_all_selected(true);
+    source.browse.descend();
+    source.next_cursor = Some("page-2".to_string());
+    source.status_msg = FindStatusMsg::ReadySearch { total: 900 };
+    source.note_results_backend(FindBackend::Osu);
+    source.mark_results_current();
+    source
+}
+
+/// Everything keyed to the dropped rows, in one place: the rows and their
+/// checks, the browse's descend, the paging cursor, the snapshot, the recorded
+/// backend, and the status line that counted them.
+fn assert_results_dropped(source: &FindSource, case: &str) {
+    assert!(source.browse.rows.is_empty(), "{case}: rows");
+    assert_eq!(source.browse.selected_count(), 0, "{case}: checks");
+    assert!(!source.browse.is_browsing(), "{case}: browse still open");
+    assert!(source.next_cursor.is_none(), "{case}: osu paging cursor");
+    assert_eq!(source.results_backend(), None, "{case}: recorded backend");
+    assert!(!source.results_current(), "{case}: inputs snapshot");
+    assert!(
+        matches!(source.status_msg, FindStatusMsg::Idle),
+        "{case}: status line still counts the dropped rows"
+    );
+}
+
+#[test]
+fn a_route_change_drops_the_results_the_other_backend_produced() {
+    // nzbasic → osu: clear the chip that forced nzbasic.
+    let mut source = loaded_nzbasic_results();
+    assert_eq!(source.resolved_route(), FindRoute::Nzbasic, "precondition");
+    set_special(&mut source, "none");
+    assert_eq!(
+        source.settle_route(),
+        Some(FindBackend::Osu),
+        "nzbasic → osu"
+    );
+    assert_results_dropped(&source, "nzbasic → osu");
+    assert_eq!(
+        source.run_backend(),
+        FindBackend::Osu,
+        "the dispatch has to name the backend the form now shows"
+    );
+
+    // osu → nzbasic: add a criterion only nzbasic can express.
+    let mut source = loaded_osu_results();
+    assert_eq!(source.resolved_route(), FindRoute::Osu, "precondition");
+    set_special(&mut source, "farm");
+    assert_eq!(
+        source.settle_route(),
+        Some(FindBackend::Nzbasic),
+        "osu → nzbasic"
+    );
+    assert_results_dropped(&source, "osu → nzbasic");
+    assert_eq!(source.run_backend(), FindBackend::Nzbasic);
+}
+
+/// The negative that keeps this from being a form that clears itself: the same
+/// kind of edit on the same fixture, differing only in whether it moves the
+/// route. The results go STALE (`view N mapsets` goes inert) but they are still
+/// there — staleness and invalidation are not the same state.
+#[test]
+fn a_criteria_edit_that_keeps_the_route_keeps_the_results() {
+    let mut source = loaded_nzbasic_results();
+    // `mode` is expressible on both backends, so `special = farm` still decides.
+    source.cycle_mode(true);
+    assert_eq!(source.resolved_route(), FindRoute::Nzbasic, "precondition");
+
+    assert_eq!(source.settle_route(), None);
+    assert_eq!(source.browse.rows.len(), 2, "rows");
+    assert_eq!(source.browse.selected_count(), 2, "checks");
+    assert_eq!(source.results_backend(), Some(FindBackend::Nzbasic));
+    assert!(
+        !source.results_current(),
+        "the edit still stales the snapshot — that is the pre-existing contract"
+    );
+}
+
+/// A conflict resolves to no backend, so it is not a move: the `find` CTA
+/// refuses to dispatch it and the rows still match the directory they would land
+/// in. Dropping them here would also cost the user their results on the first
+/// keystroke of every two-step edit that passes through a conflict.
+#[test]
+fn a_routing_conflict_keeps_the_results_until_the_route_settles() {
+    let mut source = loaded_nzbasic_results();
+    source.query.set_value("hello"); // free text — an osu forcer over `farm`
+    assert!(matches!(
+        source.resolved_route(),
+        FindRoute::Conflict { .. }
+    ));
+    assert_eq!(source.settle_route(), None, "a conflict is not a move");
+    assert_eq!(source.browse.rows.len(), 2);
+
+    // Backing out of the conflict the way it came leaves the results untouched…
+    source.query.set_value("");
+    assert_eq!(source.settle_route(), None, "back on the loaded backend");
+    assert_eq!(source.browse.rows.len(), 2);
+
+    // …and they are still there to drop once the route settles on the other one.
+    source.query.set_value("hello");
+    set_special(&mut source, "none");
+    assert_eq!(source.settle_route(), Some(FindBackend::Osu));
+    assert_results_dropped(&source, "conflict resolved to osu");
+
+    // The mirror leg. Both are needed: a conflict silently read as ONE concrete
+    // backend is invisible from the side that already loaded that backend, so a
+    // single-direction fixture leaves half the carve-out unpinned.
+    let mut source = loaded_osu_results();
+    source.query.set_value("hello"); // an osu forcer over the osu default
+    assert_eq!(source.settle_route(), None, "still the loaded backend");
+    set_special(&mut source, "farm"); // …now an nzbasic forcer on top of it
+    assert!(matches!(
+        source.resolved_route(),
+        FindRoute::Conflict { .. }
+    ));
+    assert_eq!(source.settle_route(), None, "a conflict is not a move");
+    assert_eq!(source.browse.rows.len(), 2);
+}
+
+/// The status line splits by what it reports ON. Row-counting statuses describe
+/// the dropped result set and go with it (`assert_results_dropped` pins that);
+/// fetch-scoped ones describe a request and survive. Both legs move the same
+/// fixture the same way and differ only in that dimension.
+///
+/// `Loading` is still in flight — resetting it drops the busy cue and re-arms the
+/// CTA mid-request. `Error` is that same fetch's terminal state and is the ONLY
+/// surface reporting a find failure: neither `HomeSearchEvent::Failed` nor
+/// `HomeFilterEvent::Failed` toasts, they set this line and nothing else, so
+/// clearing it destroys the reason with no other copy anywhere.
+#[test]
+fn a_route_change_keeps_the_fetch_scoped_statuses() {
+    let mut source = loaded_nzbasic_results();
+    source.status_msg = FindStatusMsg::Loading;
+    set_special(&mut source, "none");
+    assert_eq!(source.settle_route(), Some(FindBackend::Osu));
+    assert!(source.browse.rows.is_empty(), "the rows still go");
+    assert!(
+        matches!(source.status_msg, FindStatusMsg::Loading),
+        "a fetch in flight still owns the status line"
+    );
+
+    let mut source = loaded_nzbasic_results();
+    source.status_msg = FindStatusMsg::Error("nzbasic unreachable".to_string());
+    set_special(&mut source, "none");
+    assert_eq!(source.settle_route(), Some(FindBackend::Osu));
+    assert!(source.browse.rows.is_empty(), "the rows still go");
+    assert!(
+        matches!(source.status_msg, FindStatusMsg::Error(reason) if reason == "nzbasic unreachable"),
+        "the sole report of a failed find must survive the rows it outlived"
+    );
+}
+
+/// The size cache outlives the rows on purpose: a set's download size is a fact
+/// about the beatmapset, not about the run that found it, so a re-find never
+/// re-probes nekoha for an id it already answered for.
+#[test]
+fn a_route_change_keeps_the_size_cache() {
+    let mut source = loaded_osu_results();
+    source.record_size(10, Some(20 * 1024 * 1024));
+    set_special(&mut source, "farm");
+
+    assert!(source.settle_route().is_some());
+    assert_eq!(
+        source.known_sizes_for(&[10]).get(&10).copied(),
+        Some(20 * 1024 * 1024),
+        "a kept size seeds the next run's estimate"
+    );
+    assert_eq!(
+        source.checked_known_bytes(),
+        0,
+        "with nothing checked it cannot lend the button a size it would not download"
+    );
+}
+
+/// A re-run that returned nothing leaves the recorded backend standing over zero
+/// rows — `Empty` clears the rows and the snapshot, never the backend. A later
+/// route move still has to settle the STATE, or [`FindSource::run_backend`] keeps
+/// naming a backend the form stopped showing; but with nothing on screen to have
+/// lost, it earns no cue.
+#[test]
+fn a_route_change_after_an_empty_result_settles_without_a_cue() {
+    let mut source = loaded_nzbasic_results();
+    // What `HomeFilterEvent::Empty` leaves behind on a re-run.
+    source.status_msg = FindStatusMsg::Empty;
+    source.browse.set_rows(Vec::new(), &HashMap::new());
+    source.clear_results_snapshot();
+    assert_eq!(source.results_backend(), Some(FindBackend::Nzbasic));
+
+    set_special(&mut source, "none");
+    assert_eq!(
+        source.settle_route(),
+        None,
+        "no rows were on screen to lose"
+    );
+    assert_eq!(
+        source.results_backend(),
+        None,
+        "the state settles regardless, or the dispatch keeps naming nzbasic"
+    );
+    assert_eq!(source.run_backend(), FindBackend::Osu);
+    assert!(matches!(source.status_msg, FindStatusMsg::Idle));
+}
+
+/// With nothing loaded there is nothing to invalidate, so the settle returns
+/// before touching the form at all. The reachable case is a FIRST search that
+/// came back empty: `HomeSearchEvent::Empty` sets this status and clears the
+/// snapshot without ever recording a backend, so a later chip edit forcing the
+/// other route arrives with `results_backend` still unset.
+///
+/// The status here MUST be a row-counting one. It is the only field on a fresh
+/// `FindSource` that `clear_results` would move — every other one it touches is
+/// already at its default — so it is the whole discriminating power of this
+/// test. A fetch-scoped status (`Loading`/`Error`) survives `clear_results` by
+/// design, which would make the guarded and unguarded paths indistinguishable
+/// and quietly retire the pin. That survival is pinned separately, by
+/// `a_route_change_keeps_the_fetch_scoped_statuses`.
+#[test]
+fn settling_with_no_results_loaded_leaves_the_form_alone() {
+    let mut source = FindSource::new();
+    source.status_msg = FindStatusMsg::Empty;
+    set_special(&mut source, "farm"); // forces the route away from the osu default
+    assert_eq!(source.resolved_route(), FindRoute::Nzbasic, "precondition");
+    assert_eq!(source.results_backend(), None, "precondition");
+
+    assert_eq!(source.settle_route(), None);
+    assert!(
+        matches!(source.status_msg, FindStatusMsg::Empty),
+        "nothing was loaded, so the settle had no business rewriting the form"
+    );
+}
+
+/// Self-disarming: the settle clears the very field it reads, so every caller
+/// can run it unconditionally instead of working out whether its own edit was
+/// the one that moved the route — and the user gets one cue, not one per key.
+#[test]
+fn settling_the_route_twice_reports_the_move_once() {
+    let mut source = loaded_nzbasic_results();
+    set_special(&mut source, "none");
+    assert_eq!(source.settle_route(), Some(FindBackend::Osu));
+    assert_eq!(source.settle_route(), None, "already settled");
+    assert_results_dropped(&source, "still cleared");
+}
+
 // ── supporter-only facets ─────────────────────────────────────────────────────
 
 /// One supporter facet under test: its user-facing name plus the edit that moves

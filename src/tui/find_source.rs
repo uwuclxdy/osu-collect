@@ -8,8 +8,8 @@
 //! Home view; these rows are pushed into the same Home panel.
 
 use crate::app::{
-    EnrichSink, FindRoute, FindSource, FindStatusMsg, HomeField, InputField, RangeHint,
-    describe_range,
+    EnrichSink, FindBackend, FindRoute, FindSource, FindStatusMsg, HomeField, InputField,
+    RangeHint, describe_range,
 };
 use crate::utils::format_bytes;
 use ratatui::{
@@ -493,8 +493,8 @@ fn field_hint(field: HomeField) -> Option<&'static str> {
 /// button pill.
 fn route_trailing_spans(route: &FindRoute) -> Vec<Span<'static>> {
     match route {
-        FindRoute::Osu => via_trailing("osu! api"),
-        FindRoute::Nzbasic => via_trailing("nzbasic"),
+        FindRoute::Osu => via_trailing(FindBackend::Osu.label()),
+        FindRoute::Nzbasic => via_trailing(FindBackend::Nzbasic.label()),
         FindRoute::Conflict { nzbasic, osu } => vec![
             "  ! ".fg(warning()),
             format!("{nzbasic} needs nzbasic · {osu} needs osu! api").fg(warning()),

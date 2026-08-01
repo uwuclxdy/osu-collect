@@ -1491,6 +1491,55 @@ fn find_download_button_shows_approx_size_for_checked_osu_results() {
     );
 }
 
+/// The frame that used to lie: the route indicator reads the live criteria, the
+/// button's count and the folder read the backend that produced the rows. After
+/// clearing the chip that forced nzbasic, one frame has to carry the osu
+/// indicator AND a button with nothing left to download — the disagreement is
+/// only visible when both readings are taken from the same render.
+#[test]
+fn clearing_the_forcing_chip_leaves_no_count_beside_the_new_route() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use osu_collect::app::{BrowseRow, FindBackend, GetMapsSource, HomeField};
+
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Find;
+    app.home.find.cycle_special(true); // farm — forces the nzbasic route
+    app.home.find.browse.set_rows(
+        vec![
+            BrowseRow { id: 1, meta: None },
+            BrowseRow { id: 2, meta: None },
+        ],
+        &std::collections::HashMap::new(),
+    );
+    app.home.find.browse.set_all_selected(true);
+    app.home.find.note_results_backend(FindBackend::Nzbasic);
+    app.home.find.mark_results_current();
+
+    let before = render_content(&app, 100, 60);
+    assert!(
+        before.contains("via nzbasic") && before.contains("download (2)"),
+        "precondition — the loaded rows and the indicator agree: {before}"
+    );
+
+    app.home.focus = HomeField::FindSpecial;
+    for _ in 0..8 {
+        if app.home.find.special_label() == "none" {
+            break;
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+    }
+
+    let after = render_content(&app, 100, 60);
+    assert!(
+        after.contains("via osu! api"),
+        "the indicator follows the criteria: {after}"
+    );
+    assert!(
+        !after.contains("download (2)"),
+        "the button cannot keep counting rows the same frame's route disowns: {after}"
+    );
+}
+
 // ── find source form ─────────────────────────────────────────────────────────
 
 #[test]
