@@ -296,6 +296,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             editing,
             app.tick_count,
             app.config.supporter(),
+            app.osu_official_unlocked(),
         ),
         Tab::Config => {
             let osu_dir = app.library.osu_path();

@@ -1020,8 +1020,8 @@ impl HomeTab {
     /// can still outrun the name. A collection with text in the field and a
     /// mirror configured is dispatchable before its fetch lands, and that run
     /// names its folder from the payload nobody has yet.
-    pub fn planned_folder_name(&self) -> String {
-        if !self.button_enabled(HomeField::Download) {
+    pub fn planned_folder_name(&self, osu_official_unlocked: bool) -> String {
+        if !self.button_enabled(HomeField::Download, osu_official_unlocked) {
             return self.folder_placeholder().to_string();
         }
         match self.source {
@@ -1157,12 +1157,12 @@ impl HomeTab {
         self.focus = last_field(&self.active_fields(supporter), self.focus);
     }
 
-    /// Whether the form has the minimum inputs a collection download needs: a
-    /// collection reference and at least one enabled mirror. Gates the collection
-    /// `Download` button; final validation still happens in
-    /// [`build_request`](Self::build_request) on activation.
+    /// Whether the collection field holds a reference — the whole-collection
+    /// download path. The mirror gate lives one level up in
+    /// [`button_enabled`](Self::button_enabled), so this only answers "is there a
+    /// target to download".
     pub fn can_download(&self) -> bool {
-        !self.collection.value.trim().is_empty() && self.mirror_count() > 0
+        !self.collection.value.trim().is_empty()
     }
 
     /// Whether `field` is a form button that is currently "clickable" (enabled).
@@ -1170,13 +1170,18 @@ impl HomeTab {
     /// button jump/cycle ([`cycle_enabled_button`](Self::cycle_enabled_button))
     /// and the collection view's button helpers; the find/update views compute the
     /// same predicate from the same accessors. Non-button fields return `false`.
-    pub fn button_enabled(&self, field: HomeField) -> bool {
+    pub fn button_enabled(&self, field: HomeField, osu_official_unlocked: bool) -> bool {
         match field {
-            HomeField::Download => match self.source {
-                GetMapsSource::Collection => self.collection_subset_picked() || self.can_download(),
-                GetMapsSource::Find => self.find.browse.selected_count() > 0,
-                GetMapsSource::Update => self.update.selected_new_count() > 0,
-            },
+            HomeField::Download => {
+                self.mirror_count(osu_official_unlocked) > 0
+                    && match self.source {
+                        GetMapsSource::Collection => {
+                            self.collection_subset_picked() || self.can_download()
+                        }
+                        GetMapsSource::Find => self.find.browse.selected_count() > 0,
+                        GetMapsSource::Update => self.update.selected_new_count() > 0,
+                    }
+            }
             HomeField::CollectionBrowse => self
                 .resolved_collection
                 .as_ref()
@@ -1201,11 +1206,11 @@ impl HomeTab {
     /// doesn't shout). This is the `None`-focus arm of
     /// [`cycle_enabled_button`](Self::cycle_enabled_button); the render reads it
     /// to pick each button's `ButtonProminence`.
-    pub fn primary_action_field(&self, supporter: bool) -> HomeField {
+    pub fn primary_action_field(&self, supporter: bool, osu_official_unlocked: bool) -> HomeField {
         self.active_fields(supporter)
             .iter()
             .copied()
-            .filter(|&field| field.is_button() && self.button_enabled(field))
+            .filter(|&field| field.is_button() && self.button_enabled(field, osu_official_unlocked))
             .last()
             .unwrap_or(HomeField::Download)
     }
@@ -1218,12 +1223,12 @@ impl HomeTab {
     /// lands somewhere predictable. When focus **is** on an enabled button, the
     /// *next* enabled button (wrapping), so repeated `s` cycles the other
     /// available buttons.
-    pub fn cycle_enabled_button(&self, supporter: bool) -> HomeField {
+    pub fn cycle_enabled_button(&self, supporter: bool, osu_official_unlocked: bool) -> HomeField {
         let buttons: Vec<HomeField> = self
             .active_fields(supporter)
             .iter()
             .copied()
-            .filter(|&field| field.is_button() && self.button_enabled(field))
+            .filter(|&field| field.is_button() && self.button_enabled(field, osu_official_unlocked))
             .collect();
         match buttons.iter().position(|&field| field == self.focus) {
             Some(idx) => buttons[(idx + 1) % buttons.len()],
@@ -1407,11 +1412,11 @@ impl HomeTab {
     ///
     /// Use this for display-only contexts (e.g. the summary metric in the TUI).
     /// Call `build_mirror_list` when the actual list of mirrors is needed.
-    pub fn mirror_count(&self) -> usize {
+    pub fn mirror_count(&self, osu_official_unlocked: bool) -> usize {
         let builtin_count = self
             .mirror_order
             .iter()
-            .filter(|&&kind| self.mirror_enabled(kind))
+            .filter(|&&kind| self.mirror_enabled(kind, osu_official_unlocked))
             .count();
         builtin_count + self.custom_mirrors.valid_count()
     }
@@ -1420,10 +1425,10 @@ impl HomeTab {
     /// the Get Maps summary range. `None` when no enabled mirror has a numeric
     /// ping yet — in-flight / timeout / error probes don't contribute. A lone
     /// value yields `(n, n)`, which the renderer collapses to a single readout.
-    pub fn mirror_latency_range(&self) -> Option<(u32, u32)> {
+    pub fn mirror_latency_range(&self, osu_official_unlocked: bool) -> Option<(u32, u32)> {
         self.mirror_order
             .iter()
-            .filter(|&&kind| self.mirror_enabled(kind))
+            .filter(|&&kind| self.mirror_enabled(kind, osu_official_unlocked))
             .filter_map(|&kind| match self.mirror_latency.get(&kind).copied() {
                 Some(Some(ProbeResult::Ms(ms))) => Some(ms),
                 _ => None,
@@ -1441,7 +1446,7 @@ impl HomeTab {
     /// from the configured try-order ([`mirror_order`](Self::mirror_order) — the
     /// order the TUI renders and the download pipeline tries), and can't drift
     /// from it.
-    fn mirror_enabled(&self, kind: MirrorKind) -> bool {
+    fn mirror_enabled(&self, kind: MirrorKind, osu_official_unlocked: bool) -> bool {
         match kind {
             MirrorKind::Nerinyan => self.nerinyan,
             MirrorKind::OsuDirect => self.osu_direct,
@@ -1451,13 +1456,13 @@ impl HomeTab {
             MirrorKind::Osudl => self.osudl,
             MirrorKind::Catboy => self.catboy,
             MirrorKind::Hinamizawa => self.hinamizawa,
-            MirrorKind::OsuApi => self.osu_official,
+            MirrorKind::OsuApi => self.osu_official && osu_official_unlocked,
             MirrorKind::Nzbasic => self.nzbasic,
             MirrorKind::Custom => false,
         }
     }
 
-    pub fn build_mirror_list(&self) -> Vec<Mirror> {
+    pub fn build_mirror_list(&self, osu_official_unlocked: bool) -> Vec<Mirror> {
         // Built-ins follow the configured try-order (`mirror_order`) so the
         // pipeline tries them in the exact order the TUI lists them. OsuApi is
         // built header-less here; the download pipeline injects the `*`
@@ -1466,7 +1471,7 @@ impl HomeTab {
         let mut mirrors: Vec<Mirror> = self
             .mirror_order
             .iter()
-            .filter(|&&kind| self.mirror_enabled(kind))
+            .filter(|&&kind| self.mirror_enabled(kind, osu_official_unlocked))
             .filter_map(|&kind| {
                 let mirror = Mirror::builtin(kind)?;
                 Some(if self.video {
@@ -1484,6 +1489,7 @@ impl HomeTab {
 
     pub fn build_request(
         &self,
+        osu_official_unlocked: bool,
         archive_validation: ArchiveValidation,
         auto_skip_rate_limited: bool,
         rate_limit_skip_secs: u32,
@@ -1507,7 +1513,7 @@ impl HomeTab {
             return Err("thread count must be between 1 and 100".to_string());
         }
 
-        let mirrors = self.build_mirror_list();
+        let mirrors = self.build_mirror_list(osu_official_unlocked);
         if mirrors.is_empty() {
             return Err("select at least one mirror".to_string());
         }

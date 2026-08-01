@@ -29,7 +29,7 @@ fn home_defaults_to_every_default_on_mirror() {
     // lists and the pipeline tries). hinamizawa + osu! official are default-off,
     // so they are absent here.
     let mirror_kinds: Vec<_> = home
-        .build_mirror_list()
+        .build_mirror_list(false)
         .iter()
         .map(|mirror| mirror.kind())
         .collect();
@@ -53,7 +53,7 @@ fn build_mirror_list_returns_selected_mirrors() {
     let mut home = home_all_off(&config);
     home.nerinyan = true;
 
-    let mirrors = home.build_mirror_list();
+    let mirrors = home.build_mirror_list(false);
     assert_eq!(mirrors.len(), 1);
     assert_eq!(mirrors[0].kind(), MirrorKind::Nerinyan);
 }
@@ -63,7 +63,7 @@ fn build_mirror_list_empty_when_none_selected() {
     let config = Config::default();
     let home = home_all_off(&config);
 
-    let mirrors = home.build_mirror_list();
+    let mirrors = home.build_mirror_list(false);
     assert!(mirrors.is_empty());
 }
 
@@ -76,7 +76,7 @@ fn build_mirror_list_includes_custom_mirror() {
         .unwrap()
         .set_value("https://example.com/d/{id}");
 
-    let mirrors = home.build_mirror_list();
+    let mirrors = home.build_mirror_list(false);
     assert_eq!(mirrors.len(), 1);
     assert_eq!(mirrors[0].kind(), MirrorKind::Custom);
 }
@@ -89,9 +89,9 @@ fn build_request_uses_same_mirrors_as_build_mirror_list() {
     home.osu_direct = true;
     home.collection.value = "12345".to_string();
 
-    let standalone = home.build_mirror_list();
+    let standalone = home.build_mirror_list(false);
     let request = home
-        .build_request(ArchiveValidation::Magic, true, 60)
+        .build_request(false, ArchiveValidation::Magic, true, 60)
         .unwrap();
     let request_kinds: Vec<_> = request.config.mirrors.iter().map(|m| m.kind()).collect();
     let standalone_kinds: Vec<_> = standalone.iter().map(|m| m.kind()).collect();
@@ -105,12 +105,12 @@ fn build_request_passes_archive_validation_argument() {
     home.collection.value = "12345".to_string();
 
     let magic = home
-        .build_request(ArchiveValidation::Magic, true, 60)
+        .build_request(false, ArchiveValidation::Magic, true, 60)
         .unwrap();
     assert_eq!(magic.config.archive_validation, ArchiveValidation::Magic);
 
     let eocd = home
-        .build_request(ArchiveValidation::Eocd, true, 60)
+        .build_request(false, ArchiveValidation::Eocd, true, 60)
         .unwrap();
     assert_eq!(eocd.config.archive_validation, ArchiveValidation::Eocd);
 }
@@ -123,7 +123,7 @@ fn build_request_accepts_thread_count_up_to_100() {
     home.threads.value = "100".to_string();
 
     let request = home
-        .build_request(ArchiveValidation::Magic, true, 60)
+        .build_request(false, ArchiveValidation::Magic, true, 60)
         .unwrap();
     assert_eq!(request.config.concurrent, 100);
 }
@@ -136,7 +136,7 @@ fn build_request_rejects_thread_count_above_100() {
     home.threads.value = "101".to_string();
 
     let err = home
-        .build_request(ArchiveValidation::Magic, true, 60)
+        .build_request(false, ArchiveValidation::Magic, true, 60)
         .expect_err("101 threads must be rejected");
     assert_eq!(err, "thread count must be between 1 and 100");
 }
@@ -343,11 +343,11 @@ fn home_three_enabled() -> HomeTab {
 #[test]
 fn latency_range_none_without_numeric_pings() {
     let mut home = home_three_enabled();
-    assert_eq!(home.mirror_latency_range(), None);
+    assert_eq!(home.mirror_latency_range(false), None);
 
     home.mirror_probe_started(); // all in-flight (Some(None))
     assert_eq!(
-        home.mirror_latency_range(),
+        home.mirror_latency_range(false),
         None,
         "in-flight probes must not produce a range"
     );
@@ -358,7 +358,7 @@ fn latency_range_none_without_numeric_pings() {
 fn latency_range_single_value_collapses() {
     let mut home = home_three_enabled();
     home.set_mirror_latency(MirrorKind::Nerinyan, ProbeResult::Ms(42));
-    assert_eq!(home.mirror_latency_range(), Some((42, 42)));
+    assert_eq!(home.mirror_latency_range(false), Some((42, 42)));
 }
 
 /// Min and max span the numeric pings; timeout / error are ignored.
@@ -368,7 +368,7 @@ fn latency_range_spans_numeric_and_ignores_non_numeric() {
     home.set_mirror_latency(MirrorKind::Nerinyan, ProbeResult::Ms(42));
     home.set_mirror_latency(MirrorKind::OsuDirect, ProbeResult::Ms(118));
     home.set_mirror_latency(MirrorKind::Sayobot, ProbeResult::Timeout);
-    assert_eq!(home.mirror_latency_range(), Some((42, 118)));
+    assert_eq!(home.mirror_latency_range(false), Some((42, 118)));
 }
 
 /// A ping on a disabled mirror is excluded from the range.
@@ -379,7 +379,28 @@ fn latency_range_excludes_disabled_mirror() {
     // Nekoha has a faster ping but is disabled → must not widen the range.
     home.nekoha = false;
     home.set_mirror_latency(MirrorKind::Nekoha, ProbeResult::Ms(5));
-    assert_eq!(home.mirror_latency_range(), Some((50, 50)));
+    assert_eq!(home.mirror_latency_range(false), Some((50, 50)));
+}
+
+/// A locked osu! official mirror (toggled on but no valid `*`-scope token) has
+/// a numeric ping stored from the probe, yet it must not contribute to the
+/// summary range — the download won't use it, so advertising its latency would
+/// mislead. The range derives from the same `mirror_enabled` gate as the count.
+#[test]
+fn latency_range_excludes_locked_osu_official() {
+    let mut home = home_all_off(&Config::default());
+    home.nerinyan = true;
+    home.osu_official = true;
+    home.set_mirror_latency(MirrorKind::Nerinyan, ProbeResult::Ms(50));
+    // OsuApi has a faster ping but is locked (osu_official_unlocked = false).
+    home.set_mirror_latency(MirrorKind::OsuApi, ProbeResult::Ms(5));
+    assert_eq!(
+        home.mirror_latency_range(false),
+        Some((50, 50)),
+        "a locked osu! official must not widen the range"
+    );
+    // Unlocked, its ping joins the range.
+    assert_eq!(home.mirror_latency_range(true), Some((5, 50)));
 }
 
 /// The adaptive collection download button reads `download (N)` only for a
@@ -496,11 +517,11 @@ fn retyping_a_different_valid_id_drops_the_resolve_it_moved_off() {
         "so the button cannot read `download (1)` over 99"
     );
     assert!(
-        !home.button_enabled(HomeField::CollectionBrowse),
+        !home.button_enabled(HomeField::CollectionBrowse, false),
         "`view N mapsets` has no collection left to open"
     );
     assert_eq!(
-        home.planned_folder_name(),
+        home.planned_folder_name(false),
         "<collection>",
         "the hint must not name 42's folder under 99"
     );
@@ -584,7 +605,7 @@ fn respelling_the_same_collection_is_not_a_move() {
         home.collection_subset_picked(),
         "a respelling must not drop the picks"
     );
-    assert_eq!(home.planned_folder_name(), "update-42");
+    assert_eq!(home.planned_folder_name(false), "update-42");
 }
 
 /// The payload collection 42's own resolve parked in the session cache: the two
@@ -880,11 +901,122 @@ fn update_browse_opens_when_every_missing_set_is_held_back() {
 
     assert_eq!(home.update.total_new_count(), 0, "nothing to fetch");
     assert!(
-        !home.button_enabled(HomeField::Download),
+        !home.button_enabled(HomeField::Download, false),
         "download stays dead — the run would enqueue nothing"
     );
     assert!(
-        home.button_enabled(HomeField::UpdateBrowse),
+        home.button_enabled(HomeField::UpdateBrowse, false),
         "`view N mapsets` still opens, or the held-back row cannot be reached"
+    );
+}
+
+/// With zero mirrors configured the Download button must be dead on every source
+/// arm, not just the collection-whole one. Each arm's selection condition is met,
+/// so the only thing standing between the user and a press that warns "no mirrors"
+/// is the shared mirror-count gate.
+#[test]
+fn download_button_disabled_with_no_mirrors_on_every_source() {
+    use crate::app::GetMapsSource;
+    use crate::app::find_source::BrowseRow;
+    use crate::app::update_source::{MissingBeatmapset, MissingStatus};
+    use crate::osu_db::LocalCollection;
+    use std::collections::HashMap;
+
+    let config = Config::default();
+    let mut home = home_all_off(&config);
+    assert_eq!(home.mirror_count(false), 0);
+
+    // collection-subset arm: a proper subset is picked
+    home.source = GetMapsSource::Collection;
+    home.collection_browse_id = Some(5);
+    home.set_resolved_collection(5, vec![10, 20, 30]);
+    home.collection_browse.set_rows(
+        vec![
+            BrowseRow { id: 10, meta: None },
+            BrowseRow { id: 20, meta: None },
+            BrowseRow { id: 30, meta: None },
+        ],
+        &HashMap::new(),
+    );
+    home.collection_browse.set_all_selected(true);
+    home.collection_browse.toggle_selected();
+    assert!(
+        home.collection_subset_picked(),
+        "precondition: a subset is picked"
+    );
+    assert!(
+        !home.button_enabled(HomeField::Download, false),
+        "collection-subset arm must die with no mirrors"
+    );
+
+    // find arm: selections exist
+    home.source = GetMapsSource::Find;
+    home.find
+        .browse
+        .set_rows(vec![BrowseRow { id: 10, meta: None }], &HashMap::new());
+    home.find.browse.set_all_selected(true);
+    assert!(
+        home.find.browse.selected_count() > 0,
+        "precondition: find has picks"
+    );
+    assert!(
+        !home.button_enabled(HomeField::Download, false),
+        "find arm must die with no mirrors"
+    );
+
+    // update arm: missing sets are selected
+    home.source = GetMapsSource::Update;
+    home.update.set_collections(vec![LocalCollection {
+        name: "col - 100".to_string(),
+        beatmap_checksums: Box::new([]),
+    }]);
+    home.update.set_missing_beatmaps(
+        vec![MissingBeatmapset {
+            id: 10,
+            status: MissingStatus::NotInstalled,
+            collection_id: 100,
+            collection_name: "col".to_string(),
+            included: true,
+            previously_deleted: false,
+            checksums: Box::new([]),
+            enrich_diff_id: None,
+        }],
+        &HashMap::new(),
+    );
+    assert!(
+        home.update.selected_new_count() > 0,
+        "precondition: update has missing sets"
+    );
+    assert!(
+        !home.button_enabled(HomeField::Download, false),
+        "update arm must die with no mirrors"
+    );
+
+    // Positive legs: enable one mirror and verify each arm comes alive. Without
+    // these, a `HomeField::Download => false` mutation in `button_enabled` stays
+    // green — the test only ever sees `false`, so it cannot tell the arm works.
+    home.nerinyan = true;
+    assert_eq!(home.mirror_count(false), 1);
+
+    home.source = GetMapsSource::Collection;
+    assert!(
+        home.collection_subset_picked(),
+        "precondition still holds: subset picked"
+    );
+    assert!(
+        home.button_enabled(HomeField::Download, false),
+        "collection-subset arm is live with a mirror"
+    );
+
+    home.source = GetMapsSource::Find;
+    assert!(
+        home.button_enabled(HomeField::Download, false),
+        "find arm is live with a mirror"
+    );
+
+    home.source = GetMapsSource::Update;
+    assert!(
+        home.button_enabled(HomeField::Download, false),
+        "update arm is live with a mirror"
     );
 }

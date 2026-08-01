@@ -128,6 +128,12 @@ pub struct ConfigTab {
     /// an invisible filter still steering the query. Read it through
     /// [`ConfigTab::supporter`].
     supporter: bool,
+    /// Cached `*`-scope fact from [`StoredAuth::has_lazer_scope`], mirroring
+    /// `supporter` — updated on the same auth transitions so the two derived
+    /// facts cannot drift. Read it through
+    /// [`App::osu_official_unlocked`](crate::app::App::osu_official_unlocked),
+    /// which ANDs it with `login_state == LoggedIn`.
+    pub lazer_scope: bool,
     pub threads: InputField,
     pub video: bool,
     pub archive_validation: ArchiveValidation,
@@ -166,6 +172,9 @@ impl ConfigTab {
         let stored_auth = crate::auth::load();
         let auth_loaded = stored_auth.is_some();
         let supporter = stored_auth.as_ref().is_some_and(|auth| auth.is_supporter());
+        let lazer_scope = stored_auth
+            .as_ref()
+            .is_some_and(|auth| auth.has_lazer_scope());
         Self {
             nerinyan: config.mirror.nerinyan,
             osu_direct: config.mirror.osu_direct,
@@ -180,6 +189,7 @@ impl ConfigTab {
             custom_mirrors: CustomMirrorList::from_templates(&config.mirror.custom_templates()),
             login_state: login_state(auth_loaded),
             supporter,
+            lazer_scope,
             threads: threads_field(&config.download),
             video: config.download.video,
             archive_validation: config.download.archive_validation,
@@ -583,18 +593,22 @@ impl ConfigTab {
     pub fn set_login_complete(&mut self, supporter: bool) {
         self.login_state = AuthLoginState::LoggedIn;
         self.supporter = supporter;
+        // A completed password grant always produces a `*`-scope token.
+        self.lazer_scope = true;
         clear_app_message(&mut self.message);
     }
 
     pub fn set_login_failed(&mut self) {
         self.login_state = AuthLoginState::LoggedOut;
         self.supporter = false;
+        self.lazer_scope = false;
         clear_app_message(&mut self.message);
     }
 
     pub fn set_logged_out(&mut self) {
         self.login_state = AuthLoginState::LoggedOut;
         self.supporter = false;
+        self.lazer_scope = false;
         clear_app_message(&mut self.message);
     }
 

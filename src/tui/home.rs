@@ -56,6 +56,7 @@ pub fn render(
     editing: bool,
     tick: u64,
     supporter: bool,
+    osu_official_unlocked: bool,
 ) {
     // A browse claims the whole body regardless of density.
     if form.source == GetMapsSource::Update && form.update.is_browsing() {
@@ -68,7 +69,17 @@ pub fn render(
     // Compact (< COMPACT_HEIGHT) drops the section headers, spacers, and per-row
     // help tooltips to reclaim vertical space; navigation is identical.
     let chrome = area.height >= super::COMPACT_HEIGHT;
-    render_form(frame, area, form, library, editing, tick, chrome, supporter);
+    render_form(
+        frame,
+        area,
+        form,
+        library,
+        editing,
+        tick,
+        chrome,
+        supporter,
+        osu_official_unlocked,
+    );
 }
 
 /// Caret column for whichever text input is focused in edit mode: the update
@@ -162,11 +173,11 @@ fn collection_download_label(form: &HomeTab) -> String {
 /// maps will be written to (`<base>/<run folder>`), home collapsed to `~`. Both
 /// halves come from the model ([`HomeTab::planned_folder_name`] is per-source),
 /// so this only formats. A blank field resolves to the default directory.
-fn directory_hint(form: &HomeTab) -> String {
+fn directory_hint(form: &HomeTab, osu_official_unlocked: bool) -> String {
     // Joining via `Path` keeps the separator platform-correct (`\` on Windows)
     // rather than a hardcoded `/`.
     let base = form.resolved_directory();
-    let path = Path::new(&base).join(form.planned_folder_name());
+    let path = Path::new(&base).join(form.planned_folder_name(osu_official_unlocked));
     format!("downloads to {}", pretty_path(path))
 }
 
@@ -185,9 +196,10 @@ fn render_form(
     tick: u64,
     chrome: bool,
     supporter: bool,
+    osu_official_unlocked: bool,
 ) {
     let focus = form.focus;
-    let primary = form.primary_action_field(supporter);
+    let primary = form.primary_action_field(supporter, osu_official_unlocked);
     let active_section = home_section(focus);
     let content_width = widgets::panel_content_width(area);
     let mut items = widgets::FormItems::new(focus);
@@ -234,7 +246,7 @@ fn render_form(
                 widgets::view_browse_button(
                     resolved_count,
                     focus == HomeField::CollectionBrowse,
-                    form.button_enabled(HomeField::CollectionBrowse),
+                    form.button_enabled(HomeField::CollectionBrowse, osu_official_unlocked),
                     form.collection_browse.is_enriching(),
                     tick,
                     widgets::ButtonProminence::primary_if(HomeField::CollectionBrowse == primary),
@@ -266,11 +278,19 @@ fn render_form(
     if chrome {
         items.push(widgets::spacer());
     }
-    push_download_section(&mut items, form, focus, editing, chrome, active_section);
+    push_download_section(
+        &mut items,
+        form,
+        focus,
+        editing,
+        chrome,
+        active_section,
+        osu_official_unlocked,
+    );
     if chrome {
         items.push(widgets::spacer());
     }
-    push_action_buttons(&mut items, form, focus, primary);
+    push_action_buttons(&mut items, form, focus, primary, osu_official_unlocked);
 
     let cursor_col = home_cursor_col(form, library, editing);
     let (items, focused_index) = items.into_parts();
@@ -300,6 +320,7 @@ fn push_download_section(
     editing: bool,
     chrome: bool,
     active_section: &str,
+    osu_official_unlocked: bool,
 ) {
     if chrome {
         items.push(widgets::section_header(
@@ -311,8 +332,8 @@ fn push_download_section(
     items.push_focusable(
         HomeField::Mirrors,
         mirror_summary_item(
-            form.mirror_count(),
-            form.mirror_latency_range(),
+            form.mirror_count(osu_official_unlocked),
+            form.mirror_latency_range(osu_official_unlocked),
             mirrors_focused,
         ),
     );
@@ -326,7 +347,10 @@ fn push_download_section(
     // Tooltip: the resolved path maps will be downloaded to (default dir when the
     // field is blank), so the user sees the target before starting.
     if chrome && focus == HomeField::Directory {
-        items.push(widgets::help_item(directory_hint(form)));
+        items.push(widgets::help_item(directory_hint(
+            form,
+            osu_official_unlocked,
+        )));
     }
     items.push_focusable(
         HomeField::Threads,
@@ -354,8 +378,9 @@ fn push_action_buttons(
     form: &HomeTab,
     focus: HomeField,
     primary: HomeField,
+    osu_official_unlocked: bool,
 ) {
-    let download_enabled = form.button_enabled(HomeField::Download);
+    let download_enabled = form.button_enabled(HomeField::Download, osu_official_unlocked);
     let download_label = match form.source {
         GetMapsSource::Collection => collection_download_label(form),
         GetMapsSource::Update => widgets::download_button_label(form.update.selected_new_count()),

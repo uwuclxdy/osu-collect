@@ -381,11 +381,13 @@ fn clearing_the_forcing_chip_resets_the_download_button() {
     use crate::app::{FindBackend, HomeField};
     let mut app = find_with_nzbasic_results();
     assert!(
-        app.home.button_enabled(HomeField::Download),
+        app.home
+            .button_enabled(HomeField::Download, app.osu_official_unlocked()),
         "precondition: two picked rows"
     );
     assert!(
-        app.home.button_enabled(HomeField::FindBrowse),
+        app.home
+            .button_enabled(HomeField::FindBrowse, app.osu_official_unlocked()),
         "precondition: fresh results to reopen"
     );
 
@@ -408,11 +410,13 @@ fn clearing_the_forcing_chip_resets_the_download_button() {
     assert!(app.home.find.browse.rows.is_empty(), "rows");
     assert_eq!(app.home.find.browse.selected_count(), 0, "checks");
     assert!(
-        !app.home.button_enabled(HomeField::Download),
+        !app.home
+            .button_enabled(HomeField::Download, app.osu_official_unlocked()),
         "the button must not stay live over results that are gone"
     );
     assert!(
-        !app.home.button_enabled(HomeField::FindBrowse),
+        !app.home
+            .button_enabled(HomeField::FindBrowse, app.osu_official_unlocked()),
         "`view N mapsets` has nothing to reopen"
     );
     assert_eq!(
@@ -451,7 +455,10 @@ fn cycling_a_route_neutral_chip_keeps_the_download_button_live() {
 
     assert_eq!(app.home.find.browse.rows.len(), 2, "rows");
     assert_eq!(app.home.find.browse.selected_count(), 2, "checks");
-    assert!(app.home.button_enabled(HomeField::Download));
+    assert!(
+        app.home
+            .button_enabled(HomeField::Download, app.osu_official_unlocked())
+    );
     assert!(
         app.toasts.is_empty(),
         "nothing was lost, so nothing to announce"
@@ -530,5 +537,172 @@ fn the_supporter_gate_closing_settles_the_find_route() {
         "the settle has to fire where the facets are cleared, not on the next key"
     );
     assert_eq!(app.home.find.results_backend(), None);
-    assert!(!app.home.button_enabled(HomeField::Download));
+    assert!(
+        !app.home
+            .button_enabled(HomeField::Download, app.osu_official_unlocked())
+    );
+}
+
+/// The osu! official mirror is auth-gated: the download run drops it when there
+/// is no valid login. The mirror count, the built list, and the button's
+/// enabled-state must all agree with that — counting it while logged out
+/// advertises a run that creates an output directory and then dies with no
+/// mirrors.
+#[test]
+fn osu_official_excluded_from_count_and_button_while_logged_out() {
+    use crate::app::find_source::BrowseRow;
+    use crate::app::{FindBackend, GetMapsSource, HomeField};
+    use crate::auth::AUTH_ENV_PATH;
+    use crate::mirrors::MirrorKind;
+    use crate::test_env::TempEnvVar;
+    use std::collections::HashMap;
+
+    // Point auth at a nonexistent path so App::new starts logged out regardless
+    // of the developer's real stored login.
+    let _auth = TempEnvVar::set(AUTH_ENV_PATH, "/dev/null/no-such-auth");
+    let mut app = App::new(Config::default());
+    // Starts logged out (no stored auth). Enable ONLY osu! official.
+    app.home.nerinyan = false;
+    app.home.osu_direct = false;
+    app.home.sayobot = false;
+    app.home.nekoha = false;
+    app.home.beatconnect = false;
+    app.home.osudl = false;
+    app.home.catboy = false;
+    app.home.osu_official = true;
+
+    // Give the find arm a selection so the button's only obstacle is the mirror
+    // gate. Seed rows the production way: a backend + currency, not bare
+    // `set_rows` that leaves `results_backend == None` (a test-only state).
+    app.home.source = GetMapsSource::Find;
+    app.home
+        .find
+        .browse
+        .set_rows(vec![BrowseRow { id: 10, meta: None }], &HashMap::new());
+    app.home.find.browse.set_all_selected(true);
+    app.home.find.note_results_backend(FindBackend::Osu);
+    app.home.find.mark_results_current();
+
+    assert_eq!(
+        app.home.mirror_count(app.osu_official_unlocked()),
+        0,
+        "osu! official must not count while logged out"
+    );
+    assert!(
+        app.home
+            .build_mirror_list(app.osu_official_unlocked())
+            .is_empty(),
+        "build_mirror_list must omit the auth-gated mirror while logged out"
+    );
+    assert!(
+        !app.home
+            .button_enabled(HomeField::Download, app.osu_official_unlocked()),
+        "button must follow the effective mirror list, not the raw toggle"
+    );
+
+    // log in: the mirror unlocks
+    app.set_login_complete(true);
+    assert_eq!(
+        app.home.mirror_count(app.osu_official_unlocked()),
+        1,
+        "unlocked, it counts"
+    );
+    let mirrors = app.home.build_mirror_list(app.osu_official_unlocked());
+    assert_eq!(mirrors.len(), 1);
+    assert_eq!(mirrors[0].kind(), MirrorKind::OsuApi);
+    assert!(
+        app.home
+            .button_enabled(HomeField::Download, app.osu_official_unlocked()),
+        "with a valid login the button is live"
+    );
+
+    // log out again: the mirror goes dark
+    app.set_logged_out();
+    assert_eq!(
+        app.home.mirror_count(app.osu_official_unlocked()),
+        0,
+        "logging out must drop the auth-gated mirror from the count"
+    );
+    assert!(
+        app.home
+            .build_mirror_list(app.osu_official_unlocked())
+            .is_empty()
+    );
+    assert!(
+        !app.home
+            .button_enabled(HomeField::Download, app.osu_official_unlocked()),
+        "button must die again on logout"
+    );
+}
+
+/// D1: a stored token that loads and deserializes but lacks the `*` (lazer-tier)
+/// scope still yields `login_state == LoggedIn`, so the old predicate lit the
+/// button and counted the mirror. The run would then create an output directory
+/// and die with `NoMirrors` — the exact defect this pins. `has_lazer_scope` is
+/// the gate, not mere token presence.
+#[test]
+fn osu_official_stays_dead_with_a_narrow_scope_token() {
+    use crate::app::find_source::BrowseRow;
+    use crate::app::{AuthLoginState, FindBackend, GetMapsSource, HomeField};
+    use crate::auth::{AUTH_ENV_PATH, StoredAuth};
+    use crate::test_env::TempEnvVar;
+    use std::collections::HashMap;
+
+    // A token that loads fine but carries only `public` scope — no download
+    // privilege. Built through `StoredAuth` so a field rename is a compile error.
+    let narrow = StoredAuth {
+        client_id: "5".to_string(),
+        client_secret: "secret".to_string(),
+        redirect_uri: String::new(),
+        access_token: "token".to_string(),
+        refresh_token: None,
+        expires_at: u64::MAX,
+        scopes: vec!["public".to_string()],
+        supporter: None,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("auth.json");
+    std::fs::write(&path, serde_json::to_string(&narrow).unwrap()).unwrap();
+    let _auth = TempEnvVar::set(AUTH_ENV_PATH, path.to_str().unwrap());
+
+    let mut app = App::new(Config::default());
+    // Logged in (token loads) but `osu_official_unlocked` must be false: the
+    // scope gate catches what `login_state` alone missed.
+    assert!(
+        matches!(app.config.login_state, AuthLoginState::LoggedIn),
+        "precondition: the token loads, so login_state is LoggedIn"
+    );
+    assert!(
+        !app.osu_official_unlocked(),
+        "a narrow-scope token must not unlock the official mirror"
+    );
+
+    app.home.nerinyan = false;
+    app.home.osu_direct = false;
+    app.home.sayobot = false;
+    app.home.nekoha = false;
+    app.home.beatconnect = false;
+    app.home.osudl = false;
+    app.home.catboy = false;
+    app.home.osu_official = true;
+
+    app.home.source = GetMapsSource::Find;
+    app.home
+        .find
+        .browse
+        .set_rows(vec![BrowseRow { id: 10, meta: None }], &HashMap::new());
+    app.home.find.browse.set_all_selected(true);
+    app.home.find.note_results_backend(FindBackend::Osu);
+    app.home.find.mark_results_current();
+
+    assert_eq!(
+        app.home.mirror_count(app.osu_official_unlocked()),
+        0,
+        "a narrow-scope token must leave the count at zero"
+    );
+    assert!(
+        !app.home
+            .button_enabled(HomeField::Download, app.osu_official_unlocked()),
+        "the button must stay dead — the run would die with no mirrors"
+    );
 }

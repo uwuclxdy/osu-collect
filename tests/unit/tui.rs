@@ -406,13 +406,9 @@ fn update_directory_hint_names_no_folder_until_a_collection_has_something_to_fet
 /// own color is what says the press does nothing — taken from the same frame as
 /// the hint.
 ///
-/// **Pins the collection arm only, not a uniform rule.** Zero mirrors disables
-/// just this source's button (`button_enabled` → `can_download`); the find and
-/// update arms stay lit with no mirror configured and their hints still name a
-/// concrete folder, while `request_find_download` / `request_selective_download`
-/// refuse the press. That is `docs/todo.md` § 5's first item, another lane's —
-/// routing those two arms through the same mirror check fixes button, `s`-jump
-/// and hint at once, because all three already read this one predicate.
+/// The mirror-count gate is shared across all three source arms, so zero
+/// mirrors disables the button everywhere (`button_enabled` reads `mirror_count`
+/// before the per-arm selection check). This pins the collection arm's render.
 #[test]
 fn collection_directory_hint_names_no_folder_with_no_mirror_to_serve_it() {
     use crate::app::HomeField;
@@ -454,7 +450,11 @@ fn collection_directory_hint_names_no_folder_with_no_mirror_to_serve_it() {
         ..Default::default()
     };
     app.home.sync_mirrors_from_config(&mirrors);
-    assert_eq!(app.home.mirror_count(), 0, "precondition — no mirror left");
+    assert_eq!(
+        app.home.mirror_count(app.osu_official_unlocked()),
+        0,
+        "precondition — no mirror left"
+    );
 
     let buf = render_buffer(&app, 80, 24);
     assert_eq!(

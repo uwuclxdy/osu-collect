@@ -497,8 +497,8 @@ fn osu_official_toggle_blocked_and_notifies_when_logged_out() {
 
 #[test]
 fn osu_official_toggle_works_when_logged_in() {
+    use osu_collect::app::ConfigField;
     use osu_collect::app::Tab;
-    use osu_collect::app::{AuthLoginState, ConfigField};
     // Sandbox the config path so the toggle's auto-save never touches the real
     // user config.
     let dir = tempfile::tempdir().unwrap();
@@ -506,7 +506,9 @@ fn osu_official_toggle_works_when_logged_in() {
     let _env = osu_collect::test_env::TempEnvVar::set("OSU_COLLECT_CONFIG", path.to_str().unwrap());
 
     let mut app = make_app();
-    app.config.login_state = AuthLoginState::LoggedIn;
+    // Through the writer the login path uses, so the fixture cannot describe a
+    // login state no transition produces.
+    app.set_login_complete(false);
     app.config.osu_official = false;
     app.active_tab = Tab::Config;
     app.config.focus = ConfigField::MirrorOsuOfficial;
@@ -548,7 +550,7 @@ fn config_mirror_toggle_syncs_home_count() {
     let _env = osu_collect::test_env::TempEnvVar::set("OSU_COLLECT_CONFIG", path.to_str().unwrap());
 
     let mut app = make_app();
-    let before = app.home.mirror_count();
+    let before = app.home.mirror_count(app.osu_official_unlocked());
     app.active_tab = Tab::Config;
     // Nerinyan is enabled by default; toggling it off must lower the Get Maps
     // count, since the summary derives from the Config tab now.
@@ -556,7 +558,7 @@ fn config_mirror_toggle_syncs_home_count() {
     app.handle_key(press(KeyCode::Enter));
 
     assert_eq!(
-        app.home.mirror_count(),
+        app.home.mirror_count(app.osu_official_unlocked()),
         before - 1,
         "toggling a mirror off on the config tab lowers the Get Maps enabled count"
     );
@@ -1100,7 +1102,11 @@ fn shift_arrow_reorders_config_mirror_and_syncs_pipeline() {
         MirrorKind::Nerinyan,
         "the Get Maps pipeline order syncs with the config reorder"
     );
-    let first = app.home.build_mirror_list().first().map(|m| m.kind());
+    let first = app
+        .home
+        .build_mirror_list(app.osu_official_unlocked())
+        .first()
+        .map(|m| m.kind());
     assert_eq!(
         first,
         Some(MirrorKind::Nerinyan),

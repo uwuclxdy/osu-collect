@@ -407,11 +407,20 @@ impl App {
         self.active_tab
     }
 
-    /// Whether the osu! official mirror can be enabled — only with a stored
-    /// `*`-scope login. Drives the greyed-out toggle and the "log in first"
-    /// notice; the toggle is inert until this is `true`.
+    /// Whether the osu! official mirror can be used: requires a logged-in
+    /// session whose stored token carries the `*` (lazer-tier) scope. The
+    /// greyed-out toggle, the "log in first" notice, the mirror count and the
+    /// built list all read this so they match what the pipeline will try.
+    ///
+    /// This is a synchronous gate over the cached scope + login-state facts on
+    /// [`ConfigTab`]. It cannot prove the token is still valid at request time
+    /// — `ensure_valid` is a network call that runs in the pipeline
+    /// (`resolve_osu_bearer`). A token that expires between render and dispatch
+    /// still counts here; the pipeline's post-auth empty-check
+    /// (`inject_mirror_auth` → `NoMirrors`) drops the run when no usable mirror
+    /// survives.
     pub fn osu_official_unlocked(&self) -> bool {
-        matches!(self.config.login_state, AuthLoginState::LoggedIn)
+        matches!(self.config.login_state, AuthLoginState::LoggedIn) && self.config.lazer_scope
     }
 
     /// When the focused field is the osu! official mirror toggle and the user is
@@ -1128,6 +1137,7 @@ impl App {
 
     pub fn request_download(&mut self) -> Option<(DownloadId, DownloadRequest)> {
         let mut request = match self.home.build_request(
+            self.osu_official_unlocked(),
             self.config.archive_validation,
             self.config.auto_skip_rate_limited,
             self.config.parse_rate_limit_skip_secs().unwrap_or(60),
@@ -1275,7 +1285,7 @@ impl App {
             return None;
         }
 
-        let mirrors = self.home.build_mirror_list();
+        let mirrors = self.home.build_mirror_list(self.osu_official_unlocked());
         if mirrors.is_empty() {
             self.toast_warn("no mirrors enabled (configure in the config tab)");
             return None;
@@ -1732,7 +1742,7 @@ impl App {
             self.toast_warn("no mapsets selected for download");
             return None;
         }
-        if self.home.mirror_count() == 0 {
+        if self.home.mirror_count(self.osu_official_unlocked()) == 0 {
             self.toast_warn("no mirrors enabled (configure in the config tab)");
             return None;
         }
@@ -1812,7 +1822,7 @@ impl App {
             self.toast_warn("no mapsets selected for download");
             return None;
         }
-        if self.home.mirror_count() == 0 {
+        if self.home.mirror_count(self.osu_official_unlocked()) == 0 {
             self.toast_warn("no mirrors enabled (configure in the config tab)");
             return None;
         }
@@ -1869,7 +1879,7 @@ impl App {
     fn build_run_config(&self) -> DownloadConfig {
         DownloadConfig {
             directory: self.home.resolved_directory(),
-            mirrors: self.home.build_mirror_list(),
+            mirrors: self.home.build_mirror_list(self.osu_official_unlocked()),
             concurrent: self.home.resolved_threads(),
             archive_validation: self.config.archive_validation,
             auto_skip_rate_limited: self.config.auto_skip_rate_limited,
@@ -2866,7 +2876,10 @@ impl App {
                         // while already on a button cycles the other available
                         // buttons. (`d` for the output-dir field stays
                         // Collection-only: search/update borrow it silently.)
-                        self.home.focus = self.home.cycle_enabled_button(self.config.supporter());
+                        self.home.focus = self.home.cycle_enabled_button(
+                            self.config.supporter(),
+                            self.osu_official_unlocked(),
+                        );
                         self.editing = false;
                     } else if let Some(source) = ch
                         .to_digit(10)
