@@ -89,10 +89,7 @@ fn session_eta_returns_eta() {
     let speed = 5.0 * mb as f64;
     let page = page_with_speed(speed, 50 * mb, Some(500 * mb));
     let eta = session_eta(&page).expect("should compute ETA");
-    assert!(
-        eta.contains('m') || eta.contains('s'),
-        "expected time unit in eta: {eta:?}"
-    );
+    assert_eq!(eta, "1m 30s");
     // Speed still comes from cumulative_speed(), the same source the OVERVIEW
     // panel renders — assert that invariant rather than reading it off session_eta.
     let speed_str = format_bytes(page.cumulative_speed() as u64, "B/s");

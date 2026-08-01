@@ -1084,10 +1084,42 @@ async fn a_completed_run_leaves_a_held_back_set_still_held_back_on_the_next_scan
         &snapshots::snapshot_path(&dir, 100),
     );
 
-    let _env = crate::test_env::TempEnvVar::set(
-        snapshots::SNAPSHOT_ENV_DIR,
-        dir.to_str().expect("utf-8 temp path"),
-    );
+    // `App::new` also reads two other on-disk stores at construction
+    // (docs/architecture.md § "On-disk stores"): the stored auth (via
+    // `ConfigTab::new` → `auth::load`) and `collection_state.toml` (via
+    // `collection_state::state_path`/`load`). Both must be isolated too, or
+    // this test inherits the developer's real login state and collection
+    // state — the exact class of bug that section's incident describes.
+    // The auth fixture is a genuine logged-in supporter (not an absent file),
+    // proving the test's outcome does not depend on that content either way.
+    let auth_path = dir.join("auth.json");
+    std::fs::write(
+        &auth_path,
+        serde_json::to_string(&crate::auth::StoredAuth {
+            client_id: "5".to_string(),
+            client_secret: "secret".to_string(),
+            redirect_uri: String::new(),
+            access_token: "token".to_string(),
+            refresh_token: None,
+            expires_at: u64::MAX,
+            scopes: vec!["*".to_string()],
+            supporter: Some(true),
+        })
+        .expect("serialize stub auth"),
+    )
+    .expect("write stub auth.json");
+    let state_path = dir.join("collection_state.toml");
+    let _env = crate::test_env::TempEnvVar::set_all([
+        (
+            snapshots::SNAPSHOT_ENV_DIR,
+            dir.to_str().expect("utf-8 temp path"),
+        ),
+        (crate::auth::AUTH_ENV_PATH, auth_path.to_str().unwrap()),
+        (
+            crate::app::collection_state::STATE_ENV_PATH,
+            state_path.to_str().unwrap(),
+        ),
+    ]);
 
     let mut app = App::new(Config::default());
     // The app defaults to lazer, whose snapshot is keyed by set id; this fixture
