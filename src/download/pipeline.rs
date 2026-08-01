@@ -594,7 +594,11 @@ async fn run_pipeline_core(
     // instead of hammering nekoha; a late CollectionSizeResolved on a finished
     // run is a no-op (`App::page_mut` returns `None`).
     let size_emit = Arc::clone(emit);
-    let size_ids = session.beatmapset_ids.clone();
+    // `size_target_ids`, not `beatmapset_ids`: an owned-only pre-skip (never
+    // downloaded, never precheck-verified) can never earn a byte figure, so
+    // sizing it would leave the run's denominator larger than the numerator
+    // can ever reach.
+    let size_ids = session.size_target_ids.clone();
     let known_sizes = session.known_sizes.clone();
     let mut size_cancel = cancel_rx.clone();
     tokio::spawn(async move {

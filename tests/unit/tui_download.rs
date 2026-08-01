@@ -102,6 +102,33 @@ fn session_eta_returns_eta() {
     );
 }
 
+/// A re-run where precheck verified every archive already on disk: nothing is
+/// downloaded this run (`bytes_downloaded` stays 0), but the bytes readout on
+/// this same line counts `verified_bytes` via `total_downloaded_bytes()`. The
+/// ETA must reach the same "done" point, or it stays inflated by the verified
+/// amount for the whole run.
+#[test]
+fn session_eta_counts_verified_bytes_like_the_bytes_readout() {
+    let total = 5 * 1024 * 1024u64;
+    let mut page = page_with_speed(5.0 * 1024.0 * 1024.0, 0, Some(total));
+    page.stats.verified_bytes = total;
+    let eta = session_eta(&page).expect("should compute ETA");
+    assert_eq!(eta, "0s");
+}
+
+/// Mid-range arithmetic pin: both terms non-zero and unequal, so the exact sum
+/// matters (unlike the "0s"/saturation-endpoint tests above, which pass under
+/// any over-count of the numerator). 1 MiB/s over 10 MiB total, 1 MiB
+/// downloaded + 2 MiB verified → 7 MiB remaining → 7s.
+#[test]
+fn session_eta_arithmetic_uses_both_terms_exactly() {
+    let mib = 1024 * 1024u64;
+    let mut page = page_with_speed(mib as f64, mib, Some(10 * mib));
+    page.stats.verified_bytes = 2 * mib;
+    let eta = session_eta(&page).expect("should compute ETA");
+    assert_eq!(eta, "7s");
+}
+
 // ── rate-limited countdown ────────────────────────────────────────────────────
 //
 // The base status message ends at "...waiting" with no number (events.rs); the

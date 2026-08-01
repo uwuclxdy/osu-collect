@@ -120,6 +120,13 @@ pub(crate) struct DownloadSession {
     /// Beatmapsets pre-skipped because they were already in the osu! library
     /// (a subset of `owned_ids` that precheck had not already satisfied).
     pub(crate) skipped_owned: u32,
+    /// `beatmapset_ids` minus owned-only skips (owned by the library but not
+    /// precheck-verified on disk). Feeds the byte-total estimate
+    /// (`fetch_collection_sizes`): an owned-only id is never downloaded and
+    /// carries no `verified_bytes`, so sizing it would inflate the denominator
+    /// past what the numerator (`bytes_downloaded + verified_bytes`) can ever
+    /// reach and the run's progress bar would stall short of full.
+    pub(crate) size_target_ids: Vec<u32>,
     /// Sizes already known for `beatmapset_ids` at request time; seeds the
     /// size estimate so a fully-cached selection needs no probe. Empty for
     /// the Collection/Selective targets (no size source).
@@ -372,6 +379,15 @@ impl DownloadSession {
             });
         }
 
+        // `satisfied` is still precheck's own set here, above the owned-fold
+        // that mutates it below: only an id in here (or never owned) can ever
+        // earn a byte figure, so it alone decides `size_target_ids`.
+        let size_target_ids: Vec<u32> = beatmapset_ids
+            .iter()
+            .copied()
+            .filter(|id| satisfied.contains(id) || !owned_ids.contains(id))
+            .collect();
+
         let (pending_ids, skipped_owned) = partition_pending(
             &beatmapset_ids,
             &mut satisfied,
@@ -393,6 +409,7 @@ impl DownloadSession {
             initial_satisfied: satisfied,
             skipped_existing: skipped,
             skipped_owned,
+            size_target_ids,
             known_sizes,
             output,
             _lock_guard: lock_guard,

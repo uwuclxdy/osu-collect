@@ -307,14 +307,21 @@ fn status_color(stage: DownloadStage, rate_limited: bool) -> Color {
 /// Returns the session ETA label, or `None` if there is not yet enough data
 /// (speed < 1 B/s or no total size known). Speed comes from `cumulative_speed()`
 /// — the same rolling average shown in the OVERVIEW panel — so the ETA derived
-/// here always agrees with the displayed speed.
+/// here always agrees with the displayed speed. `bytes_done` uses
+/// `total_downloaded_bytes()` (downloaded + precheck-verified), the same figure
+/// the `X/Y` readout on this line renders, so a re-run over already-verified
+/// archives reaches a "0s" ETA instead of staying inflated by their bytes.
+///
+/// Ceiling: `total` is a sampled/extrapolated estimate while `bytes_done` is
+/// measured, so a run mostly satisfied by precheck (few pending, most verified)
+/// can clamp to "0s" before every pending map has actually landed.
 fn session_eta(page: &CollectionPage) -> Option<String> {
     let speed = page.cumulative_speed();
     if speed < 1.0 {
         return None;
     }
     let total = page.stats.total_collection_bytes?;
-    let bytes_done = page.stats.bytes_downloaded;
+    let bytes_done = page.total_downloaded_bytes();
     let remaining = total.saturating_sub(bytes_done);
     let eta_secs = (remaining as f64 / speed) as u64;
     Some(format_eta(eta_secs))

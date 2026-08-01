@@ -549,6 +549,160 @@ async fn selective_run_without_owned_sets_enqueues_every_pick() {
     assert_eq!(queued(&events), 4);
 }
 
+// ── size-total denominator excludes owned-only pre-skips ────────────────────
+
+/// An owned-only pre-skip (owned by the library, never verified on disk by
+/// precheck) never earns a byte figure: it is never downloaded
+/// (`bytes_downloaded`) and precheck never sized it (`verified_bytes`). The
+/// size-fetch target list must exclude it, or the run's byte total counts a
+/// map its own numerator can never reach and the progress bar stalls short of
+/// full.
+#[tokio::test]
+async fn size_target_ids_excludes_owned_only_pre_skips() {
+    let dir = tempdir().unwrap();
+    let (session, _events) =
+        prepare_selective_run(&PICKED, HashSet::from([20, 40]), &[50], dir.path()).await;
+
+    assert_eq!(session.size_target_ids, vec![10, 30, 50]);
+}
+
+/// Positive control isolating the one case that could make the exclusion
+/// over-broad: an id that is BOTH owned by the library AND already
+/// precheck-verified on disk. It must stay in the size total — precheck
+/// already counted its bytes in `verified_bytes`, so dropping it here would
+/// swing the defect the other way (the total falling below what the numerator
+/// can report).
+#[tokio::test]
+async fn size_target_ids_keeps_an_owned_id_precheck_already_verified() {
+    let dir = tempdir().unwrap();
+    let (session, _events) =
+        prepare_selective_run(&PICKED, HashSet::from([20, 40]), &[40, 50], dir.path()).await;
+
+    assert_eq!(session.size_target_ids, vec![10, 30, 40, 50]);
+}
+
+/// Defect B's only production-visible effect is what `run_pipeline_core`
+/// (pipeline.rs:601) hands `fetch_collection_sizes`, not the `DownloadSession`
+/// field alone. Drives the real `run_ids` with `known_sizes` covering every id
+/// (so `fetch_collection_sizes` takes its network-free `unknown.is_empty()`
+/// branch — mod.rs:406-412) and one id owned-only.
+///
+/// `run_ids` also reconciles the failed-maps store (pipeline.rs:482,
+/// `reconcile_failed_maps` → `failed_maps::reconcile`) once it returns, and
+/// `initial_satisfied` here is non-empty (the owned fold), so that early return
+/// does not apply — the run must never be allowed to touch the real
+/// `~/.local/share/osu-collect/failed-beatmapsets.json`, hence the second env
+/// override below (matching `selective_run_pre_skips_owned_and_then_persists_its_snapshot`)
+/// and the `!failed_maps.exists()` assertion pinning that it never ran.
+///
+/// The wait is bounded by a short ceiling rather than run to completion: with
+/// `pending_ids` non-empty the run goes on to attempt a real connection against
+/// a refused mirror and (per `osu-downloader`'s `batch.rs:526-573` retry loop,
+/// `NETWORK_RETRY_BACKOFF` = 5s at `config.rs:10`) backs off 5s per attempt for
+/// up to 1000 attempts on a `NetworkError`, so it cannot finish inside any
+/// test-sized budget. `CollectionSizeResolved` fires from a detached
+/// `tokio::spawn` with zero I/O (the known-sizes branch) well before the first
+/// connect attempt even resolves, so polling for it and aborting the outer task
+/// the moment it arrives keeps the typical run in the low milliseconds; the 3s
+/// bound only catches a genuine regression.
+#[tokio::test]
+async fn size_fetch_call_site_excludes_owned_only_ids() {
+    let dir = tempdir().unwrap();
+    let (install_dir, cache_path) = seed_owned_library(dir.path(), &[20]);
+    let failed_maps = dir.path().join("failed-beatmapsets.json");
+    let _env = crate::test_env::TempEnvVar::set_all([
+        (
+            crate::app::library_cache::LIBRARY_CACHE_ENV_PATH,
+            cache_path.to_str().unwrap(),
+        ),
+        (
+            crate::app::failed_maps::FAILED_MAPS_ENV_PATH,
+            failed_maps.to_str().unwrap(),
+        ),
+    ]);
+
+    let config = DownloadConfig {
+        directory: dir.path().to_string_lossy().into_owned(),
+        mirrors: vec![
+            osu_downloader::Mirror::custom("http://127.0.0.1:1/{id}").expect("custom mirror"),
+        ],
+        concurrent: 1,
+        archive_validation: ArchiveValidation::Off,
+        auto_skip_rate_limited: false,
+        rate_limit_skip_secs: 60,
+    };
+    let request = crate::download::IdsDownloadRequest {
+        beatmapset_ids: vec![10, 20, 30],
+        label: "size fetch test".to_string(),
+        folder_tag: "size-fetch".to_string(),
+        source: crate::download::IdsRunSource::Search,
+        config,
+        auto_overwrite: false,
+        skip_already_imported: true,
+        osu_client: OsuClient::Stable,
+        osu_path: install_dir.to_string_lossy().into_owned(),
+        known_sizes: HashMap::from([(10, 1_000_000), (20, 2_000_000), (30, 3_000_000)]),
+    };
+
+    let (_cancel_tx, cancel_rx) = watch::channel(false);
+    let (_defer_tx, defer_rx) = watch::channel(0u64);
+    let (_skip_tx, skip_rx) = watch::channel(0u64);
+    let events: Arc<Mutex<Vec<DownloadEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&events);
+    let emit: Arc<dyn Fn(DownloadEvent) + Send + Sync> =
+        Arc::new(move |event| sink.lock().unwrap().push(event));
+
+    let start = std::time::Instant::now();
+    let handle = tokio::spawn(super::run_ids(
+        7, request, cancel_rx, defer_rx, skip_rx, emit,
+    ));
+    let poll_events = Arc::clone(&events);
+    let total_bytes = tokio::time::timeout(std::time::Duration::from_secs(3), async move {
+        loop {
+            let found = poll_events
+                .lock()
+                .unwrap()
+                .iter()
+                .find_map(|event| match event {
+                    DownloadEvent::CollectionSizeResolved { total_bytes, .. } => Some(*total_bytes),
+                    _ => None,
+                });
+            if let Some(total_bytes) = found {
+                break total_bytes;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "CollectionSizeResolved never arrived within {:?} — \
+             network-touching path unpinnable at HEAD within a bounded timeout",
+            start.elapsed()
+        )
+    });
+    // Stop driving the run the moment the size event lands rather than waiting
+    // out the timeout: the retry loop it would otherwise be stuck in never lets
+    // it reach `reconcile_failed_maps` regardless, but this keeps the typical
+    // run in the low milliseconds instead of a flat 3s.
+    handle.abort();
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        total_bytes, 4_000_000,
+        "size total must exclude the owned-only id's known size (2_000_000); got \
+         {total_bytes} after {elapsed:?}"
+    );
+    // The env override above is the only thing standing between this run and
+    // the developer's real failed-maps file; pin that it was never reached
+    // rather than assume it from the retry-loop timing.
+    assert!(
+        !failed_maps.exists(),
+        "run_ids must not have reached reconcile_failed_maps — it would write \
+         the real failed-maps file without the env override in effect"
+    );
+}
+
 /// `30` is neither owned, on disk, nor downloaded, so the snapshot gate must
 /// still name it. Miss this and the run writes a snapshot claiming the
 /// collection is in hand, and the next scan stops reporting `30` as missing.
