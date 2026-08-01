@@ -118,11 +118,22 @@ pub struct MissingBeatmapset {
     pub status: MissingStatus,
     pub collection_id: u32,
     pub collection_name: String,
-    /// Vestigial: selection is now whole-collection, so the download set is
-    /// derived from the collection's `selected` flag, not this field. Kept so
-    /// the scan-side construction in `runtime/scan.rs` still compiles.
-    pub selected: bool,
+    /// Whether an update run would enqueue this set. The scan writes
+    /// `!previously_deleted`, so a set the user deleted on purpose is held back
+    /// until they re-include it from the browse
+    /// ([`toggle_preview_included`](UpdateSource::toggle_preview_included)).
+    /// Every download-facing figure filters on it, so no count can drift from
+    /// what the run enqueues. Named apart from [`CollectionEntry::selected`],
+    /// which is the whole-collection checkbox this ANDs with.
+    pub included: bool,
     pub previously_deleted: bool,
+    /// This set's upstream beatmap checksums, captured at scan time and **empty
+    /// unless `previously_deleted`** — only a held-back set reads them, to keep
+    /// itself recorded as deleted in the snapshot a completed run writes
+    /// (`snapshots::retain_held_back`). The stable client's snapshot is keyed by
+    /// beatmap hash, so a set id alone cannot be re-expressed in it; the lazer
+    /// snapshot keys on the set id and never reads this at all.
+    pub checksums: Box<[Md5]>,
     /// One diff (beatmap) id from this set, captured at scan time, to seed the
     /// osu-batch enrichment pager (`GET /beatmaps?ids[]=` keys on diff ids, not
     /// set ids). `None` when the upstream set carried no listable diff.
@@ -549,28 +560,48 @@ impl UpdateSource {
         self.preview_entries().len()
     }
 
-    /// Count of missing sets belonging to `collection_id` (the per-collection "N new" badge).
+    /// Count of missing sets belonging to `collection_id` that a run would
+    /// enqueue (the per-collection "N new" badge). Held-back sets are excluded,
+    /// so the badge and the run agree.
     pub fn new_count_for(&self, collection_id: u64) -> usize {
         self.selection
             .cached_missing_sets
             .iter()
-            .filter(|set| u64::from(set.collection_id) == collection_id)
+            .filter(|set| set.included && u64::from(set.collection_id) == collection_id)
             .count()
     }
 
-    /// Total missing sets across all collections.
+    /// Missing sets a run would enqueue across every collection (the form's
+    /// `N new across M collections` headline and the post-scan toast).
     pub fn total_new_count(&self) -> usize {
+        self.selection
+            .cached_missing_sets
+            .iter()
+            .filter(|set| set.included)
+            .count()
+    }
+
+    /// Every missing row the browse can show, held back or not. The re-include
+    /// affordance lives inside the browse, so its open gate reads this rather
+    /// than [`total_new_count`](Self::total_new_count) — a scan whose every find
+    /// is held back must still open, or the sets are unreachable.
+    pub fn total_missing_count(&self) -> usize {
         self.selection.cached_missing_sets.len()
+    }
+
+    /// Missing sets the scan held back: previously deleted and not re-included.
+    /// Surfaced on the form so a shrunken "N new" has something naming the gap.
+    pub fn held_back_count(&self) -> usize {
+        self.selection
+            .cached_missing_sets
+            .iter()
+            .filter(|set| !set.included)
+            .count()
     }
 
     /// Missing sets whose collection is selected (the download-button count).
     pub fn selected_new_count(&self) -> usize {
-        let selected = self.selected_collection_id_set();
-        self.selection
-            .cached_missing_sets
-            .iter()
-            .filter(|set| selected.contains(&u64::from(set.collection_id)))
-            .count()
+        self.selected_missing_sets().count()
     }
 
     /// Ids (as `u32`, matching the API) of collections with ≥1 pending missing
@@ -580,6 +611,7 @@ impl UpdateSource {
         self.selection
             .cached_missing_sets
             .iter()
+            .filter(|set| set.included)
             .map(|set| set.collection_id)
             .collect()
     }
@@ -615,16 +647,117 @@ impl UpdateSource {
             .collect()
     }
 
-    /// Beatmapset ids of every missing set belonging to a selected collection
-    /// (whole-collection download semantics).
-    pub fn selected_beatmapset_ids(&self) -> Vec<u32> {
+    /// The missing sets an update run enqueues: included, and in a checked
+    /// collection. The run's id list, the download button's count and the queue
+    /// toast all read this one derivation, so no figure can drift from the run.
+    fn selected_missing_sets(&self) -> impl Iterator<Item = &MissingBeatmapset> {
         let selected = self.selected_collection_id_set();
         self.selection
             .cached_missing_sets
             .iter()
-            .filter(|set| selected.contains(&u64::from(set.collection_id)))
+            .filter(move |set| set.included && selected.contains(&u64::from(set.collection_id)))
+    }
+
+    /// Beatmapset ids of every missing set an update run would enqueue
+    /// (whole-collection selection, minus the held-back sets).
+    pub fn selected_beatmapset_ids(&self) -> Vec<u32> {
+        self.selected_missing_sets().map(|set| set.id).collect()
+    }
+
+    /// The per-collection slice of
+    /// [`selected_beatmapset_ids`](Self::selected_beatmapset_ids), for the
+    /// `SelectiveDownloadCollection` payload. Same derivation as the run's own
+    /// id list rather than a second filter over `cached_missing_sets`, so the
+    /// payload can never carry a set the run drops.
+    pub fn selected_beatmapset_ids_for(&self, collection_id: u32) -> Vec<u32> {
+        self.selected_missing_sets()
+            .filter(|set| set.collection_id == collection_id)
             .map(|set| set.id)
             .collect()
+    }
+
+    // ── per-set re-include (previously-deleted rows) ──────────────────────────
+
+    /// Whether the focused preview row is a previously-deleted missing set, and
+    /// if so whether it is currently included. `None` for every other row — the
+    /// toggle is scoped to previously-deleted sets, so whole-collection
+    /// selection still owns the rest.
+    pub fn preview_focused_included(&self) -> Option<bool> {
+        let PreviewEntry::Missing(idx) = self.preview_focused_entry()? else {
+            return None;
+        };
+        let set = self.selection.cached_missing_sets.get(idx)?;
+        set.previously_deleted.then_some(set.included)
+    }
+
+    /// Flip the focused previously-deleted set between held back and
+    /// re-included, returning the new state. `None` when the focused row is not
+    /// one: its download membership is its collection's checkbox then, not a
+    /// per-set flag, so the key stays inert rather than growing a second
+    /// selection model.
+    pub fn toggle_preview_included(&mut self) -> Option<bool> {
+        let PreviewEntry::Missing(idx) = self.preview_focused_entry()? else {
+            return None;
+        };
+        let collection_id = {
+            let set = self.selection.cached_missing_sets.get(idx)?;
+            if !set.previously_deleted {
+                return None;
+            }
+            set.collection_id
+        };
+        // Sampled BEFORE the flip: only a live/inert TRANSITION reconciles the
+        // checkbox, so a user who deliberately unchecked a collection that
+        // already had something to fetch keeps that choice.
+        //
+        // Reachable sequence this deliberately loses: re-include (ticks) → user
+        // unticks → hold back (now inert) → re-include again (ticks). The second
+        // re-include overrides that untick, because holding the last set back
+        // removed the only thing the untick applied to and the collection returns
+        // to its post-scan default. One keystroke undoes it; tracking "the app
+        // last set this" would be new state every other write to `selected` would
+        // have to reason about.
+        let was_live = self.new_count_for(u64::from(collection_id)) > 0;
+        let set = self.selection.cached_missing_sets.get_mut(idx)?;
+        set.included = !set.included;
+        let included = set.included;
+        let is_live = self.new_count_for(u64::from(collection_id)) > 0;
+        if was_live != is_live {
+            self.set_collection_selected(collection_id, is_live);
+        }
+        Some(included)
+    }
+
+    /// Tick / untick one collection by id, restoring `selected ⇒ has_new` after a
+    /// per-set flip changed whether the collection has anything to fetch.
+    /// [`set_missing_beatmaps`](Self::set_missing_beatmaps) force-deselects an
+    /// inert collection and
+    /// [`toggle_selected_collection`](Self::toggle_selected_collection) refuses
+    /// to tick one, so nothing else can restore the checkbox the app itself
+    /// cleared — a re-include would otherwise leave a dead download button with
+    /// nothing pointing at the checkbox — and nothing else would clear it again
+    /// when the last included set is held back.
+    fn set_collection_selected(&mut self, collection_id: u32, value: bool) {
+        for entry in &mut self.selection.local_collections {
+            if entry.collection_id == Some(u64::from(collection_id)) {
+                entry.selected = value;
+            }
+        }
+        // The live/inert partition leads every sort mode, so a collection that
+        // just changed sides has to be re-placed — the same reason
+        // `set_missing_beatmaps` re-sorts after its own force-deselect. Unlike
+        // that scan-land call this one fires mid-browse, and the cursor is a
+        // positional index, so re-home it onto the same collection or the preview
+        // silently switches to whichever row slid into the vacated slot.
+        self.apply_collection_sort();
+        if let Some(pos) = self
+            .selection
+            .local_collections
+            .iter()
+            .position(|entry| entry.collection_id == Some(u64::from(collection_id)))
+        {
+            self.selection.collections_cursor = Some(pos);
+        }
     }
 
     // ── ignored-maps (mark / unmark installed) ─────────────────────────────────
@@ -784,8 +917,9 @@ impl UpdateSource {
                 status: MissingStatus::NotInstalled,
                 collection_id: 0,
                 collection_name: String::new(),
-                selected: false,
+                included: true,
                 previously_deleted: false,
+                checksums: Box::new([]),
                 enrich_diff_id: None,
             });
         }
@@ -970,10 +1104,11 @@ impl UpdateSource {
         matches!(self.scan.scan_status, ScanStatus::Idle | ScanStatus::Error)
     }
 
-    /// Store the freshly scanned missing sets. Selection is whole-collection, so
-    /// there is no per-map selection to preserve — the collection checkboxes
-    /// (defaulted to selected by [`set_collections`](Self::set_collections))
-    /// decide the download set. Seeds the missing-set enrichment pager here (at
+    /// Store the freshly scanned missing sets. Selection is whole-collection —
+    /// the collection checkboxes (defaulted to selected by
+    /// [`set_collections`](Self::set_collections)) decide the download set —
+    /// minus the sets the scan held back (`included == false`), which a rescan
+    /// re-derives rather than carrying over. Seeds the enrichment pager here (at
     /// scan-land, the earliest known intent) against the session `cache`, so the
     /// preview titles are already loading before the user opens the browse.
     pub fn set_missing_beatmaps(

@@ -138,7 +138,6 @@ pub(super) fn handle_updates_event(
                 return None;
             }
 
-            let previously_deleted_count = missing.iter().filter(|m| m.previously_deleted).count();
             let local_ids: HashSet<u32> = app
                 .home
                 .update
@@ -148,7 +147,6 @@ pub(super) fn handle_updates_event(
                 .map(|bs| bs.id)
                 .collect();
             let local_snapshot: Vec<u32> = local_ids.iter().copied().collect();
-            let count = missing.len();
             // The selective download of these results resolves the very same
             // collections; keeping the scan's payloads spares it a verbatim refetch.
             for collection in collections {
@@ -175,14 +173,15 @@ pub(super) fn handle_updates_event(
                 .set_failed_beatmapset_count(hidden_failed_count);
             app.home.update.scan.scan_status = ScanStatus::Ready;
 
-            let (title, detail) = build_scan_summary(
-                count,
-                previously_deleted_count,
-                manually_added_count,
-                hidden_failed_count,
-            );
+            // Read the counts back off the app rather than off `missing`: the
+            // toast then quotes the same derivation the form badge and the run's
+            // id list do, so the three cannot drift.
+            let count = app.home.update.total_new_count();
+            let held_back = app.home.update.held_back_count();
+            let (title, detail) =
+                build_scan_summary(count, held_back, manually_added_count, hidden_failed_count);
             clear_app_message(&mut app.home.update.message);
-            let mut toast = if count == 0 {
+            let mut toast = if count == 0 && held_back == 0 {
                 Toast::success(title)
             } else {
                 Toast::info(title)
@@ -265,28 +264,30 @@ pub(super) fn handle_updates_event(
     }
 }
 
-/// Post-scan toast copy: a short title (the missing count) plus an optional
-/// detail line carrying the secondary counts, ` · `-separated per the toast
-/// convention. The "re-select to download" hint for previously-deleted sets
-/// lives on the missing list, not in this ephemeral toast.
+/// Post-scan toast copy: a short title (what an update run would fetch) plus an
+/// optional detail line carrying the secondary counts, ` · `-separated per the
+/// toast convention. `count` excludes the held-back sets, so a zero with
+/// `held_back > 0` means "nothing to fetch", not "nothing missing" — the two
+/// zero cases get different titles. The re-include key lives on the missing
+/// list, not in this ephemeral toast.
 fn build_scan_summary(
     count: usize,
-    previously_deleted: usize,
+    held_back: usize,
     manually_added: usize,
     hidden_failed: usize,
 ) -> (String, Option<String>) {
-    let title = if count == 0 {
-        "no missing mapsets".to_string()
-    } else {
-        format!(
+    let title = match (count, held_back) {
+        (0, 0) => "no missing mapsets".to_string(),
+        (0, _) => "nothing to fetch".to_string(),
+        _ => format!(
             "{count} missing mapset{}",
             if count == 1 { "" } else { "s" }
-        )
+        ),
     };
 
     let mut parts = Vec::new();
-    if previously_deleted > 0 {
-        parts.push(format!("{previously_deleted} previously deleted"));
+    if held_back > 0 {
+        parts.push(format!("{held_back} previously deleted, held back"));
     }
     if manually_added > 0 {
         parts.push(format!("{manually_added} added since last scan"));
@@ -552,16 +553,16 @@ pub fn should_hide_failed_beatmapset(settings: &FetchCompareSettings, beatmapset
 }
 
 #[derive(Debug, Clone)]
-struct CollectionBeatmapset {
-    id: u32,
-    checksums: Vec<Md5>,
+pub(crate) struct CollectionBeatmapset {
+    pub(crate) id: u32,
+    pub(crate) checksums: Vec<Md5>,
     /// One diff (beatmap) id from this set's upstream listing, forwarded to the
     /// missing-set enrichment pager (the osu-batch keys on diff ids).
-    enrich_diff_id: Option<u32>,
+    pub(crate) enrich_diff_id: Option<u32>,
 }
 
 impl CollectionBeatmapset {
-    fn is_in_snapshot(
+    pub(crate) fn is_in_snapshot(
         &self,
         client_type: OsuClient,
         snapshot: &snapshots::CollectionSnapshot,
@@ -755,27 +756,13 @@ pub async fn fetch_missing_beatmapsets(
     let mut all_missing: Vec<MissingBeatmapset> = Vec::new();
 
     for (beatmapset, collection_id, collection_name) in candidates_to_check {
-        let previously_deleted = snapshot_diffs
-            .get(&collection_id)
-            .map(|diff| beatmapset.is_in_snapshot(client_type, &diff.manually_deleted))
-            .unwrap_or(false);
-
-        if previously_deleted {
-            trace!(
-                beatmapset_id = beatmapset.id,
-                "marking as previously deleted"
-            );
-        }
-
-        all_missing.push(MissingBeatmapset {
-            id: beatmapset.id,
-            status: MissingStatus::NotInstalled,
+        all_missing.push(missing_from_candidate(
+            &beatmapset,
             collection_id,
             collection_name,
-            selected: !previously_deleted,
-            previously_deleted,
-            enrich_diff_id: beatmapset.enrich_diff_id,
-        });
+            client_type,
+            &snapshot_diffs,
+        ));
     }
 
     all_missing.sort_by(|a, b| {
@@ -790,3 +777,92 @@ pub async fn fetch_missing_beatmapsets(
         collections: fetched_collections,
     })
 }
+
+/// Rebuild every scanned collection's snapshot so the sets this scan held back
+/// stay recorded as deleted in it.
+///
+/// Both snapshot writers go through here — the TUI's completed-run persist
+/// (`request_selective_download` → `persist_snapshots_if_complete`) and the
+/// headless `update-collections` report — because both build their baseline from
+/// [`snapshots::current_snapshots`], which reads the LOCAL library and therefore
+/// omits exactly the sets the user deleted. Without this, finishing a run (or
+/// merely running the report) resets the baseline and the next scan concludes
+/// nothing was ever deleted.
+pub fn retain_held_back_in_snapshots(
+    snapshot_files: &mut HashMap<u32, snapshots::CollectionSnapshotFile>,
+    client_type: OsuClient,
+    missing: &[MissingBeatmapset],
+) {
+    // Holding nothing back is the overwhelmingly common scan, so settle it once
+    // instead of re-walking `missing` and allocating a vec per collection to
+    // discover the same emptiness N times.
+    let held_back: Vec<&MissingBeatmapset> = missing.iter().filter(|set| !set.included).collect();
+    if held_back.is_empty() {
+        return;
+    }
+    for (collection_id, file) in snapshot_files.iter_mut() {
+        let for_collection: Vec<(u32, &[Md5])> = held_back
+            .iter()
+            .filter(|set| set.collection_id == *collection_id)
+            .map(|set| (set.id, set.checksums.as_ref()))
+            .collect();
+        if for_collection.is_empty() {
+            continue;
+        }
+        snapshots::retain_held_back(&mut file.snapshot, client_type, for_collection);
+    }
+}
+
+/// Turn one not-installed upstream set into a missing-list row, deciding whether
+/// the user deleted it on purpose (it sits in this collection's
+/// `manually_deleted` snapshot diff) and therefore whether an update run enqueues
+/// it. This is the sole writer of both flags.
+pub(crate) fn missing_from_candidate(
+    beatmapset: &CollectionBeatmapset,
+    collection_id: u32,
+    collection_name: String,
+    client_type: OsuClient,
+    snapshot_diffs: &HashMap<u32, snapshots::SnapshotDiff>,
+) -> MissingBeatmapset {
+    let previously_deleted = snapshot_diffs
+        .get(&collection_id)
+        .map(|diff| beatmapset.is_in_snapshot(client_type, &diff.manually_deleted))
+        .unwrap_or(false);
+
+    if previously_deleted {
+        trace!(
+            beatmapset_id = beatmapset.id,
+            "marking as previously deleted"
+        );
+    }
+
+    MissingBeatmapset {
+        id: beatmapset.id,
+        status: MissingStatus::NotInstalled,
+        collection_id,
+        collection_name,
+        // A set the user deleted on purpose is held back from the run until they
+        // re-include it in the browse.
+        included: !previously_deleted,
+        previously_deleted,
+        // Only a held-back set's checksums are ever read (to keep it recorded in
+        // the stable snapshot), so a scan does not pay an allocation per missing
+        // set for a field nothing will look at — and the lazer arm never reads
+        // them at all.
+        //
+        // This must keep reading the SAME slice `is_in_snapshot` just read above:
+        // that shared source is the only reason a set flagged deleted is
+        // guaranteed to carry a hash the rebuild can re-express it with. Sourcing
+        // it elsewhere fails open and silently (`snapshots::retain_held_back`).
+        checksums: if previously_deleted {
+            beatmapset.checksums.clone().into_boxed_slice()
+        } else {
+            Box::new([])
+        },
+        enrich_diff_id: beatmapset.enrich_diff_id,
+    }
+}
+
+#[cfg(test)]
+#[path = "../../../tests/unit/runtime_scan.rs"]
+mod tests;

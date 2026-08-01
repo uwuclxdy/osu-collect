@@ -1,7 +1,7 @@
 use crate::{
     app::{
         collection_state, failed_maps, ignored_maps, runtime, snapshots,
-        update_source::extract_collection_id,
+        update_source::{MissingBeatmapset, extract_collection_id},
     },
     osu_db::{BeatmapReader, LazerReader, LocalBeatmapset, Md5, OsuClient, StableReader},
 };
@@ -209,9 +209,10 @@ pub async fn run_update_collections(
     let collection_seen = fetch_result.collection_seen;
 
     let fetch_ms = t_fetch.elapsed().as_millis();
-    let previously_deleted_count = missing.iter().filter(|m| m.previously_deleted).count();
+    let (fetchable_count, held_back_count) = report_counts(&missing);
     info!(
-        missing = missing.len(),
+        missing = fetchable_count,
+        held_back = held_back_count,
         elapsed_ms = fetch_ms,
         "phase: fetch + compare"
     );
@@ -238,13 +239,15 @@ pub async fn run_update_collections(
             }
         }
         if let Some(snapshot_dir) = snapshot_dir {
+            let client = args.client;
+            let missing_for_persist = missing.clone();
             match tokio::task::spawn_blocking(move || {
-                for (collection_id, snapshot) in current_snapshots {
-                    snapshots::save(
-                        &snapshot,
-                        &snapshots::snapshot_path(&snapshot_dir, collection_id),
-                    );
-                }
+                persist_baselines(
+                    &snapshot_dir,
+                    current_snapshots,
+                    client,
+                    &missing_for_persist,
+                );
             })
             .await
             {
@@ -257,17 +260,14 @@ pub async fn run_update_collections(
     }
 
     let total_ms = t_total.elapsed().as_millis();
-    println!(
-        "update-collections complete: {} missing mapsets",
-        missing.len()
-    );
+    println!("update-collections complete: {fetchable_count} missing mapsets");
     println!("  phase db-read:       {db_ms}ms");
     println!("  phase fetch+compare: {fetch_ms}ms");
     println!("  total:               {total_ms}ms");
 
-    if previously_deleted_count > 0 {
+    if held_back_count > 0 {
         eprintln!(
-            "info: {previously_deleted_count} mapsets skipped (previously deleted, select them to re-include)"
+            "info: {held_back_count} previously-deleted mapsets held back; re-include them from the update browse"
         );
     }
     if added_count > 0 {
@@ -282,11 +282,7 @@ pub async fn run_update_collections(
     if !missing.is_empty() {
         println!("missing mapsets:");
         for m in &missing {
-            let tag = if m.previously_deleted {
-                " [skipped]"
-            } else {
-                ""
-            };
+            let tag = row_tag(m);
             println!(
                 "  mapset {} in collection {} ({}){tag}",
                 m.id, m.collection_id, m.collection_name
@@ -296,3 +292,51 @@ pub async fn run_update_collections(
 
     Ok(())
 }
+
+/// The `update-collections` report's headline figures: how many sets an update
+/// run would enqueue, and how many the scan held back as previously deleted.
+/// Held-back sets still print in the listing (tagged), so the two always sum to
+/// the scanned total.
+fn report_counts(missing: &[MissingBeatmapset]) -> (usize, usize) {
+    let fetchable = missing.iter().filter(|m| m.included).count();
+    (fetchable, missing.len() - fetchable)
+}
+
+/// Write `update-collections`' per-collection baselines to disk, rebuilt so every
+/// held-back set stays recorded as deleted.
+///
+/// This command reports, it never downloads — so writing the scan's raw baselines
+/// would reset every collection to its current local membership and erase the very
+/// deletions the summary is about to call held back, making the report
+/// self-defeating. Same rebuild the TUI's run-completion write does.
+///
+/// The rebuild and the write live in ONE function on purpose: a helper that only
+/// returned the rebuilt map would be pinned by asserting its return value, and
+/// dropping its call from the caller would then change nothing any test observes.
+/// Here the test asserts the bytes on disk, so dropping the rebuild changes what
+/// lands and reds.
+fn persist_baselines(
+    snapshot_dir: &std::path::Path,
+    mut baselines: HashMap<u32, snapshots::CollectionSnapshotFile>,
+    client: OsuClient,
+    missing: &[MissingBeatmapset],
+) {
+    runtime::retain_held_back_in_snapshots(&mut baselines, client, missing);
+    for (collection_id, snapshot) in baselines {
+        snapshots::save(
+            &snapshot,
+            &snapshots::snapshot_path(snapshot_dir, collection_id),
+        );
+    }
+}
+
+/// The listing's per-row marker. Reads the same field [`report_counts`] counts,
+/// so the number of tagged rows and the reported held-back figure cannot
+/// disagree.
+fn row_tag(set: &MissingBeatmapset) -> &'static str {
+    if set.included { "" } else { " [held back]" }
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/cli.rs"]
+mod tests;

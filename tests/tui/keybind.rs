@@ -596,8 +596,9 @@ fn space_in_update_browse_toggles_highlighted_collection() {
             status: MissingStatus::NotInstalled,
             collection_id: 1234,
             collection_name: "test - 1234".to_string(),
-            selected: false,
+            included: true,
             previously_deleted: false,
+            checksums: Box::new([]),
             enrich_diff_id: None,
         }],
         &std::collections::HashMap::new(),
@@ -1007,8 +1008,9 @@ fn enter_on_collection_toggles_and_stays_in_browse() {
             status: MissingStatus::NotInstalled,
             collection_id: 1234,
             collection_name: "test - 1234".to_string(),
-            selected: false,
+            included: true,
             previously_deleted: false,
+            checksums: Box::new([]),
             enrich_diff_id: None,
         }],
         &std::collections::HashMap::new(),
@@ -1050,8 +1052,9 @@ fn enter_on_update_download_button_dispatches_selective() {
             status: MissingStatus::NotInstalled,
             collection_id: 1234,
             collection_name: "test - 1234".to_string(),
-            selected: false,
+            included: true,
             previously_deleted: false,
+            checksums: Box::new([]),
             enrich_diff_id: None,
         }],
         &std::collections::HashMap::new(),
@@ -1341,8 +1344,9 @@ fn update_view_button_rekicks_enrichment_only_when_unfetched() {
                 status: MissingStatus::NotInstalled,
                 collection_id: 100,
                 collection_name: "test - 100".to_string(),
-                selected: true,
+                included: true,
                 previously_deleted: false,
+                checksums: Box::new([]),
                 enrich_diff_id: Some(1000),
             }],
             &std::collections::HashMap::new(),
@@ -1803,8 +1807,9 @@ fn m_in_update_browse_loads_more_missing_set_enrichment() {
             status: MissingStatus::NotInstalled,
             collection_id: 100,
             collection_name: "col".to_string(),
-            selected: true,
+            included: true,
             previously_deleted: false,
+            checksums: Box::new([]),
             enrich_diff_id: Some(1000),
         }],
         &std::collections::HashMap::new(),
@@ -1822,6 +1827,136 @@ fn m_in_update_browse_loads_more_missing_set_enrichment() {
             })
         ),
         "`m` in the update browse backfills the next enrichment page, got {cmd:?}"
+    );
+}
+
+/// The descend guard is a second gate in front of the browse, separate from the
+/// button's enabled state — both have to read rows, or `enter` on a live button
+/// silently does nothing and the held-back sets are stranded.
+#[test]
+fn enter_opens_the_update_browse_when_every_missing_set_is_held_back() {
+    use osu_collect::app::update_source::{MissingBeatmapset, MissingStatus};
+    use osu_collect::app::{GetMapsSource, HomeField};
+    use osu_collect::osu_db::LocalCollection;
+
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Update;
+    app.home.update.set_collections(vec![LocalCollection {
+        name: "col - 100".to_string(),
+        beatmap_checksums: Box::new([]),
+    }]);
+    app.home.update.set_missing_beatmaps(
+        vec![MissingBeatmapset {
+            id: 10,
+            status: MissingStatus::NotInstalled,
+            collection_id: 100,
+            collection_name: "col".to_string(),
+            included: false,
+            previously_deleted: true,
+            checksums: Box::new([]),
+            enrich_diff_id: None,
+        }],
+        &std::collections::HashMap::new(),
+    );
+    app.home.focus = HomeField::UpdateBrowse;
+    assert_eq!(app.home.update.total_new_count(), 0, "nothing to fetch");
+
+    app.handle_key(press(KeyCode::Enter));
+    assert!(
+        app.home.update.is_browsing(),
+        "`enter` on `view N mapsets` still descends, so the held-back row is reachable"
+    );
+}
+
+/// The per-set re-include has to be reachable from the real key, not just the
+/// model: `enter` on the preview pane's previously-deleted row. Space is the
+/// documented alias, so it is driven through the same path.
+#[test]
+fn enter_and_space_re_include_a_held_back_set_in_the_update_browse() {
+    use osu_collect::app::GetMapsSource;
+    use osu_collect::app::update_source::{MissingBeatmapset, MissingStatus};
+    use osu_collect::osu_db::LocalCollection;
+
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Update;
+    app.home.update.set_collections(vec![LocalCollection {
+        name: "col - 100".to_string(),
+        beatmap_checksums: Box::new([]),
+    }]);
+    app.home.update.set_missing_beatmaps(
+        vec![MissingBeatmapset {
+            id: 10,
+            status: MissingStatus::NotInstalled,
+            collection_id: 100,
+            collection_name: "col".to_string(),
+            included: false,
+            previously_deleted: true,
+            checksums: Box::new([]),
+            enrich_diff_id: None,
+        }],
+        &std::collections::HashMap::new(),
+    );
+    app.home.update.descend();
+    app.home.update.focus_preview();
+    assert!(
+        app.home.update.preview_focused(),
+        "the preview must be enterable, or the key never reaches the toggle"
+    );
+    assert!(
+        app.home.update.selected_beatmapset_ids().is_empty(),
+        "held back before the press"
+    );
+
+    app.handle_key(press(KeyCode::Enter));
+    assert_eq!(
+        app.home.update.selected_beatmapset_ids(),
+        vec![10],
+        "one `enter` on a previously-deleted preview row re-includes it AND undoes \
+         the force-deselect the app applied while the collection was inert"
+    );
+
+    app.handle_key(press(KeyCode::Char(' ')));
+    assert!(
+        app.home.update.selected_beatmapset_ids().is_empty(),
+        "`space` is the same toggle, so a second press holds it back again"
+    );
+}
+
+/// The list pane's `enter` still owns the collection checkbox — the new preview
+/// binding must not have retargeted it.
+#[test]
+fn enter_on_the_update_collections_pane_still_toggles_the_checkbox() {
+    use osu_collect::app::GetMapsSource;
+    use osu_collect::app::update_source::{MissingBeatmapset, MissingStatus};
+    use osu_collect::osu_db::LocalCollection;
+
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Update;
+    app.home.update.set_collections(vec![LocalCollection {
+        name: "col - 100".to_string(),
+        beatmap_checksums: Box::new([]),
+    }]);
+    app.home.update.set_missing_beatmaps(
+        vec![MissingBeatmapset {
+            id: 10,
+            status: MissingStatus::NotInstalled,
+            collection_id: 100,
+            collection_name: "col".to_string(),
+            included: true,
+            previously_deleted: false,
+            checksums: Box::new([]),
+            enrich_diff_id: None,
+        }],
+        &std::collections::HashMap::new(),
+    );
+    app.home.update.descend();
+    assert!(!app.home.update.preview_focused());
+    assert!(app.home.update.selection.local_collections[0].selected);
+
+    app.handle_key(press(KeyCode::Enter));
+    assert!(
+        !app.home.update.selection.local_collections[0].selected,
+        "`enter` on the list pane still unchecks the collection"
     );
 }
 

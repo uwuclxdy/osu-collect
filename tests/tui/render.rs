@@ -1363,8 +1363,9 @@ fn update_view_button_trails_loading_titles_cue_while_enriching() {
             status: MissingStatus::NotInstalled,
             collection_id: 100,
             collection_name: "test - 100".to_string(),
-            selected: true,
+            included: true,
             previously_deleted: false,
+            checksums: Box::new([]),
             enrich_diff_id: Some(1000),
         }],
         &std::collections::HashMap::new(),
@@ -1502,8 +1503,9 @@ fn update_preview_pane_appends_loading_titles_cue_without_dropping_counts() {
             status: MissingStatus::NotInstalled,
             collection_id: 100,
             collection_name: "test - 100".to_string(),
-            selected: true,
+            included: true,
             previously_deleted: false,
+            checksums: Box::new([]),
             enrich_diff_id: Some(1000),
         }],
         &std::collections::HashMap::new(),
@@ -2172,5 +2174,125 @@ fn the_multi_select_hint_is_one_row_anchored_under_rank() {
         row_of(&on_extra, "played"),
         row_of(&on_rank, "played"),
         "walking between the two rows reflowed the form"
+    );
+}
+
+/// The hold-back state has to be legible on the row itself — otherwise `enter`
+/// flips a flag with no visible effect and the user cannot tell which rows the
+/// run will fetch.
+#[test]
+fn update_preview_row_shows_its_hold_back_state_and_the_footer_names_the_key() {
+    use osu_collect::app::GetMapsSource;
+    use osu_collect::app::update_source::{MissingBeatmapset, MissingStatus};
+    use osu_collect::osu_db::LocalCollection;
+
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Update;
+    app.home.update.set_collections(vec![LocalCollection {
+        name: "test - 100".to_string(),
+        beatmap_checksums: Vec::new().into(),
+    }]);
+    app.home.update.set_missing_beatmaps(
+        vec![MissingBeatmapset {
+            id: 10,
+            status: MissingStatus::NotInstalled,
+            collection_id: 100,
+            collection_name: "test - 100".to_string(),
+            included: false,
+            previously_deleted: true,
+            checksums: Box::new([]),
+            enrich_diff_id: None,
+        }],
+        &std::collections::HashMap::new(),
+    );
+    app.home.update.descend();
+    app.home.update.focus_preview();
+    app.home.update.selection.preview_cursor = Some(0);
+
+    let content = render_content(&app, 120, 30);
+    assert!(
+        content.contains("previously deleted"),
+        "a held-back row names why it is held back: {content}"
+    );
+    assert!(
+        !content.contains("re-included"),
+        "and does not claim to be re-included: {content}"
+    );
+    let footer = render_footer_row(&app, 200, 24);
+    assert!(
+        footer.contains("↵ re-include"),
+        "the footer names the key that restores it: {footer}"
+    );
+
+    app.home.update.toggle_preview_included();
+    let content = render_content(&app, 120, 30);
+    assert!(
+        content.contains("✓ re-included"),
+        "the row flips to the re-included marker: {content}"
+    );
+    assert!(
+        !content.contains("  previously deleted"),
+        "and drops the held-back tag: {content}"
+    );
+    let footer = render_footer_row(&app, 200, 24);
+    assert!(
+        footer.contains("↵ hold back"),
+        "the footer flips to the reverse action: {footer}"
+    );
+}
+
+/// The form has to name the held-back count, or a `N new` that shrank has
+/// nothing pointing at the browse rows that can restore it.
+#[test]
+fn update_form_names_the_held_back_count() {
+    use osu_collect::app::GetMapsSource;
+    use osu_collect::app::update_source::{MissingBeatmapset, MissingStatus, ScanStatus};
+    use osu_collect::osu_db::LocalCollection;
+
+    let mut app = make_app();
+    app.home.source = GetMapsSource::Update;
+    app.home.update.set_collections(vec![LocalCollection {
+        name: "test - 100".to_string(),
+        beatmap_checksums: Vec::new().into(),
+    }]);
+    app.home.update.set_missing_beatmaps(
+        vec![
+            MissingBeatmapset {
+                id: 10,
+                status: MissingStatus::NotInstalled,
+                collection_id: 100,
+                collection_name: "test - 100".to_string(),
+                included: false,
+                previously_deleted: true,
+                checksums: Box::new([]),
+                enrich_diff_id: None,
+            },
+            MissingBeatmapset {
+                id: 20,
+                status: MissingStatus::NotInstalled,
+                collection_id: 100,
+                collection_name: "test - 100".to_string(),
+                included: true,
+                previously_deleted: false,
+                checksums: Box::new([]),
+                enrich_diff_id: None,
+            },
+        ],
+        &std::collections::HashMap::new(),
+    );
+    app.home.update.scan.scan_status = ScanStatus::Ready;
+
+    let content = render_content(&app, 120, 30);
+    assert!(
+        content.contains("held back"),
+        "the form carries a `held back` metric: {content}"
+    );
+    assert!(
+        content.contains("1 new across"),
+        "the headline counts only what a run would fetch: {content}"
+    );
+    assert!(
+        content.contains("view 2 mapsets"),
+        "while the browse button counts rows, so the held-back one is reachable: {content}"
     );
 }

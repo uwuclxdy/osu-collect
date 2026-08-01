@@ -12,7 +12,7 @@ use super::{
     ignored_maps,
     library::LibraryState,
     login::{LoginField, LoginPhase, LoginTab},
-    snapshots,
+    runtime, snapshots,
     tab::Tab,
     toast::{Toast, Toasts},
     update_source::{ScanCta, extract_collection_id},
@@ -1062,6 +1062,18 @@ impl App {
         ));
     }
 
+    /// Flip the focused preview row between held back and re-included. Scoped to
+    /// previously-deleted sets: those are the only ones the scan holds back, so
+    /// on any other row the collection checkbox already decides membership and
+    /// the key is inert (no toast — nothing changed).
+    fn toggle_preview_included(&mut self) {
+        match self.home.update.toggle_preview_included() {
+            Some(true) => self.toast_ok("re-included 1 mapset"),
+            Some(false) => self.toast_ok("held back 1 mapset"),
+            None => {}
+        }
+    }
+
     /// Letter-key dispatch while browsing the update source's two panes. `a`/`A`
     /// select-all/none (list pane), `s` cycles the focused pane's sort, `i`/`I`
     /// mark the preview's focused row / whole collection installed, `u`/`U`
@@ -1317,11 +1329,20 @@ impl App {
             rate_limit_skip_secs: self.config.parse_rate_limit_skip_secs().unwrap_or(60),
         };
 
-        let current_snapshots = snapshots::current_snapshots(
+        let mut current_snapshots = snapshots::current_snapshots(
             self.library.client_type,
             &self.home.update.scan.local_collections_raw,
             self.home.update.scan.local_beatmapsets.iter(),
             |name| extract_collection_id(name).and_then(|id| u32::try_from(id).ok()),
+        );
+        // A held-back set is absent from the local library, so the baseline built
+        // above would tell the next scan it is no longer deleted — and it is not a
+        // run target, so the completion gate cannot withhold the write on its
+        // behalf. Put it back before the snapshot leaves for the pipeline.
+        runtime::retain_held_back_in_snapshots(
+            &mut current_snapshots,
+            self.library.client_type,
+            &self.home.update.selection.cached_missing_sets,
         );
         let snapshots: Vec<_> = collection_ids
             .iter()
@@ -1336,15 +1357,7 @@ impl App {
                     .find(|snapshot| snapshot.collection_id.parse::<u32>() == Ok(*collection_id))
                     .map(|snapshot| snapshot.name.clone())
                     .unwrap_or_default(),
-                beatmapset_ids: self
-                    .home
-                    .update
-                    .selection
-                    .cached_missing_sets
-                    .iter()
-                    .filter(|beatmap| beatmap.collection_id == *collection_id)
-                    .map(|beatmap| beatmap.id)
-                    .collect(),
+                beatmapset_ids: self.home.update.selected_beatmapset_ids_for(*collection_id),
             })
             .collect();
 
@@ -2568,10 +2581,13 @@ impl App {
                 match self.active_tab() {
                     Tab::Home => {
                         // Update-source browse is a pure selector: enter toggles
-                        // the highlighted collection (preview rows are read-only).
-                        // The download fires from the form's `Download` button.
+                        // the highlighted collection, or — on the preview pane —
+                        // a previously-deleted set's hold-back. The download
+                        // fires from the form's `Download` button.
                         if self.update_browsing() {
-                            if !self.home.update.preview_focused() {
+                            if self.home.update.preview_focused() {
+                                self.toggle_preview_included();
+                            } else {
                                 self.home.update.toggle_selected_collection();
                             }
                             return None;
@@ -2618,7 +2634,7 @@ impl App {
                             // renders disabled meanwhile, and focus can still land
                             // on it, so guard the descend (disabled rows are no-ops).
                             HomeField::UpdateBrowse => {
-                                if self.home.update.total_new_count() > 0 {
+                                if self.home.update.total_missing_count() > 0 {
                                     // Pure descend — the pager was seeded at
                                     // scan-land. Self-heal a missed/failed prefetch
                                     // by re-kicking page 1 ONLY when nothing was
@@ -2715,9 +2731,11 @@ impl App {
                             return Some(cmd);
                         }
                     } else if self.update_browsing() {
-                        // Toggle-alias for the collection checkbox (list pane only);
-                        // the preview is read-only.
-                        if !self.home.update.preview_focused() {
+                        // Toggle-alias for whichever checkbox the focused pane
+                        // owns: the collection's, or a held-back set's.
+                        if self.home.update.preview_focused() {
+                            self.toggle_preview_included();
+                        } else {
                             self.home.update.toggle_selected_collection();
                         }
                     } else if self.home_set_browsing() {

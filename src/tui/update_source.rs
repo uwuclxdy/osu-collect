@@ -29,7 +29,9 @@ const LIST_TITLE: &str = " COLLECTIONS ";
 const PREVIEW_TITLE: &str = " PREVIEW ";
 
 const METRIC_KNOWN_BAD: &str = "known bad";
+const METRIC_HELD_BACK: &str = "held back";
 const TAG_PREVIOUSLY_DELETED: &str = "previously deleted";
+const TAG_RE_INCLUDED: &str = "re-included";
 
 /// Focus hint for the osu! path field: names the database file the *active*
 /// client actually reads.
@@ -100,14 +102,16 @@ pub fn push_form_rows(
 
     // `view N maps` opens the two-pane browse over the scan's missing sets;
     // enabled once a scan actually found something (bare `view maps` while
-    // empty so it doesn't read as a zero count).
-    let new_count = form.total_new_count();
+    // empty so it doesn't read as a zero count). Counts ROWS, not the run's
+    // set — the browse is where a held-back set is re-included, so it must open
+    // even when every find is held back.
+    let row_count = form.total_missing_count();
     items.push_focusable(
         HomeField::UpdateBrowse,
         widgets::view_browse_button(
-            new_count,
+            row_count,
             focus == HomeField::UpdateBrowse,
-            new_count > 0,
+            row_count > 0,
             form.is_enriching(),
             tick,
             widgets::ButtonProminence::primary_if(HomeField::UpdateBrowse == primary),
@@ -261,10 +265,10 @@ fn collection_stats_meta(new: usize, removed: usize) -> Line<'static> {
     Line::from(spans)
 }
 
-/// One read-only preview row: the missing set as `artist - title` once its
-/// enrichment page lands, else the bare id — plus a marker for a set the user
-/// previously deleted from the collection. `marked` tints the row as a
-/// manually-installed (reversible) entry.
+/// One preview row: the missing set as `artist - title` once its enrichment page
+/// lands, else the bare id — plus a marker for a set the user previously deleted
+/// from the collection, which carries that row's hold-back state (`enter` flips
+/// it). `marked` tints the row as a manually-installed (reversible) entry.
 fn preview_row(
     set: &MissingBeatmapset,
     meta: Option<&BeatmapSetMeta>,
@@ -279,7 +283,11 @@ fn preview_row(
     if marked {
         spans.push("  ✓ installed".fg(success()));
     } else if set.previously_deleted {
-        spans.push(format!("  {TAG_PREVIOUSLY_DELETED}").fg(text_faint()));
+        spans.push(if set.included {
+            format!("  ✓ {TAG_RE_INCLUDED}").fg(accent())
+        } else {
+            format!("  {TAG_PREVIOUSLY_DELETED}").fg(text_faint())
+        });
     }
     ListItem::new(Line::from(spans))
 }
@@ -337,10 +345,16 @@ fn osu_path_row(library: &LibraryState, focused: bool, editing: bool) -> ListIte
     ]))
 }
 
-/// The form's summary metrics — only the `known bad` count, once a scan has
-/// flagged maps no mirror can serve.
+/// The form's summary metrics: the `held back` count, then `known bad` once a
+/// scan has flagged maps no mirror can serve. Held-back sets are absent from
+/// every `N new` figure, so without this row a shrunken headline has nothing
+/// pointing at the browse rows that can restore them.
 fn summary_metrics(form: &UpdateSource) -> Vec<Metric<'static>> {
     let mut metrics = Vec::new();
+    let held_back = form.held_back_count();
+    if held_back > 0 {
+        metrics.push(Metric::muted(METRIC_HELD_BACK, held_back.to_string()));
+    }
     if form.scan.failed_beatmapset_count > 0 {
         metrics.push(Metric::muted(
             METRIC_KNOWN_BAD,

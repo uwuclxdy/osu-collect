@@ -881,3 +881,184 @@ fn unavailable_on_mirrors_maps_to_not_found_reason() {
         .reason;
     assert_eq!(reason, FailureReason::NotFound);
 }
+
+// ── the run-target → snapshot-gate → next-scan seam ───────────────────────────
+
+/// Held-back sets are removed from a run's target list, so the completion gate
+/// cannot withhold the snapshot on their behalf: nothing that is not a target can
+/// ever be unsatisfied. Without `retain_held_back_in_snapshots` the baseline a
+/// finished run writes is the current LOCAL library, which omits the deleted set,
+/// and the next scan reads that as "no longer deleted" and re-fetches it — the
+/// exact defect the hold-back exists to prevent, one run later.
+///
+/// Nothing else in the suite joins those two sides: the gate's own tests pass
+/// literal id slices, and the scan's tests build diffs by hand. This drives the
+/// real chain — `request_selective_download` → `persist_snapshots_if_complete` →
+/// the file on disk → `snapshot_diffs_for_scan` → `missing_from_candidate`.
+#[tokio::test]
+async fn a_completed_run_leaves_a_held_back_set_still_held_back_on_the_next_scan() {
+    use crate::app::App;
+    use crate::app::runtime::scan::{CollectionBeatmapset, missing_from_candidate};
+    use crate::app::runtime::snapshot_diffs_for_scan;
+    use crate::app::snapshots::{self, CollectionSnapshot, CollectionSnapshotFile};
+    use crate::app::update_source::{MissingBeatmapset, MissingStatus};
+    use crate::config::Config;
+    use crate::osu_db::{LocalBeatmap, LocalBeatmapset, LocalCollection, checksum};
+
+    fn md5(seed: u8) -> crate::osu_db::Md5 {
+        let mut out = [0u8; 16];
+        out[0] = seed;
+        out
+    }
+
+    // Collection 100: A is installed, B is new upstream, M the user deleted.
+    let (a, b, m) = (md5(0xa1), md5(0xb2), md5(0xcc));
+    let snapshot_dir = tempdir().expect("temp dir");
+    let dir = snapshot_dir.path().to_path_buf();
+
+    // The baseline from before the deletion still names M — that is what makes
+    // this scan classify M as manually deleted.
+    snapshots::save(
+        &CollectionSnapshotFile::new(
+            100,
+            "coll - 100".to_string(),
+            CollectionSnapshot {
+                stable_hashes: vec![checksum::to_hex(a), checksum::to_hex(m)],
+                lazer_ids: Vec::new(),
+            },
+        ),
+        &snapshots::snapshot_path(&dir, 100),
+    );
+
+    let _env = crate::test_env::TempEnvVar::set(
+        snapshots::SNAPSHOT_ENV_DIR,
+        dir.to_str().expect("utf-8 temp path"),
+    );
+
+    let mut app = App::new(Config::default());
+    // The app defaults to lazer, whose snapshot is keyed by set id; this fixture
+    // exercises the stable representation, where a set id cannot be re-expressed
+    // in the baseline at all and the checksums carried on the missing set are the
+    // only way back in.
+    app.library.client_type = OsuClient::Stable;
+    app.home.directory.value = snapshot_dir
+        .path()
+        .join("out")
+        .to_string_lossy()
+        .into_owned();
+    // Local library: the collection holds A only — M is gone, B not yet fetched.
+    app.home.update.set_collections(vec![LocalCollection {
+        name: "coll - 100".to_string(),
+        beatmap_checksums: Box::new([a]),
+    }]);
+    app.home.update.set_local_beatmapsets(vec![LocalBeatmapset {
+        id: 1,
+        beatmaps: Box::new([LocalBeatmap { checksum: a }]),
+    }]);
+    app.home.update.set_missing_beatmaps(
+        vec![
+            MissingBeatmapset {
+                id: 2,
+                status: MissingStatus::NotInstalled,
+                collection_id: 100,
+                collection_name: "coll - 100".to_string(),
+                included: true,
+                previously_deleted: false,
+                checksums: Box::new([b]),
+                enrich_diff_id: None,
+            },
+            MissingBeatmapset {
+                id: 3,
+                status: MissingStatus::NotInstalled,
+                collection_id: 100,
+                collection_name: "coll - 100".to_string(),
+                included: false,
+                previously_deleted: true,
+                checksums: Box::new([m]),
+                enrich_diff_id: None,
+            },
+        ],
+        &HashMap::new(),
+    );
+
+    let (_, request) = app
+        .request_selective_download()
+        .expect("a mixed collection with mirrors enabled builds a request");
+    assert_eq!(
+        request.beatmapset_ids,
+        vec![2],
+        "precondition: M is NOT a run target, which is why the gate cannot protect it"
+    );
+    // The per-collection payload is a second id list on the same request. It is
+    // neutralised downstream by two intersections today, so only a direct
+    // assertion can keep it from drifting back into a superset of the run.
+    assert_eq!(
+        request.collections[0].beatmapset_ids,
+        vec![2],
+        "the per-collection payload carries the run's set, not every missing set"
+    );
+
+    // B downloads and verifies; M never does, because it was never requested.
+    let verified: HashSet<u32> = HashSet::from([2]);
+    super::persist_snapshots_if_complete(
+        request.snapshot_dir.clone(),
+        request.snapshots.clone(),
+        &request.beatmapset_ids,
+        &verified,
+    )
+    .await
+    .expect("snapshot persist must not fail");
+
+    // Next scan: the collection now holds A and B locally (B was just imported).
+    let next_local = vec![LocalCollection {
+        name: "coll - 100".to_string(),
+        beatmap_checksums: Box::new([a, b]),
+    }];
+    let next_snapshots =
+        snapshots::current_snapshots(OsuClient::Stable, &next_local, [].iter(), |_| Some(100));
+    let diffs = snapshot_diffs_for_scan(&dir, &[100], &next_snapshots);
+
+    let rebuilt = missing_from_candidate(
+        &CollectionBeatmapset {
+            id: 3,
+            checksums: vec![m],
+            enrich_diff_id: None,
+        },
+        100,
+        "coll - 100".to_string(),
+        OsuClient::Stable,
+        &diffs,
+    );
+    assert!(
+        rebuilt.previously_deleted,
+        "the next scan must still see M as deleted, or the run silently re-fetches it"
+    );
+    assert!(!rebuilt.included, "so it stays held back");
+
+    // The set that DID download is not a deletion — the rebuild must re-add the
+    // held-back set only, never blanket-restore the pre-run baseline.
+    let b_rebuilt = missing_from_candidate(
+        &CollectionBeatmapset {
+            id: 2,
+            checksums: vec![b],
+            enrich_diff_id: None,
+        },
+        100,
+        "coll - 100".to_string(),
+        OsuClient::Stable,
+        &diffs,
+    );
+    assert!(
+        !b_rebuilt.previously_deleted,
+        "B is present locally, so it is not a deletion"
+    );
+
+    // The written baseline is the pre-run local membership plus M — exactly one
+    // entry re-added, so the rebuild cannot be passing by restoring everything.
+    let written = snapshots::load(&snapshots::snapshot_path(&dir, 100)).expect("snapshot written");
+    assert_eq!(
+        written.snapshot.stable_hashes,
+        vec![checksum::to_hex(a), checksum::to_hex(m)],
+        "baseline is the pre-run local membership plus the held-back set, nothing else"
+    );
+}

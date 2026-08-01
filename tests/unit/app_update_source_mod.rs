@@ -14,20 +14,25 @@ fn local_col(name: &str, count: usize) -> LocalCollection {
     }
 }
 
+/// Mirrors what `fetch_missing_beatmapsets` writes: a previously-deleted set is
+/// constructed already held back. A fixture with `included: true` on a deleted
+/// set is a state the scan cannot produce.
 fn missing(id: u32, collection_id: u32, previously_deleted: bool) -> MissingBeatmapset {
     MissingBeatmapset {
         id,
         status: MissingStatus::NotInstalled,
         collection_id,
         collection_name: format!("col {collection_id}"),
-        selected: true,
+        included: !previously_deleted,
         previously_deleted,
+        checksums: Box::new([]),
         enrich_diff_id: None,
     }
 }
 
 fn missing_with_diff(id: u32, collection_id: u32, diff: Option<u32>) -> MissingBeatmapset {
     MissingBeatmapset {
+        checksums: Box::new([]),
         enrich_diff_id: diff,
         ..missing(id, collection_id, false)
     }
@@ -528,6 +533,84 @@ fn no_update_collections_stay_sunk_across_sorts() {
     );
 }
 
+/// A collection whose only missing set was previously deleted has nothing a run
+/// would fetch, so it goes inert exactly like a no-update one — while the browse
+/// holding the re-include key must still open, or the set is unreachable.
+#[test]
+fn an_all_held_back_collection_is_inert_but_stays_reachable() {
+    let mut tab = UpdateSource::new();
+    tab.set_collections(vec![local_col("Deleted - 100", 1)]);
+    tab.set_missing_beatmaps(vec![missing(1, 100, true)], &HashMap::new());
+
+    assert!(
+        !tab.selection.local_collections[0].selected,
+        "nothing to fetch → force-deselected like a no-update collection"
+    );
+    assert_eq!(tab.total_new_count(), 0, "no `N new` headline");
+    assert!(tab.selected_beatmapset_ids().is_empty());
+    assert_eq!(
+        tab.total_missing_count(),
+        1,
+        "the browse gate reads rows, so the held-back set stays reachable"
+    );
+
+    tab.descend();
+    tab.focus_preview();
+    assert!(
+        tab.preview_focused(),
+        "the preview pane is enterable on a collection whose rows are all held back"
+    );
+    tab.selection.preview_cursor = Some(0);
+    assert_eq!(tab.toggle_preview_included(), Some(true));
+
+    assert_eq!(tab.total_new_count(), 1, "the collection is live again");
+    assert!(
+        tab.selection.local_collections[0].selected,
+        "the re-include undoes the app's own force-deselect — otherwise the \
+         download button stays dead with nothing pointing at the checkbox"
+    );
+    assert_eq!(
+        tab.selected_beatmapset_ids(),
+        vec![1],
+        "so one keypress is the whole flow"
+    );
+
+    // And back: holding the last included set back returns the collection to
+    // inert, restoring `selected ⇒ has_new` rather than leaving a ticked
+    // collection with nothing to fetch riding along in the run's id list.
+    assert_eq!(tab.toggle_preview_included(), Some(false));
+    assert!(!tab.selection.local_collections[0].selected);
+    assert!(tab.selected_beatmapset_ids().is_empty());
+}
+
+/// The re-select is scoped to the inert→live TRANSITION, so it can only undo the
+/// app's own force-deselect. A collection that already had something to fetch was
+/// deselected by the USER, and a re-include must not overrule that.
+#[test]
+fn re_include_does_not_overrule_a_user_deselect_on_a_live_collection() {
+    let mut tab = UpdateSource::new();
+    tab.set_collections(vec![local_col("Mixed - 100", 2)]);
+    tab.set_missing_beatmaps(
+        vec![missing(1, 100, true), missing(2, 100, false)],
+        &HashMap::new(),
+    );
+    // Live (set 2 is fetchable), so the user's unchecking is a real choice.
+    tab.selection.collections_cursor = Some(0);
+    tab.toggle_selected_collection();
+    assert!(!tab.selection.local_collections[0].selected);
+
+    tab.descend();
+    tab.focus_preview();
+    tab.selection.preview_cursor = Some(0);
+    assert_eq!(tab.toggle_preview_included(), Some(true));
+
+    assert!(
+        !tab.selection.local_collections[0].selected,
+        "no inert→live transition, so the user's deselect stands"
+    );
+    assert!(tab.selected_beatmapset_ids().is_empty());
+}
+
 #[test]
 fn counts_track_missing_per_collection() {
     let tab = seeded();
@@ -827,4 +910,98 @@ fn client_switch_reset_clears_scan_without_auto_scanning() {
     assert!(!tab.is_browsing());
     // Cleared back to Idle — the user scans manually; no auto-scan on switch.
     assert_eq!(tab.scan.scan_status, ScanStatus::Idle);
+}
+
+/// A re-include moves its collection out of the inert partition, so the list has
+/// to re-sort — and because that fires mid-browse with a POSITIONAL cursor, the
+/// highlight has to follow the collection rather than the slot. Two collections
+/// so the sort has somewhere to move it to.
+#[test]
+fn re_include_resorts_and_keeps_the_highlight_on_its_own_collection() {
+    let mut tab = UpdateSource::new();
+    tab.set_collections(vec![local_col("Held - 100", 1), local_col("Live - 200", 1)]);
+    tab.set_missing_beatmaps(
+        vec![missing(1, 100, true), missing(2, 200, false)],
+        &HashMap::new(),
+    );
+    // 100 has nothing to fetch, so it sinks below 200.
+    assert_eq!(
+        tab.selection
+            .local_collections
+            .iter()
+            .map(|c| c.collection_id)
+            .collect::<Vec<_>>(),
+        vec![Some(200), Some(100)],
+        "precondition: the held-back collection starts in the inert partition"
+    );
+
+    tab.selection.collections_cursor = Some(1);
+    tab.descend();
+    tab.selection.collections_cursor = Some(1);
+    tab.focus_preview();
+    tab.selection.preview_cursor = Some(0);
+    assert_eq!(tab.toggle_preview_included(), Some(true));
+
+    assert_eq!(
+        tab.selection
+            .local_collections
+            .iter()
+            .map(|c| c.collection_id)
+            .collect::<Vec<_>>(),
+        vec![Some(100), Some(200)],
+        "the collection that went live re-sorts out of the inert partition"
+    );
+    assert_eq!(
+        tab.highlighted_collection().and_then(|c| c.collection_id),
+        Some(100),
+        "and the highlight follows it, rather than landing on whatever slid into slot 1"
+    );
+}
+
+/// The reverse of the re-sort: holding the last included set back returns the
+/// collection to the inert partition, so it sinks — and the highlight has to
+/// follow it DOWN just as it followed it up, or the user's cursor silently lands
+/// on the collection that rose into the vacated slot.
+#[test]
+fn holding_the_last_set_back_resorts_and_keeps_the_highlight_on_its_own_collection() {
+    let mut tab = UpdateSource::new();
+    tab.set_collections(vec![local_col("Held - 100", 1), local_col("Live - 200", 1)]);
+    tab.set_missing_beatmaps(
+        vec![missing(1, 100, true), missing(2, 200, false)],
+        &HashMap::new(),
+    );
+    tab.descend();
+    tab.selection.collections_cursor = Some(1); // the inert 100, sunk to the bottom
+    tab.focus_preview();
+    tab.selection.preview_cursor = Some(0);
+
+    // Up: 100 goes live and rises to slot 0, highlight follows.
+    assert_eq!(tab.toggle_preview_included(), Some(true));
+    assert_eq!(
+        tab.highlighted_collection().and_then(|c| c.collection_id),
+        Some(100)
+    );
+    assert_eq!(tab.selection.collections_cursor, Some(0));
+
+    // Down: 100 goes inert again and sinks back, highlight follows.
+    assert_eq!(tab.toggle_preview_included(), Some(false));
+    assert_eq!(
+        tab.selection
+            .local_collections
+            .iter()
+            .map(|c| c.collection_id)
+            .collect::<Vec<_>>(),
+        vec![Some(200), Some(100)],
+        "the collection that went inert sinks back below the live one"
+    );
+    assert_eq!(
+        tab.highlighted_collection().and_then(|c| c.collection_id),
+        Some(100),
+        "and the highlight follows it down rather than landing on 200"
+    );
+    assert_eq!(tab.selection.collections_cursor, Some(1));
+    assert!(
+        !tab.selection.local_collections[1].selected,
+        "an inert collection is unticked, so it cannot ride along in the run"
+    );
 }

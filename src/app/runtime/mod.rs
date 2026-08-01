@@ -5,7 +5,7 @@ mod enrich;
 mod filter;
 mod mirror_probe;
 mod resolve;
-mod scan;
+pub(crate) mod scan;
 mod search;
 mod size;
 mod update;
@@ -14,7 +14,7 @@ pub use mirror_probe::{MirrorProbeEvent, ProbeResult, probe_url};
 pub use scan::{
     FetchCompareSettings, FetchMissingResult, UpdatesEvent, collection_ids_for_scan,
     fetch_missing_beatmapsets, owned_beatmapset_ids, read_local_database,
-    should_hide_failed_beatmapset, snapshot_diffs_for_scan,
+    retain_held_back_in_snapshots, should_hide_failed_beatmapset, snapshot_diffs_for_scan,
 };
 
 pub use cover::{HomeCoverEvent, handle_home_cover_event};

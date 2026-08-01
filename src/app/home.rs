@@ -1136,7 +1136,9 @@ impl HomeTab {
                 !self.find.browse.rows.is_empty() && self.find.results_current()
             }
             HomeField::UpdateScan => self.update.scan_cta() != ScanCta::Busy,
-            HomeField::UpdateBrowse => self.update.total_new_count() > 0,
+            // Rows, not the run's count: the browse holds the re-include toggle,
+            // so a scan whose every find is held back must still open.
+            HomeField::UpdateBrowse => self.update.total_missing_count() > 0,
             _ => false,
         }
     }

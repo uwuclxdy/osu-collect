@@ -846,3 +846,45 @@ fn focus_leaves_a_supporter_row_when_the_gate_closes() {
     home.clamp_supporter_focus(false);
     assert_eq!(home.focus, HomeField::FindStars);
 }
+
+/// The browse holds the only re-include affordance, so its open gate must read
+/// ROWS, not the run's set — a scan whose every find is held back still has to
+/// open, or those sets are unreachable for the rest of the session.
+#[test]
+fn update_browse_opens_when_every_missing_set_is_held_back() {
+    use crate::app::GetMapsSource;
+    use crate::app::update_source::{MissingBeatmapset, MissingStatus};
+    use crate::osu_db::LocalCollection;
+    use std::collections::HashMap;
+
+    let config = Config::default();
+    let mut home = HomeTab::new(&config);
+    home.source = GetMapsSource::Update;
+    home.update.set_collections(vec![LocalCollection {
+        name: "col - 100".to_string(),
+        beatmap_checksums: Box::new([]),
+    }]);
+    home.update.set_missing_beatmaps(
+        vec![MissingBeatmapset {
+            id: 10,
+            status: MissingStatus::NotInstalled,
+            collection_id: 100,
+            collection_name: "col".to_string(),
+            included: false,
+            previously_deleted: true,
+            checksums: Box::new([]),
+            enrich_diff_id: None,
+        }],
+        &HashMap::new(),
+    );
+
+    assert_eq!(home.update.total_new_count(), 0, "nothing to fetch");
+    assert!(
+        !home.button_enabled(HomeField::Download),
+        "download stays dead — the run would enqueue nothing"
+    );
+    assert!(
+        home.button_enabled(HomeField::UpdateBrowse),
+        "`view N mapsets` still opens, or the held-back row cannot be reached"
+    );
+}

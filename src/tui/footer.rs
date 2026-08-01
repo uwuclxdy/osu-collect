@@ -89,6 +89,11 @@ const HINT_SORT: &str = "s sort";
 const HINT_RECHECK: &str = "r recheck";
 const HINT_MARK_INSTALLED: &str = "i install / I all";
 const HINT_RESTORE: &str = "u restore / U all";
+/// Update browse preview, on a previously-deleted row: `enter` flips its
+/// hold-back. Advertised only there — every other row rides its collection's
+/// checkbox, so the key is inert and a static hint would name a dead key.
+const HINT_RE_INCLUDE: &str = "↵ re-include";
+const HINT_HOLD_BACK: &str = "↵ hold back";
 const HINT_QUIT: &str = "q quit";
 /// Trailing key on a descended multi-select chip row: `q` lands in the same
 /// exit-edit-mode branch `esc` does, so it ascends there and never arms the
@@ -526,6 +531,11 @@ fn update_source_hints(form: &HomeTab) -> (Vec<&'static str>, Option<&'static st
             // group (mark OR restore, never both).
             let is_marked = update.preview_focused_is_marked();
             let mut s = vec![HINT_SCROLL];
+            match update.preview_focused_included() {
+                Some(true) => s.push(HINT_HOLD_BACK),
+                Some(false) => s.push(HINT_RE_INCLUDE),
+                None => {}
+            }
             if is_marked {
                 s.push(HINT_RESTORE);
             } else {
