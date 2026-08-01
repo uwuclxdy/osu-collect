@@ -184,7 +184,6 @@ pub async fn run_update_collections(
         .map(failed_maps::load)
         .map(|failed_maps| failed_maps.ids())
         .unwrap_or_default();
-    let hidden_failed_count = failed_beatmapset_ids.len();
     let ignored_beatmapset_ids = ignored_maps::ignored_maps_path()
         .map(|path| ignored_maps::reconcile_installed(&path, &local_set_ids))
         .unwrap_or_default();
@@ -207,6 +206,7 @@ pub async fn run_update_collections(
     .await?;
     let missing = fetch_result.missing;
     let collection_seen = fetch_result.collection_seen;
+    let hidden_failed_count = fetch_result.hidden_failed_count;
 
     let fetch_ms = t_fetch.elapsed().as_millis();
     let (fetchable_count, held_back_count) = report_counts(&missing);

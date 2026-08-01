@@ -490,7 +490,6 @@ fn spawn_fetch_task(
         .map(failed_maps::load)
         .map(|failed_maps| failed_maps.ids())
         .unwrap_or_default();
-    let hidden_failed_count = failed_beatmapset_ids.len();
     // Drop any manually-ignored id that is now genuinely installed, then hide
     // the rest from this scan.
     let ignored_beatmapset_ids = ignored_maps::ignored_maps_path()
@@ -523,7 +522,7 @@ fn spawn_fetch_task(
                     collection_removed_counts: res.collection_removed_counts,
                     collections: res.collections,
                     manually_added_count: added_count,
-                    hidden_failed_count,
+                    hidden_failed_count: res.hidden_failed_count,
                 });
             }
             Err(err) => {
@@ -550,6 +549,152 @@ pub fn should_hide_failed_beatmapset(settings: &FetchCompareSettings, beatmapset
         .hidden_failed_beatmapset_ids
         .contains(&beatmapset_id)
         || settings.ignored_beatmapset_ids.contains(&beatmapset_id)
+}
+
+/// What a collection beatmapset resolves to once the by-id local-install check
+/// and the per-collection dedupe have already passed. Kept a pure, network-free
+/// step so this per-beatmapset verdict can be unit-tested apart from the API
+/// fetch it's normally embedded in — `Hidden` covers both known-bad and
+/// manually-ignored ids, but only the former joins the scan's counted
+/// suppression set (see [`scan_collection_candidates`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BeatmapsetVerdict {
+    /// All of its checksums already exist locally under a different online id.
+    LocallyPresent,
+    /// Known-bad or manually-ignored; suppressed rather than surfaced as missing.
+    Hidden,
+    /// Genuinely missing and fetchable.
+    Candidate,
+}
+
+pub(crate) fn classify_beatmapset(
+    beatmapset_id: u32,
+    api_checksums: &[Md5],
+    local_checksums: &HashSet<Md5>,
+    settings: &FetchCompareSettings,
+) -> BeatmapsetVerdict {
+    if !api_checksums.is_empty() && api_checksums.iter().all(|cs| local_checksums.contains(cs)) {
+        return BeatmapsetVerdict::LocallyPresent;
+    }
+    if should_hide_failed_beatmapset(settings, beatmapset_id) {
+        return BeatmapsetVerdict::Hidden;
+    }
+    BeatmapsetVerdict::Candidate
+}
+
+/// One fetched collection's contribution to the scan's candidate list, deduped
+/// by beatmapset id within the collection, plus the ids of its beatmapsets this
+/// scan suppressed via the failed-maps store specifically. A manually-ignored
+/// id is suppressed from candidates the same way (see [`classify_beatmapset`]'s
+/// `Hidden` verdict) but is NOT counted here: the "known bad" figure and the
+/// recheck flow (`spawn_failed_map_recheck_task`) only ever read the
+/// failed-maps store, so folding the ignore store in would report ids recheck
+/// can't act on. Pure and network-free, so the suppression set — the figure
+/// defect B miscounted — is unit-testable apart from the API fetch it's
+/// normally embedded in.
+pub(crate) fn scan_collection_candidates(
+    collection: &Collection,
+    collection_id: u32,
+    local_set_ids: &HashSet<u32>,
+    local_checksums: &HashSet<Md5>,
+    settings: &FetchCompareSettings,
+) -> (Vec<(CollectionBeatmapset, u32, String)>, HashSet<u32>) {
+    // Dedupe within this collection only — the same beatmapset can appear
+    // in multiple collections and must be tracked per collection_id.
+    let mut seen_in_collection: HashSet<u32> = HashSet::new();
+    let mut candidates = Vec::new();
+    let mut hidden_failed_ids: HashSet<u32> = HashSet::new();
+
+    for beatmapset in &collection.beatmapsets {
+        if !seen_in_collection.insert(beatmapset.id) {
+            continue;
+        }
+
+        // Skip if beatmapset exists locally (by ID)
+        if local_set_ids.contains(&beatmapset.id) {
+            trace!(beatmapset_id = beatmapset.id, "Found by ID, skipping");
+            continue;
+        }
+
+        // ID not found - check if ALL checksums exist locally (handles beatmapsets with invalid OnlineID)
+        let api_checksums: Vec<Md5> = beatmapset
+            .beatmaps
+            .iter()
+            .filter(|bm| !bm.checksum.is_empty())
+            .filter_map(|bm| checksum::parse_hex(&bm.checksum))
+            .collect();
+
+        match classify_beatmapset(beatmapset.id, &api_checksums, local_checksums, settings) {
+            BeatmapsetVerdict::LocallyPresent => {
+                trace!(
+                    beatmapset_id = beatmapset.id,
+                    "ID not found but all checksums exist locally, skipping"
+                );
+            }
+            BeatmapsetVerdict::Hidden => {
+                trace!(beatmapset_id = beatmapset.id, "skipping failed beatmapset");
+                if settings
+                    .hidden_failed_beatmapset_ids
+                    .contains(&beatmapset.id)
+                {
+                    hidden_failed_ids.insert(beatmapset.id);
+                }
+            }
+            BeatmapsetVerdict::Candidate => {
+                trace!(
+                    beatmapset_id = beatmapset.id,
+                    "not installed, adding to candidates"
+                );
+                candidates.push((
+                    CollectionBeatmapset {
+                        id: beatmapset.id,
+                        checksums: beatmapset
+                            .beatmaps
+                            .iter()
+                            .filter_map(|beatmap| checksum::parse_hex(&beatmap.checksum))
+                            .collect(),
+                        enrich_diff_id: beatmapset.beatmaps.first().map(|beatmap| beatmap.id),
+                    },
+                    collection_id,
+                    collection.name.to_string(),
+                ));
+            }
+        }
+    }
+
+    (candidates, hidden_failed_ids)
+}
+
+/// Every already-fetched collection's contribution, combined: the full
+/// candidate list, and the SET of beatmapset ids this scan hid via the
+/// failed-maps store, unioned across every scanned collection. A union, not a
+/// running sum of per-collection counts — the same id can be hidden in more
+/// than one scanned collection and must count once (the double-count defect A's
+/// fix re-introduced in this counter). Pure and network-free, so a
+/// multi-collection fixture drives it directly instead of the API fetch that
+/// normally produces `fetched`.
+pub(crate) fn scan_fetched_collections(
+    fetched: &[(u32, Collection)],
+    local_set_ids: &HashSet<u32>,
+    local_checksums: &HashSet<Md5>,
+    settings: &FetchCompareSettings,
+) -> (Vec<(CollectionBeatmapset, u32, String)>, HashSet<u32>) {
+    let mut candidates_to_check = Vec::new();
+    let mut hidden_failed_ids: HashSet<u32> = HashSet::new();
+
+    for (collection_id, collection) in fetched {
+        let (candidates, collection_hidden_ids) = scan_collection_candidates(
+            collection,
+            *collection_id,
+            local_set_ids,
+            local_checksums,
+            settings,
+        );
+        candidates_to_check.extend(candidates);
+        hidden_failed_ids.extend(collection_hidden_ids);
+    }
+
+    (candidates_to_check, hidden_failed_ids)
 }
 
 #[derive(Debug, Clone)]
@@ -594,6 +739,13 @@ pub struct FetchMissingResult {
     /// The fetched upstream payloads, in fetch order. The TUI parks them in its
     /// session collection cache; the headless CLI ignores them.
     pub collections: Vec<Collection>,
+    /// Ids this scan itself suppressed via the failed-maps store specifically
+    /// (manually-ignored ids are also suppressed from `missing` but are not
+    /// "known bad" — see [`scan_collection_candidates`]). Deduped across every
+    /// scanned collection, and scoped to what this scan actually walked — not
+    /// the size of the failed-maps store, which can hold ids outside the
+    /// scanned collections entirely.
+    pub hidden_failed_count: usize,
 }
 
 pub async fn fetch_missing_beatmapsets(
@@ -606,10 +758,8 @@ pub async fn fetch_missing_beatmapsets(
     settings: FetchCompareSettings,
 ) -> Result<FetchMissingResult, String> {
     let client = osu_downloader::collection::CollectionClient::new();
-    let mut candidates_to_check: Vec<(CollectionBeatmapset, u32, String)> = Vec::new();
     let mut collection_seen: HashMap<u32, Vec<u32>> = HashMap::new();
     let mut collection_removed_counts: HashMap<u32, usize> = HashMap::new();
-    let mut fetched_collections: Vec<Collection> = Vec::new();
 
     debug!(
         local_beatmapset_count = local_set_ids.len(),
@@ -654,8 +804,18 @@ pub async fn fetch_missing_beatmapsets(
         "phase: API fetch collections"
     );
 
+    // Errors abort the whole scan regardless of when they're noticed (the
+    // function returns `Result<FetchMissingResult, _>`, all-or-nothing), so
+    // resolving every fetch up front — rather than mid-loop — changes nothing
+    // observable and lets the per-collection candidate scan run as a separate,
+    // pure, testable pass below.
+    let mut resolved: Vec<(u32, Collection)> = Vec::with_capacity(fetched.len());
     for fetch_result in fetched {
-        let (collection_id, collection) = fetch_result?;
+        resolved.push(fetch_result?);
+    }
+
+    for (collection_id, collection) in &resolved {
+        let collection_id = *collection_id;
 
         debug!(
             collection_id,
@@ -687,66 +847,11 @@ pub async fn fetch_missing_beatmapsets(
         if removed > 0 {
             collection_removed_counts.insert(collection_id, removed);
         }
-
-        // Dedupe within this collection only — the same beatmapset can appear
-        // in multiple collections and must be tracked per collection_id.
-        let mut seen_in_collection: HashSet<u32> = HashSet::new();
-
-        for beatmapset in &collection.beatmapsets {
-            if !seen_in_collection.insert(beatmapset.id) {
-                continue;
-            }
-
-            // Skip if beatmapset exists locally (by ID)
-            if local_set_ids.contains(&beatmapset.id) {
-                trace!(beatmapset_id = beatmapset.id, "Found by ID, skipping");
-                continue;
-            }
-
-            // ID not found - check if ALL checksums exist locally (handles beatmapsets with invalid OnlineID)
-            let api_checksums: Vec<Md5> = beatmapset
-                .beatmaps
-                .iter()
-                .filter(|bm| !bm.checksum.is_empty())
-                .filter_map(|bm| checksum::parse_hex(&bm.checksum))
-                .collect();
-
-            if !api_checksums.is_empty()
-                && api_checksums.iter().all(|cs| local_checksums.contains(cs))
-            {
-                trace!(
-                    beatmapset_id = beatmapset.id,
-                    "ID not found but all checksums exist locally, skipping"
-                );
-                continue;
-            }
-
-            if should_hide_failed_beatmapset(&settings, beatmapset.id) {
-                trace!(beatmapset_id = beatmapset.id, "skipping failed beatmapset");
-                continue;
-            }
-
-            trace!(
-                beatmapset_id = beatmapset.id,
-                "not installed, adding to candidates"
-            );
-            candidates_to_check.push((
-                CollectionBeatmapset {
-                    id: beatmapset.id,
-                    checksums: beatmapset
-                        .beatmaps
-                        .iter()
-                        .filter_map(|beatmap| checksum::parse_hex(&beatmap.checksum))
-                        .collect(),
-                    enrich_diff_id: beatmapset.beatmaps.first().map(|beatmap| beatmap.id),
-                },
-                collection_id,
-                collection.name.to_string(),
-            ));
-        }
-
-        fetched_collections.push(collection);
     }
+
+    let (candidates_to_check, hidden_failed_ids) =
+        scan_fetched_collections(&resolved, &local_set_ids, &local_checksums, &settings);
+    let fetched_collections: Vec<Collection> = resolved.into_iter().map(|(_, c)| c).collect();
 
     debug!(
         candidates = candidates_to_check.len(),
@@ -775,6 +880,7 @@ pub async fn fetch_missing_beatmapsets(
         collection_seen,
         collection_removed_counts,
         collections: fetched_collections,
+        hidden_failed_count: hidden_failed_ids.len(),
     })
 }
 
