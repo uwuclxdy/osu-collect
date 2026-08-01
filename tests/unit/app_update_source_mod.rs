@@ -863,15 +863,6 @@ fn preview_combines_missing_then_marked_for_highlighted_collection() {
     );
 }
 
-#[test]
-fn hide_missing_drops_ids_from_cache() {
-    let mut tab = seeded();
-    tab.hide_missing(&std::collections::HashSet::from([1, 3]));
-    assert_eq!(tab.total_new_count(), 1);
-    assert_eq!(tab.new_count_for(100), 1);
-    assert_eq!(tab.new_count_for(200), 0);
-}
-
 // ── scan CTA state machine ────────────────────────────────────────────────────
 
 #[test]

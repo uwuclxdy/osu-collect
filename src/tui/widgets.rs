@@ -1286,15 +1286,19 @@ fn button_spans(
     vec![focus_span(focused), Span::styled(pill, pill_style)]
 }
 
-/// Label + enabled state for a "download the checked sets" button (the search and
-/// update source forms): `download (N)` when `selected` sets are checked, a
-/// disabled bare `download` when none are. The count lives in the parens so the
-/// label stays terse; the running total is also on the browse status line.
-pub fn download_button_label(selected: usize) -> (String, bool) {
+/// Label for a "download the checked sets" button (the search and update source
+/// forms): `download (N)` when `selected` sets are checked, a bare `download`
+/// when none are. The count lives in the parens so the label stays terse; the
+/// running total is also on the browse status line.
+///
+/// Label only. Whether the button is pressable is `HomeTab::button_enabled`,
+/// which the `downloads to` hint reads too — a helper returning its own verdict
+/// beside it would be a second derivation for the two to drift apart on.
+pub fn download_button_label(selected: usize) -> String {
     if selected > 0 {
-        (format!("download ({selected})"), true)
+        format!("download ({selected})")
     } else {
-        ("download".to_string(), false)
+        "download".to_string()
     }
 }
 
@@ -1305,15 +1309,12 @@ pub fn download_button_label(selected: usize) -> (String, bool) {
 /// `GiB`) to match the nzbasic size line on the same form. A zero sum (nothing
 /// probed yet, or a route with no size cache) falls back to the plain label, so
 /// the update and collection sources — which pass no size — keep the bare label.
-pub fn download_button_label_with_size(selected: usize, known_bytes: u64) -> (String, bool) {
-    let (label, enabled) = download_button_label(selected);
+pub fn download_button_label_with_size(selected: usize, known_bytes: u64) -> String {
+    let label = download_button_label(selected);
     if known_bytes > 0 {
-        (
-            format!("{label} · ~{}", format_bytes(known_bytes, "B")),
-            enabled,
-        )
+        format!("{label} · ~{}", format_bytes(known_bytes, "B"))
     } else {
-        (label, enabled)
+        label
     }
 }
 

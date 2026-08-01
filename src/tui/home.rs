@@ -144,22 +144,17 @@ fn maybe_render_set_browse(
     }
 }
 
-/// The collection source's download-button label + enabled state. Reads
-/// `download all` (the whole resolved collection) until a proper nonempty subset
-/// is checked in browse&pick, then flips to `download (N)` (dispatched via
-/// the selective path in `dispatch_form_download`). Enabled state comes from
-/// [`HomeTab::button_enabled`] so it can't drift from the `s`-jump target.
-fn collection_download_button(form: &HomeTab) -> (String, bool) {
-    let enabled = form.button_enabled(HomeField::Download);
+/// The collection source's download-button label. Reads `download all` (the
+/// whole resolved collection) until a proper nonempty subset is checked in
+/// browse&pick, then flips to `download (N)` (dispatched via the selective path
+/// in `dispatch_form_download`).
+fn collection_download_label(form: &HomeTab) -> String {
     if form.collection_subset_picked() {
-        (
-            format!("download ({})", form.collection_browse.selected_count()),
-            enabled,
-        )
+        format!("download ({})", form.collection_browse.selected_count())
     } else {
         // `download all` (vs a source's bare `download`) names that this
         // dispatches the whole resolved collection, not a picked subset.
-        (LABEL_DOWNLOAD_ALL.to_string(), enabled)
+        LABEL_DOWNLOAD_ALL.to_string()
     }
 }
 
@@ -349,14 +344,20 @@ fn push_download_section(
 /// The shared download button that tails every source's form. The collection
 /// source's `view N maps` renders earlier, grouped with its URL field. Every
 /// source ends on the shared [`HomeField::Download`] button, labelled per source.
+///
+/// Only the LABEL is per source. Enabled state is [`HomeTab::button_enabled`]
+/// for all three, so the button, the `s`-jump target and the `downloads to`
+/// hint ([`HomeTab::planned_folder_name`]) cannot disagree about whether a press
+/// does anything — the label helpers deliberately return no second opinion.
 fn push_action_buttons(
     items: &mut widgets::FormItems<HomeField>,
     form: &HomeTab,
     focus: HomeField,
     primary: HomeField,
 ) {
-    let (download_label, download_enabled) = match form.source {
-        GetMapsSource::Collection => collection_download_button(form),
+    let download_enabled = form.button_enabled(HomeField::Download);
+    let download_label = match form.source {
+        GetMapsSource::Collection => collection_download_label(form),
         GetMapsSource::Update => widgets::download_button_label(form.update.selected_new_count()),
         // osu-routed results carry a nekoha size backfill, so the button reads
         // `download (N) · ~X`; the nzbasic route (and un-probed sets) sums to 0,

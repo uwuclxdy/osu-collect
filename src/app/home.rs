@@ -441,6 +441,21 @@ const PLACEHOLDER_COLLECTION: &str = "<collection>";
 /// Stand-in while no collection is checked on the update source. Keeps the
 /// `update-` prefix visible so the shape of the destination still reads.
 const PLACEHOLDER_UPDATE: &str = "update-<collection>";
+/// Stand-in while the find source has nothing to dispatch.
+///
+/// Deliberately drops the `search-`/`filter-` prefix, which is a CHOICE and not
+/// a limit: `FindSource::run_backend` is total, so the prefix resolves in every
+/// state and `search-<results>` was available. The trade taken is that a dead
+/// hint should read as least destination-shaped, and `search-<results>` reads
+/// closer to a real directory than `<results>` does. The prefix is also a
+/// prediction that can still change — it tracks live criteria, and the user has
+/// to run a fetch and check sets before anything dispatches — where
+/// [`PLACEHOLDER_UPDATE`]'s prefix is invariant and no edit can make it wrong.
+/// That asymmetry is why one keeps its prefix and the other does not.
+///
+/// `results` is the same word `FindSource::run_label` falls back to for an
+/// unnameable run.
+const PLACEHOLDER_FIND: &str = "<results>";
 
 impl HomeField {
     pub fn is_text_input(self) -> bool {
@@ -937,9 +952,13 @@ impl HomeTab {
     /// names the collection the field parses to. It is the only writer that can
     /// break the pairing and it repairs it here, while the one production write
     /// of the snapshot ([`adopt_collection`], from the resolve handler) is
-    /// guarded on the same predicate — so no reachable state pairs a snapshot
-    /// with a field naming something else, and a test fixture that builds one is
-    /// testing a state the app cannot produce.
+    /// guarded on a generation stamp that every edit to the field bumps — so no
+    /// reachable state pairs a snapshot with a field naming something else, and a
+    /// test fixture that builds one is testing a state the app cannot produce.
+    ///
+    /// Two devices, not one predicate: a reader that needs the pairing still
+    /// checks it ([`collection_resolve_is_current`](Self::collection_resolve_is_current)),
+    /// rather than resting on the counter and this settle agreeing forever.
     ///
     /// The browse's rows and their checkmarks are deliberately NOT dropped. They
     /// belong to [`collection_browse_id`](Self::collection_browse_id), which this
@@ -988,10 +1007,23 @@ impl HomeTab {
     /// call the same namer the matching `prepare_*` path uses; the collection arms
     /// replay a name the resolve already derived from `Collection::folder_name`.
     ///
-    /// A placeholder stands in wherever the name is not knowable yet: the
-    /// collection source until a fetch for the id currently in the field lands,
-    /// the update source until a collection is checked.
+    /// A [placeholder](Self::folder_placeholder) stands in whenever no press
+    /// would create a folder at all, which is exactly
+    /// `button_enabled(Download)` — the same expression the button renders its
+    /// own enabled state from, read here rather than re-derived, so a concrete
+    /// path in the hint means a press would land there. Deriving the condition
+    /// separately is what made the hint wrong in the first place: it named a
+    /// find run's folder with nothing picked, and an update run's with every
+    /// checked collection already up to date.
+    ///
+    /// The gate does not subsume the per-arm fallbacks below — an enabled button
+    /// can still outrun the name. A collection with text in the field and a
+    /// mirror configured is dispatchable before its fetch lands, and that run
+    /// names its folder from the payload nobody has yet.
     pub fn planned_folder_name(&self) -> String {
+        if !self.button_enabled(HomeField::Download) {
+            return self.folder_placeholder().to_string();
+        }
         match self.source {
             GetMapsSource::Collection if self.collection_subset_picked() => self
                 .collection_browse_id
@@ -1020,6 +1052,24 @@ impl HomeTab {
                     selective_folder_name(&ids)
                 }
             }
+        }
+    }
+
+    /// The active source's stand-in for a folder name, shown wherever naming one
+    /// would advertise a directory no press creates.
+    ///
+    /// How much of the destination each one keeps is a per-source judgement, not
+    /// a rule derived from what is computable — every constant's own doc states
+    /// what it trades. Update keeps its invariant `update-`; find drops a prefix
+    /// it could show; collection keeps nothing, because its `<name>-<id>` needs
+    /// the fetch for `<name>` and holds `<id>` in only SOME of the states that
+    /// land here (parseable when the button is dead for want of a mirror, absent
+    /// when the field is empty), which one `&'static str` cannot express.
+    fn folder_placeholder(&self) -> &'static str {
+        match self.source {
+            GetMapsSource::Collection => PLACEHOLDER_COLLECTION,
+            GetMapsSource::Update => PLACEHOLDER_UPDATE,
+            GetMapsSource::Find => PLACEHOLDER_FIND,
         }
     }
 

@@ -110,10 +110,11 @@ fn home_directory_tooltip_shows_resolved_path_only_when_focused() {
     // Before a collection resolves, the tooltip shows the base dir plus a
     // per-collection folder placeholder.
     let output = render_app(&app, 80, 24);
+    // Anchored on the separator throughout this file: `update-<collection>` also
+    // ENDS in `<collection>`, so a bare substring cannot tell the collection
+    // source's placeholder from the update source's.
     assert!(
-        output.contains("downloads to")
-            && output.contains("osu-collect-tooltip-test")
-            && output.contains("<collection>"),
+        output.contains("downloads to") && output.contains("osu-collect-tooltip-test/<collection>"),
         "unresolved tooltip must show the base path with a per-collection placeholder: {output}"
     );
 
@@ -138,21 +139,94 @@ fn home_directory_tooltip_shows_resolved_path_only_when_focused() {
     );
 }
 
+/// One not-installed missing set, built the way `missing_from_candidate` (the
+/// scan's sole writer of these two flags) builds a set the user never deleted:
+/// included in the run, with no checksums captured.
+fn missing_set(id: u32, collection_id: u32) -> crate::app::update_source::MissingBeatmapset {
+    use crate::app::update_source::{MissingBeatmapset, MissingStatus};
+
+    MissingBeatmapset {
+        id,
+        status: MissingStatus::NotInstalled,
+        collection_id,
+        collection_name: format!("col {collection_id}"),
+        included: true,
+        previously_deleted: false,
+        checksums: Box::new([]),
+        enrich_diff_id: None,
+    }
+}
+
+/// The foreground color the LAST run of `label` in the frame is drawn in, which
+/// reads a button's enabled state straight off the render: a disabled pill is
+/// `text_faint`, an enabled one never is. Where the label alone cannot say
+/// (`download all` reads the same either way) this is the only tell.
+///
+/// Last, not first, because the shared download button tails every form while
+/// `download directory` and the `downloads to` hint sit above it sharing the
+/// prefix.
+///
+/// **Only sound while focus is off `HomeField::Download`.** The footer renders
+/// `↵ download` (`HINT_ENTER_DOWNLOAD`, `src/tui/footer.rs`) BELOW the panel
+/// when that button is focused, so a caller focusing it would read the footer
+/// hint's style instead of the pill's — and a faint footer would satisfy an
+/// `assert_eq!(…, text_faint())` for entirely the wrong reason.
+///
+/// Matches within one row only: a window spanning the row-major buffer's row
+/// boundary is two fragments that never rendered adjacently. `None` when the
+/// label is not in the frame, which fails an `assert_eq!` against a color rather
+/// than passing vacuously.
+fn last_label_fg(buf: &ratatui::buffer::Buffer, label: &str) -> Option<Color> {
+    let width = usize::from(buf.area.width);
+    let needle: Vec<String> = label.chars().map(|ch| ch.to_string()).collect();
+    // `chunks_exact` and `windows` both panic on a zero argument. No current
+    // caller can reach either, but "not in the frame" is the honest answer for
+    // both and keeps a reuse from turning a typo into a panic.
+    if width == 0 || needle.is_empty() {
+        return None;
+    }
+    buf.content
+        .chunks_exact(width)
+        .enumerate()
+        .rev()
+        .find_map(|(row, cells)| {
+            cells
+                .windows(needle.len())
+                .rposition(|window| {
+                    window
+                        .iter()
+                        .zip(&needle)
+                        .all(|(cell, ch)| cell.symbol() == ch.as_str())
+                })
+                .map(|col| row * width + col)
+        })
+        .and_then(|start| buf.content[start].style().fg)
+}
+
 #[test]
 fn home_directory_tooltip_tracks_the_per_source_run_folder() {
-    use crate::app::{GetMapsSource, HomeField};
+    use crate::app::{BrowseRow, GetMapsSource, HomeField};
     use crate::osu_db::LocalCollection;
 
     let mut app = App::new(Config::default());
     app.home.focus = HomeField::Directory;
     app.home.directory.set_value("~/osu-collect-tooltip-test");
 
-    // find, osu route: the run lands in `search-<folder_tag>`.
+    // find, osu route: the run lands in `search-<folder_tag>`. Checked results,
+    // or the button is dead and the hint names no folder at all (below).
     app.home.source = GetMapsSource::Find;
     app.home.find.query.set_value("tekno");
+    app.home.find.browse.set_rows(
+        vec![
+            BrowseRow { id: 1, meta: None },
+            BrowseRow { id: 2, meta: None },
+        ],
+        &app.home.meta_cache,
+    );
+    app.home.find.browse.set_all_selected(true);
     let output = render_app(&app, 80, 24);
     assert!(
-        output.contains("search-tekno") && !output.contains("<collection>"),
+        output.contains("search-tekno") && !output.contains("<results>"),
         "find tooltip must show the search run folder: {output}"
     );
 
@@ -172,10 +246,229 @@ fn home_directory_tooltip_tracks_the_per_source_run_folder() {
         name: "Farm Maps - 12345".to_string(),
         beatmap_checksums: vec![Default::default(); 3].into_boxed_slice(),
     }]);
+    app.home
+        .update
+        .set_missing_beatmaps(vec![missing_set(7, 12345)], &app.home.meta_cache);
     let output = render_app(&app, 80, 24);
     assert!(
         output.contains("update-12345"),
         "update tooltip must show the selective run folder: {output}"
+    );
+}
+
+/// The find hint named a concrete `search-<tag>` folder from the criteria alone,
+/// while the button beside it was dead and `request_find_download` would refuse
+/// the press. Both readings ride in one frame here, which is the only place the
+/// disagreement was ever visible.
+#[test]
+fn find_directory_hint_names_no_folder_until_a_pick_makes_it_live() {
+    use crate::app::{BrowseRow, GetMapsSource, HomeField};
+
+    let mut app = App::new(Config::default());
+    app.home.focus = HomeField::Directory;
+    app.home.directory.set_value("~/osu-collect-tooltip-test");
+    app.home.source = GetMapsSource::Find;
+    app.home.find.query.set_value("tekno");
+
+    // Criteria typed, nothing fetched: a run would have no ids to enqueue.
+    let output = render_app(&app, 80, 44);
+    assert!(
+        output.contains("<results>") && !output.contains("search-tekno"),
+        "a find source with nothing picked must name no run folder: {output}"
+    );
+
+    // Results landed the way `handle_home_search_event` lands them — still
+    // nothing CHECKED, which is what the button counts.
+    app.home.find.browse.set_rows(
+        vec![
+            BrowseRow { id: 1, meta: None },
+            BrowseRow { id: 2, meta: None },
+        ],
+        &app.home.meta_cache,
+    );
+    app.home
+        .find
+        .note_results_backend(crate::app::FindBackend::Osu);
+    app.home.find.mark_results_current();
+    let output = render_app(&app, 80, 44);
+    assert!(
+        output.contains("<results>") && !output.contains("search-tekno"),
+        "loaded-but-unchecked results still dispatch nothing: {output}"
+    );
+    assert_eq!(
+        last_label_fg(&render_buffer(&app, 80, 44), "download"),
+        Some(super::text_faint()),
+        "precondition — the button in the same frame is dead: {output}"
+    );
+
+    // ONE checked (the browse's `space` on the cursor row): the boundary the
+    // whole lane routes through is `selected_count() > 0`, and it only bites at
+    // exactly one. Without this leg, mutating that `> 0` to `> 1` survives the
+    // suite.
+    app.home.find.browse.toggle_selected();
+    assert_eq!(
+        app.home.find.browse.selected_count(),
+        1,
+        "precondition — sitting on the boundary, not past it"
+    );
+    let output = render_app(&app, 80, 44);
+    assert!(
+        output.contains("search-tekno") && !output.contains("<results>"),
+        "one checked set is already a live run: {output}"
+    );
+    assert!(
+        output.contains("download (1)"),
+        "and the button in the same frame agrees it will run: {output}"
+    );
+
+    // Both checked (the browse's `a`).
+    app.home.find.browse.set_all_selected(true);
+    let output = render_app(&app, 80, 44);
+    assert!(
+        output.contains("search-tekno") && !output.contains("<results>"),
+        "a live find button must name the folder its press creates: {output}"
+    );
+    assert!(
+        output.contains("download (2)"),
+        "and the button in the same frame agrees it will run: {output}"
+    );
+}
+
+/// The update hint named `update-<id>` for every CHECKED collection while the
+/// button counted missing SETS, so a collection with nothing left to fetch
+/// advertised a directory `request_selective_download` refuses to create.
+#[test]
+fn update_directory_hint_names_no_folder_until_a_collection_has_something_to_fetch() {
+    use crate::app::{GetMapsSource, HomeField};
+    use crate::osu_db::LocalCollection;
+
+    let mut app = App::new(Config::default());
+    app.home.focus = HomeField::Directory;
+    app.home.directory.set_value("~/osu-collect-tooltip-test");
+    app.home.source = GetMapsSource::Update;
+
+    // The scan's first half: collections listed and checked by default, their
+    // missing sets not back yet.
+    app.home.update.set_collections(vec![LocalCollection {
+        name: "Farm Maps - 12345".to_string(),
+        beatmap_checksums: vec![Default::default(); 3].into_boxed_slice(),
+    }]);
+    assert_eq!(
+        app.home.update.selected_collection_ids(),
+        vec![12345],
+        "precondition — the collection is checked, which is what used to name the folder"
+    );
+    let output = render_app(&app, 80, 32);
+    assert!(
+        output.contains("update-<collection>") && !output.contains("update-12345"),
+        "a checked collection with nothing to fetch must name no run folder: {output}"
+    );
+    assert_eq!(
+        last_label_fg(&render_buffer(&app, 80, 32), "download"),
+        Some(super::text_faint()),
+        "precondition — the button in the same frame is dead: {output}"
+    );
+
+    // The rest of the scan lands one missing set for it.
+    app.home
+        .update
+        .set_missing_beatmaps(vec![missing_set(7, 12345)], &app.home.meta_cache);
+    let output = render_app(&app, 80, 32);
+    assert!(
+        output.contains("update-12345") && !output.contains("update-<collection>"),
+        "a live update button must name the folder its press creates: {output}"
+    );
+    assert!(
+        output.contains("download (1)"),
+        "and the button in the same frame agrees it will run: {output}"
+    );
+
+    // `mark installed` (`i`/`I` → `App::mark_installed` → this) drops the last
+    // missing set without unchecking the collection, so the checked-collection
+    // reading outlives the run again.
+    app.home
+        .update
+        .mark_installed_sets(&std::iter::once(7).collect());
+    assert_eq!(
+        app.home.update.selected_collection_ids(),
+        vec![12345],
+        "precondition — marking installed leaves the collection checked"
+    );
+    let output = render_app(&app, 80, 32);
+    assert!(
+        output.contains("update-<collection>") && !output.contains("update-12345"),
+        "a collection emptied by `mark installed` must stop naming its folder: {output}"
+    );
+}
+
+/// The collection source's own dead-button state: a landed resolve with every
+/// mirror turned off. The label reads `download all` either way, so the pill's
+/// own color is what says the press does nothing — taken from the same frame as
+/// the hint.
+///
+/// **Pins the collection arm only, not a uniform rule.** Zero mirrors disables
+/// just this source's button (`button_enabled` → `can_download`); the find and
+/// update arms stay lit with no mirror configured and their hints still name a
+/// concrete folder, while `request_find_download` / `request_selective_download`
+/// refuse the press. That is `docs/todo.md` § 5's first item, another lane's —
+/// routing those two arms through the same mirror check fixes button, `s`-jump
+/// and hint at once, because all three already read this one predicate.
+#[test]
+fn collection_directory_hint_names_no_folder_with_no_mirror_to_serve_it() {
+    use crate::app::HomeField;
+    use crate::config::MirrorConfig;
+
+    let mut app = App::new(Config::default());
+    app.home.focus = HomeField::Directory;
+    app.home.directory.set_value("~/osu-collect-tooltip-test");
+    app.home.collection.set_value("42");
+    app.home.set_resolved_collection(42, vec![10, 20]);
+    app.home.resolved_folder_name = Some("Farm-42".to_string());
+
+    let buf = render_buffer(&app, 80, 24);
+    let live_fg = last_label_fg(&buf, "download all");
+    assert!(live_fg.is_some(), "precondition — the button is in frame");
+    assert_ne!(
+        live_fg,
+        Some(super::text_faint()),
+        "precondition — the button is pressable while a mirror is enabled"
+    );
+    let output = render_app(&app, 80, 24);
+    assert!(
+        output.contains("Farm-42"),
+        "a resolved collection with a mirror names its folder: {output}"
+    );
+
+    // Every mirror off: `can_download` fails, so the press only warns.
+    let mirrors = MirrorConfig {
+        nerinyan: false,
+        osu_direct: false,
+        sayobot: false,
+        nekoha: false,
+        beatconnect: false,
+        osudl: false,
+        catboy: false,
+        hinamizawa: false,
+        osu_official: false,
+        nzbasic: false,
+        ..Default::default()
+    };
+    app.home.sync_mirrors_from_config(&mirrors);
+    assert_eq!(app.home.mirror_count(), 0, "precondition — no mirror left");
+
+    let buf = render_buffer(&app, 80, 24);
+    assert_eq!(
+        last_label_fg(&buf, "download all"),
+        Some(super::text_faint()),
+        "precondition — the button went dead in this frame"
+    );
+    let output = render_app(&app, 80, 24);
+    // Anchored on the separator: `update-<collection>` also ENDS in
+    // `<collection>`, so a bare substring cannot tell this source's placeholder
+    // from the update source's.
+    assert!(
+        output.contains("osu-collect-tooltip-test/<collection>") && !output.contains("Farm-42"),
+        "a collection no mirror can serve must name no run folder: {output}"
     );
 }
 
@@ -217,7 +510,7 @@ fn home_directory_tooltip_drops_a_resolve_the_field_moved_off() {
     );
     let output = render_app(&app, 80, 24);
     assert!(
-        output.contains("<collection>") && !output.contains("Farm-1234"),
+        output.contains("osu-collect-tooltip-test/<collection>") && !output.contains("Farm-1234"),
         "a resolve the field has moved off must not name the destination: {output}"
     );
 
@@ -279,6 +572,12 @@ fn home_directory_tooltip_names_a_multi_collection_update_run() {
             beatmap_checksums: vec![Default::default(); 2].into_boxed_slice(),
         },
     ]);
+    // Both collections need something to fetch, or the run they name never
+    // starts and the hint holds the placeholder above.
+    app.home.update.set_missing_beatmaps(
+        vec![missing_set(7, 12345), missing_set(8, 67890)],
+        &app.home.meta_cache,
+    );
     let output = render_app(&app, 80, 24);
     assert!(
         output.contains("update-2-collections"),

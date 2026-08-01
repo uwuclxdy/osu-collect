@@ -690,35 +690,35 @@ fn glyph_fill_fallback_above_max_width() {
 #[test]
 fn download_size_label_zero_known_is_plain() {
     // Nothing probed yet → the bare `download (N)`, no `~` suffix.
-    assert_eq!(
-        download_button_label_with_size(3, 0),
-        ("download (3)".to_string(), true)
-    );
+    assert_eq!(download_button_label_with_size(3, 0), "download (3)");
 }
 
 #[test]
-fn download_size_label_none_selected_stays_disabled_and_plain() {
-    // No picks → disabled bare `download`, matching `download_button_label`.
-    assert_eq!(
-        download_button_label_with_size(0, 0),
-        ("download".to_string(), false)
-    );
+fn download_size_label_none_selected_drops_the_count() {
+    // No picks → the bare `download`, matching `download_button_label`. Whether
+    // the button is pressable is not this helper's to say (`button_enabled`).
+    assert_eq!(download_button_label_with_size(0, 0), "download");
 }
 
 #[test]
 fn download_size_label_renders_mib_below_a_gib() {
-    let (label, enabled) = download_button_label_with_size(2, 512 * 1024 * 1024);
-    assert!(enabled);
-    assert_eq!(label, "download (2) · ~512.0 MiB");
+    assert_eq!(
+        download_button_label_with_size(2, 512 * 1024 * 1024),
+        "download (2) · ~512.0 MiB"
+    );
 }
 
 #[test]
 fn download_size_label_renders_gib_at_the_boundary() {
     // Exactly 1 GiB crosses into GiB; one byte under stays MiB (the MB/GB edge).
-    let (gib, _) = download_button_label_with_size(5, 1024 * 1024 * 1024);
-    assert_eq!(gib, "download (5) · ~1.00 GiB");
-    let (mib, _) = download_button_label_with_size(5, 1024 * 1024 * 1024 - 1);
-    assert_eq!(mib, "download (5) · ~1024.0 MiB");
+    assert_eq!(
+        download_button_label_with_size(5, 1024 * 1024 * 1024),
+        "download (5) · ~1.00 GiB"
+    );
+    assert_eq!(
+        download_button_label_with_size(5, 1024 * 1024 * 1024 - 1),
+        "download (5) · ~1024.0 MiB"
+    );
 }
 
 /// One distinguishable row per index, so a buffer comparison catches a window

@@ -345,8 +345,11 @@ fn retyping_the_collection_id_leaves_no_count_or_folder_from_the_old_one() {
             "the frame still carries {stale} from a collection the field left: {after}"
         );
     }
+    // Anchored on the separator: `update-<collection>` also ENDS in
+    // `<collection>`, so a bare substring cannot tell the collection source's
+    // placeholder from the update source's.
     assert!(
-        after.contains("<collection>"),
+        after.contains("/tmp/oc/<collection>"),
         "the folder falls back to its placeholder until 421 resolves: {after}"
     );
 }

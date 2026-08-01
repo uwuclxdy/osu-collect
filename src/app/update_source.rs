@@ -1131,15 +1131,6 @@ impl UpdateSource {
         self.seed_enrichment(cache);
     }
 
-    /// Drop the given set ids from the cached missing list (the "mark installed"
-    /// action) and re-home the preview cursor.
-    pub fn hide_missing(&mut self, ids: &HashSet<u32>) {
-        self.selection
-            .cached_missing_sets
-            .retain(|set| !ids.contains(&set.id));
-        self.selection.preview_cursor = Some(0);
-    }
-
     /// Reset the scan for a fresh library after the app-global client switch
     /// (the client kind + path change lives on [`LibraryState::switch_client`]).
     /// Clears the prior client's scan data but does NOT auto-scan — the user
