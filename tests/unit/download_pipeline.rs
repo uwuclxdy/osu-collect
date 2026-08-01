@@ -1,15 +1,22 @@
-use super::try_remove_empty_output_dir;
+use super::{try_remove_empty_output_dir, unsatisfied_targets, verified_targets};
 use crate::app::collection::FailureReason;
 use crate::core::collection::{test_beatmapset, test_collection};
 use crate::download::collection_db::create_selective_collection_db;
 use crate::download::events::{Tally, translate_event};
-use crate::download::{BeatmapStage, DownloadEvent, SelectiveDownloadCollection};
+use crate::download::session::{DownloadSession, PrepareParams, PrepareTarget};
+use crate::download::{
+    ActiveDownloadRegistry, ArchiveValidation, BeatmapStage, DownloadConfig, DownloadEvent,
+    SelectiveDownloadCollection, selective_folder_name,
+};
+use crate::osu_db::OsuClient;
 use osu_downloader::{Event as LibEvent, MirrorKind, MirrorRef, Skip, Status};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use tempfile::tempdir;
+use tokio::sync::watch;
 
 fn make_selective(id: u32, name: &str, beatmapset_ids: Vec<u32>) -> SelectiveDownloadCollection {
     SelectiveDownloadCollection {
@@ -425,6 +432,383 @@ fn non_rate_limited_status_has_no_cooldown_until() {
         panic!("expected BeatmapStatus");
     };
     assert!(cooldown_until.is_none());
+}
+
+// ── selective runs honor "skip already imported" ─────────────────────────────
+
+const COLLECTION_ID: u32 = 1;
+/// The ids the user checked in the browse — a part-picked collection.
+const PICKED: [u32; 5] = [10, 20, 30, 40, 50];
+
+/// Drive the real `prepare` over a part-picked collection. `owned` is what the
+/// osu! library already holds (what `resolve_owned_ids` returns for a run with
+/// the toggle on); every `on_disk` id gets a stub archive in the run's output
+/// dir first, so `initial_satisfied` is fed by precheck *and* the owned fold
+/// rather than one source that could mask the other going missing.
+async fn prepare_selective_run(
+    picked: &[u32],
+    owned: HashSet<u32>,
+    on_disk: &[u32],
+    base_dir: &Path,
+) -> (DownloadSession, Vec<DownloadEvent>) {
+    let output_dir = base_dir.join(selective_folder_name(&[COLLECTION_ID]));
+    std::fs::create_dir_all(&output_dir).expect("output dir");
+    for id in on_disk {
+        std::fs::write(output_dir.join(format!("{id}.osz")), b"stub archive bytes")
+            .expect("existing archive");
+    }
+
+    let registry = ActiveDownloadRegistry::new();
+    let (_cancel_tx, cancel_rx) = watch::channel(false);
+    let config = DownloadConfig {
+        directory: base_dir.to_string_lossy().into_owned(),
+        mirrors: Vec::new(),
+        concurrent: 1,
+        archive_validation: ArchiveValidation::Off,
+        auto_skip_rate_limited: false,
+        rate_limit_skip_secs: 60,
+    };
+    let payload = test_collection(
+        COLLECTION_ID,
+        picked
+            .iter()
+            .map(|&id| test_beatmapset(id, &["hash"]))
+            .collect(),
+    );
+    let events = Mutex::new(Vec::new());
+    let emit = |event: DownloadEvent| events.lock().unwrap().push(event);
+
+    let session = DownloadSession::prepare(PrepareParams {
+        id: 7,
+        cancel_rx,
+        config: &config,
+        registry: &registry,
+        emit: &emit,
+        target: PrepareTarget::Selective {
+            collection_ids: &[COLLECTION_ID],
+            collections: vec![SelectiveDownloadCollection {
+                id: COLLECTION_ID,
+                name: String::new(),
+                beatmapset_ids: picked.to_vec(),
+            }],
+            beatmapset_ids: picked,
+            // Prefetched, so the resolve never reaches osu!collector.
+            prefetched: HashMap::from([(COLLECTION_ID, payload)]),
+        },
+        overwrite: false,
+        owned_ids: owned,
+    })
+    .await
+    .expect("prepare must succeed")
+    .expect("prepare must not abort");
+
+    (session, events.into_inner().unwrap())
+}
+
+/// The `N queued` figure on the run page's tally line.
+fn queued(events: &[DownloadEvent]) -> usize {
+    events
+        .iter()
+        .find_map(|event| match event {
+            DownloadEvent::DownloadTarget { remaining, .. } => Some(*remaining),
+            _ => None,
+        })
+        .expect("prepare must announce DownloadTarget")
+}
+
+/// A part-picked collection half-present in the osu! library pre-skips the owned
+/// half, the way the whole-collection and raw-ids arms already do — the toggle
+/// no longer changes meaning because one map is unchecked.
+#[tokio::test]
+async fn selective_run_pre_skips_library_owned_sets() {
+    let dir = tempdir().unwrap();
+    let (session, events) =
+        prepare_selective_run(&PICKED, HashSet::from([20, 40]), &[50], dir.path()).await;
+
+    assert_eq!(session.pending_ids, vec![10, 30]);
+    assert_eq!(session.skipped_owned, 2);
+    assert_eq!(session.skipped_existing, 1);
+    // Owned sets join the on-disk one in `satisfied`: they reach the selective
+    // `collection.db` and count toward the snapshot gate without being fetched.
+    assert_eq!(session.initial_satisfied, HashSet::from([20, 40, 50]));
+    assert_eq!(queued(&events), 2);
+}
+
+/// Positive control: the same fixture with the owned set empty — the one
+/// dimension that differs — enqueues every picked id not already on disk. A
+/// green here against a red above isolates the pre-skip from the fixture.
+#[tokio::test]
+async fn selective_run_without_owned_sets_enqueues_every_pick() {
+    let dir = tempdir().unwrap();
+    let (session, events) = prepare_selective_run(&PICKED, HashSet::new(), &[50], dir.path()).await;
+
+    assert_eq!(session.pending_ids, vec![10, 20, 30, 40]);
+    assert_eq!(session.skipped_owned, 0);
+    assert_eq!(session.skipped_existing, 1);
+    assert_eq!(session.initial_satisfied, HashSet::from([50]));
+    assert_eq!(queued(&events), 4);
+}
+
+/// `30` is neither owned, on disk, nor downloaded, so the snapshot gate must
+/// still name it. Miss this and the run writes a snapshot claiming the
+/// collection is in hand, and the next scan stops reporting `30` as missing.
+#[tokio::test]
+async fn snapshot_gate_reports_the_target_a_run_left_behind() {
+    let dir = tempdir().unwrap();
+    let (session, _events) =
+        prepare_selective_run(&PICKED, HashSet::from([20, 40]), &[50], dir.path()).await;
+    // Of the two it enqueued the run landed `10`; `30` did not arrive.
+    let (tally, _) = drive_translate(vec![completed(10)]);
+
+    let verified = verified_targets(&session.initial_satisfied, &tally);
+    assert_eq!(verified, HashSet::from([10, 20, 40, 50]));
+    assert_eq!(
+        unsatisfied_targets(&session.beatmapset_ids, &verified),
+        vec![30]
+    );
+}
+
+/// Same fixture and same owned set — only what the run downloaded differs. Every
+/// target is now in the user's hands by one of the three routes (library-owned,
+/// already on disk, downloaded now), so the gate clears and snapshots persist.
+#[tokio::test]
+async fn snapshot_gate_clears_once_every_target_is_in_hand() {
+    let dir = tempdir().unwrap();
+    let (session, _events) =
+        prepare_selective_run(&PICKED, HashSet::from([20, 40]), &[50], dir.path()).await;
+    let (tally, _) = drive_translate(vec![completed(10), completed(30)]);
+
+    let verified = verified_targets(&session.initial_satisfied, &tally);
+    assert_eq!(verified, HashSet::from([10, 20, 30, 40, 50]));
+    assert_eq!(
+        unsatisfied_targets(&session.beatmapset_ids, &verified),
+        Vec::<u32>::new()
+    );
+}
+
+// ── run_selective end to end: the owned-id join and the snapshot gate ────────
+
+/// Seed the library cache so `resolve_owned_ids` returns `owned` without parsing
+/// a real osu! database: `owned_ids_cached_with` serves a hit purely on the db
+/// file's path + mtime matching the cached entry, so a stub `osu!.db` plus a
+/// matching `library-cache.json` is enough. Returns the install dir to hand the
+/// request and the cache path to point `OSU_COLLECT_LIBRARY_CACHE` at.
+fn seed_owned_library(base: &Path, owned: &[u32]) -> (PathBuf, PathBuf) {
+    let install_dir = base.join("osu-install");
+    std::fs::create_dir_all(&install_dir).expect("install dir");
+    let db_path = crate::app::library_cache::db_file_path(OsuClient::Stable, &install_dir);
+    std::fs::write(&db_path, b"stub osu!.db").expect("stub db");
+
+    let mtime_ns = std::fs::metadata(&db_path)
+        .and_then(|meta| meta.modified())
+        .expect("stub db mtime")
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("mtime after epoch")
+        .as_nanos();
+    let cache_path = base.join("library-cache.json");
+    let cache = crate::app::library_cache::LibraryCacheFile {
+        schema_version: 1,
+        db_path: db_path.to_string_lossy().into_owned(),
+        mtime_ns,
+        beatmapset_ids: owned.to_vec(),
+    };
+    std::fs::write(
+        &cache_path,
+        serde_json::to_string(&cache).expect("serialize cache"),
+    )
+    .expect("write cache");
+
+    (install_dir, cache_path)
+}
+
+/// A whole `run_selective` over a part-picked collection whose every target is
+/// already in the osu! library. Every id owned means `pending_ids` is empty, so
+/// `run_pipeline_core` returns before it builds a `Downloader` or spawns the
+/// size probe — the run is hermetic, no socket is opened.
+///
+/// This is the only pin on the `resolve_owned_ids` → `PrepareParams.owned_ids`
+/// join. It also covers the snapshot gate's satisfied arm: with nothing left
+/// behind, the snapshot file must appear on disk.
+#[tokio::test]
+async fn selective_run_pre_skips_owned_and_then_persists_its_snapshot() {
+    let dir = tempdir().unwrap();
+    let (install_dir, cache_path) = seed_owned_library(dir.path(), &[10, 20]);
+    let failed_maps = dir.path().join("failed-beatmapsets.json");
+    let snapshot_dir = dir.path().join("snapshots");
+    std::fs::create_dir_all(&snapshot_dir).expect("snapshot dir");
+
+    // One guard, two keys: the global env lock is not reentrant, so two `set`
+    // guards would deadlock rather than nest.
+    let _env = crate::test_env::TempEnvVar::set_all([
+        (
+            crate::app::library_cache::LIBRARY_CACHE_ENV_PATH,
+            cache_path.to_str().unwrap(),
+        ),
+        (
+            crate::app::failed_maps::FAILED_MAPS_ENV_PATH,
+            failed_maps.to_str().unwrap(),
+        ),
+    ]);
+
+    let events = run_selective_fixture(&install_dir, dir.path(), Some(snapshot_dir.clone())).await;
+
+    assert_eq!(
+        skipped_imported(&events),
+        Some(2),
+        "both targets are library-owned, so the run must pre-skip both"
+    );
+    assert!(
+        snapshot_dir.join("collection-1.json").exists(),
+        "every target is in hand, so the run must persist its snapshot"
+    );
+}
+
+/// Pull the `SkippedImported` count out of a run's events.
+fn skipped_imported(events: &[DownloadEvent]) -> Option<usize> {
+    events.iter().find_map(|event| match event {
+        DownloadEvent::SkippedImported { count, .. } => Some(*count),
+        _ => None,
+    })
+}
+
+/// Drive the real `run_selective` for collection 1 over picks `[10, 20]`.
+/// The mirror template is never contacted (nothing is left to download); it
+/// exists only because `run_pipeline_core` rejects an empty mirror list before
+/// it reaches the fully-satisfied early return.
+async fn run_selective_fixture(
+    install_dir: &Path,
+    base_dir: &Path,
+    snapshot_dir: Option<PathBuf>,
+) -> Vec<DownloadEvent> {
+    let config = DownloadConfig {
+        directory: base_dir.to_string_lossy().into_owned(),
+        mirrors: vec![
+            osu_downloader::Mirror::custom("http://127.0.0.1:1/{id}").expect("custom mirror"),
+        ],
+        concurrent: 1,
+        archive_validation: ArchiveValidation::Off,
+        auto_skip_rate_limited: false,
+        rate_limit_skip_secs: 60,
+    };
+    let request = crate::download::SelectiveDownloadRequest {
+        collection_ids: vec![COLLECTION_ID],
+        beatmapset_ids: vec![10, 20],
+        collections: vec![SelectiveDownloadCollection {
+            id: COLLECTION_ID,
+            name: String::new(),
+            beatmapset_ids: vec![10, 20],
+        }],
+        config,
+        snapshot_dir,
+        snapshots: vec![crate::app::snapshots::CollectionSnapshotFile {
+            collection_id: COLLECTION_ID.to_string(),
+            name: "alpha".to_string(),
+            last_run_at: "2026-08-01T00:00:00Z".to_string(),
+            snapshot: crate::app::snapshots::CollectionSnapshot::default(),
+            version: 1,
+        }],
+        skip_already_imported: true,
+        osu_client: OsuClient::Stable,
+        osu_path: install_dir.to_string_lossy().into_owned(),
+        prefetched: HashMap::from([(
+            COLLECTION_ID,
+            test_collection(
+                COLLECTION_ID,
+                vec![
+                    test_beatmapset(10, &["hash"]),
+                    test_beatmapset(20, &["hash"]),
+                ],
+            ),
+        )]),
+    };
+
+    let (_cancel_tx, cancel_rx) = watch::channel(false);
+    let (_defer_tx, defer_rx) = watch::channel(0u64);
+    let (_skip_tx, skip_rx) = watch::channel(0u64);
+    let events: Arc<Mutex<Vec<DownloadEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&events);
+    let emit: Arc<dyn Fn(DownloadEvent) + Send + Sync> =
+        Arc::new(move |event| sink.lock().unwrap().push(event));
+
+    // Bounded on purpose. At HEAD every target is owned, so `pending_ids` is
+    // empty and this returns in milliseconds without opening a socket. Break the
+    // owned-id join and the same run instead builds a `Downloader` and spawns the
+    // nekoha size probe, which retries and stalls for minutes — a hang that reads
+    // as an infrastructure problem rather than as this assertion failing. The
+    // timeout turns that back into a loud, fast red.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        super::run_selective(7, request, cancel_rx, defer_rx, skip_rx, emit),
+    )
+    .await
+    .expect("a fully-owned selective run must not reach the network")
+    .expect("a fully-owned selective run must succeed");
+
+    events.lock().unwrap().clone()
+}
+
+/// The gate's unsatisfied arm, pinned on the file it does or does not write.
+///
+/// Driven here rather than through `run_selective` because a gate test must
+/// make no outbound request: an unsatisfied target is by definition still
+/// pending, and a non-empty `pending_ids` spawns `fetch_collection_sizes`
+/// detached, which with `known_sizes` empty for a Selective target fires a real
+/// nekoha request that outlives the test. Every network-touching test in this
+/// repo is `#[ignore]`d, which would leave this arm unpinned in the gate.
+#[tokio::test]
+async fn snapshot_gate_writes_nothing_when_a_target_is_left_behind() {
+    let dir = tempdir().unwrap();
+    let files = vec![crate::app::snapshots::CollectionSnapshotFile {
+        collection_id: COLLECTION_ID.to_string(),
+        name: "alpha".to_string(),
+        last_run_at: "2026-08-01T00:00:00Z".to_string(),
+        snapshot: crate::app::snapshots::CollectionSnapshot::default(),
+        version: 1,
+    }];
+
+    // 30 was targeted and never verified — the run fell short.
+    super::persist_snapshots_if_complete(
+        Some(dir.path().to_path_buf()),
+        files,
+        &[10, 20, 30],
+        &HashSet::from([10, 20]),
+    )
+    .await
+    .expect("the gate itself must not fail");
+
+    assert!(
+        !dir.path().join("collection-1.json").exists(),
+        "a run that left a target behind must write no snapshot"
+    );
+}
+
+/// Positive control for the test above: the same call with the same snapshot
+/// file, varying only whether the last target is verified. Without this, a
+/// broken fixture (unwritable dir, wrong filename) would read as a passing gate.
+#[tokio::test]
+async fn snapshot_gate_writes_the_file_when_every_target_is_verified() {
+    let dir = tempdir().unwrap();
+    let files = vec![crate::app::snapshots::CollectionSnapshotFile {
+        collection_id: COLLECTION_ID.to_string(),
+        name: "alpha".to_string(),
+        last_run_at: "2026-08-01T00:00:00Z".to_string(),
+        snapshot: crate::app::snapshots::CollectionSnapshot::default(),
+        version: 1,
+    }];
+
+    super::persist_snapshots_if_complete(
+        Some(dir.path().to_path_buf()),
+        files,
+        &[10, 20, 30],
+        &HashSet::from([10, 20, 30]),
+    )
+    .await
+    .expect("the gate itself must not fail");
+
+    assert!(
+        dir.path().join("collection-1.json").exists(),
+        "every target verified, so the snapshot must be written"
+    );
 }
 
 fn failure_reason_for(error: osu_downloader::Error) -> FailureReason {

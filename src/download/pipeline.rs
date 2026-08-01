@@ -229,16 +229,40 @@ async fn run_collection(
     // Clear any now-on-disk ids from the persisted failed-maps file (so a
     // successful re-download stops showing as previously failed) and record this
     // run's fresh failures — both in one pass.
-    let resolved: HashSet<u32> = session
-        .initial_satisfied
-        .iter()
-        .copied()
-        .chain(tally.successful.iter().copied())
-        .collect();
-    reconcile_failed_maps(resolved, failure_ids(&tally)).await;
+    reconcile_failed_maps(
+        verified_targets(&session.initial_satisfied, &tally),
+        failure_ids(&tally),
+    )
+    .await;
 
     emit_finish(id, emit.as_ref(), tally.to_summary());
     Ok(())
+}
+
+/// Every target the run leaves the user holding: ids precheck verified on disk,
+/// ids the osu! library already had, and ids this run downloaded. `prepare`
+/// folds the library-owned ids into `initial_satisfied` (`partition_pending`),
+/// so a pre-skipped set counts here exactly like a verified one — both questions
+/// this set answers, "may the failed-maps file drop it" and "did the run cover
+/// its whole target list", ask only whether the user has the map.
+fn verified_targets(initial_satisfied: &HashSet<u32>, tally: &Tally) -> HashSet<u32> {
+    initial_satisfied
+        .iter()
+        .copied()
+        .chain(tally.successful.iter().copied())
+        .collect()
+}
+
+/// Targets the run did not leave the user holding. A selective run persists its
+/// snapshots only when this is empty: a snapshot asserts the scanned collections
+/// are in hand as of now, so a run that fell short must not write one and let
+/// the next scan stop reporting what is still missing.
+fn unsatisfied_targets(target_ids: &[u32], verified: &HashSet<u32>) -> Vec<u32> {
+    target_ids
+        .iter()
+        .copied()
+        .filter(|id| !verified.contains(id))
+        .collect()
 }
 
 /// Resolve the user's already-imported library set off the UI thread. Best-effort:
@@ -285,6 +309,9 @@ async fn run_selective(
         config,
         snapshot_dir,
         snapshots: snapshot_files,
+        skip_already_imported,
+        osu_client,
+        osu_path,
         prefetched,
     } = request;
 
@@ -293,6 +320,9 @@ async fn run_selective(
     }
 
     emit_resolving(id, emit.as_ref());
+
+    // Same off-thread owned-library resolve as `run_collection`; best-effort.
+    let owned_ids = resolve_owned_ids(skip_already_imported, osu_client, osu_path).await;
 
     let Some(session) = DownloadSession::prepare(PrepareParams {
         id,
@@ -307,14 +337,19 @@ async fn run_selective(
             prefetched,
         },
         overwrite: false,
-        // The selective/retry path never pre-skips owned maps — it must not
-        // perturb the `all_targets_satisfied` snapshot gating.
-        owned_ids: HashSet::new(),
+        owned_ids,
     })
     .await?
     else {
         return Ok(());
     };
+
+    if session.skipped_owned > 0 {
+        emit(DownloadEvent::SkippedImported {
+            id,
+            count: session.skipped_owned as usize,
+        });
+    }
 
     // Always `Some` here (a selective run); the accessor is `Option` for search.
     let collection = session.target.collection().cloned();
@@ -324,8 +359,6 @@ async fn run_selective(
         .map(<[_]>::to_vec)
         .unwrap_or_default();
     let output_dir = session.output.output_dir.clone();
-    let initial_satisfied = session.initial_satisfied.clone();
-    let target_ids = session.beatmapset_ids.clone();
 
     let Some(tally) = run_pipeline_core(
         &session, &config, false, cancel_rx, defer_rx, skip_rx, &emit,
@@ -337,12 +370,7 @@ async fn run_selective(
         return Ok(());
     };
 
-    // every target that is verifiably on disk now: pre-existing + newly downloaded.
-    let verified_now: HashSet<u32> = initial_satisfied
-        .iter()
-        .copied()
-        .chain(tally.successful.iter().copied())
-        .collect();
+    let verified_now = verified_targets(&session.initial_satisfied, &tally);
 
     if !verified_now.is_empty()
         && let Some(collection) = collection
@@ -356,10 +384,13 @@ async fn run_selective(
         .await?;
     }
 
-    let all_targets_satisfied = target_ids.iter().all(|id| verified_now.contains(id));
-    if all_targets_satisfied && let Some(snapshot_dir) = snapshot_dir {
-        persist_snapshots(snapshot_dir, snapshot_files).await?;
-    }
+    persist_snapshots_if_complete(
+        snapshot_dir,
+        snapshot_files,
+        &session.beatmapset_ids,
+        &verified_now,
+    )
+    .await?;
 
     // A retry / selective run is exactly where stale previously-failed entries get
     // cleared: drop every id now on disk and record this run's fresh failures.
@@ -448,13 +479,11 @@ async fn run_ids(
     // A raw-ids run has no collection identity, so it writes no `collection.db`.
     // The persisted failed-maps file is still reconciled: a re-download clears
     // stale failures and this run's fresh failures are recorded.
-    let resolved: HashSet<u32> = session
-        .initial_satisfied
-        .iter()
-        .copied()
-        .chain(tally.successful.iter().copied())
-        .collect();
-    reconcile_failed_maps(resolved, failure_ids(&tally)).await;
+    reconcile_failed_maps(
+        verified_targets(&session.initial_satisfied, &tally),
+        failure_ids(&tally),
+    )
+    .await;
 
     emit_finish(id, emit.as_ref(), tally.to_summary());
     Ok(())
@@ -480,6 +509,34 @@ async fn reconcile_failed_maps(resolved: HashSet<u32>, failures: Vec<u32>) {
         failed_maps::reconcile(&path, &resolved, failures);
     })
     .await;
+}
+
+/// Persist this run's snapshots, but only once every target is in the user's
+/// hands. A snapshot asserts the scanned collections match the local library as
+/// of now, so a run that fell short must not write one and let the next scan
+/// stop reporting what is still missing.
+///
+/// The written snapshot files are the observable outcome; nothing is returned,
+/// so a caller cannot mistake "gate passed" for "gate ran".
+async fn persist_snapshots_if_complete(
+    snapshot_dir: Option<PathBuf>,
+    snapshot_files: Vec<snapshots::CollectionSnapshotFile>,
+    target_ids: &[u32],
+    verified: &HashSet<u32>,
+) -> Result<(), DownloadError> {
+    let Some(snapshot_dir) = snapshot_dir else {
+        return Ok(());
+    };
+    let unsatisfied = unsatisfied_targets(target_ids, verified);
+    if unsatisfied.is_empty() {
+        persist_snapshots(snapshot_dir, snapshot_files).await?;
+    } else {
+        info!(
+            remaining = unsatisfied.len(),
+            "run left targets unsatisfied; snapshots not persisted"
+        );
+    }
+    Ok(())
 }
 
 async fn persist_snapshots(

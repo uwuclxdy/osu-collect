@@ -138,6 +138,15 @@ pub struct SelectiveDownloadRequest {
     pub config: DownloadConfig,
     pub snapshot_dir: Option<std::path::PathBuf>,
     pub snapshots: Vec<crate::app::snapshots::CollectionSnapshotFile>,
+    /// Pre-skip beatmapsets already in the osu! library, on the same toggle and
+    /// through the same off-thread resolve as [`DownloadRequest`] — a part-picked
+    /// collection honors it exactly as the whole one does. A pre-skipped set is
+    /// folded into the run's satisfied set, so it still reaches the selective
+    /// `collection.db` and still counts toward the snapshot gate: the user has
+    /// the map, which is the only thing either asks about.
+    pub skip_already_imported: bool,
+    pub osu_client: OsuClient,
+    pub osu_path: String,
     /// Collection payloads an update scan / collection resolve already fetched,
     /// keyed by collection id. A hit short-circuits that collection's fetch during
     /// resolve; a miss fetches as before.

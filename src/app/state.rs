@@ -1349,6 +1349,9 @@ impl App {
             config,
             snapshot_dir: snapshots::snapshots_dir(),
             snapshots,
+            skip_already_imported: self.config.skip_already_imported,
+            osu_client: self.library.client_type,
+            osu_path: self.library.osu_path(),
             prefetched,
         };
 
@@ -1805,6 +1808,9 @@ impl App {
             config,
             snapshot_dir: None,
             snapshots: Vec::new(),
+            skip_already_imported: self.config.skip_already_imported,
+            osu_client: self.library.client_type,
+            osu_path: self.library.osu_path(),
             prefetched: self.prefetched_collections(&[collection_id]),
         };
         Some((id, request))
@@ -3385,6 +3391,13 @@ impl App {
             config: retry_config,
             snapshot_dir: None,
             snapshots: vec![],
+            // Carried for parity with the other two `SelectiveDownloadRequest`
+            // sites rather than for an effect: `collection_ids` is empty here, so
+            // `resolve_selective_with` returns `EmptyCollection` and this run
+            // fails before `prepare`. The toggle takes effect once that is fixed.
+            skip_already_imported: self.config.skip_already_imported,
+            osu_client: self.library.client_type,
+            osu_path: self.library.osu_path(),
             // A retry carries no collection ids to resolve, so there is nothing to
             // reuse a cached payload for.
             prefetched: HashMap::new(),

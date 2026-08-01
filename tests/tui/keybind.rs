@@ -1406,6 +1406,37 @@ fn collection_pick_download_uses_snapshotted_id_not_late_resolve() {
     assert_eq!(ids, vec![10, 20]);
 }
 
+/// A part-picked collection carries the "skip already imported" toggle to the
+/// run, so unchecking one map cannot silently turn the pre-skip off the way it
+/// used to. Both legs vary only the config toggle, so a call site that hardcodes
+/// either position reds one of them.
+#[test]
+fn collection_pick_download_carries_the_skip_imported_toggle() {
+    use osu_collect::app::{BrowseRow, GetMapsSource};
+
+    fn picked_request(skip_already_imported: bool) -> bool {
+        let mut app = make_app();
+        app.config.skip_already_imported = skip_already_imported;
+        app.home.source = GetMapsSource::Collection;
+        app.home.collection_browse_id = Some(111);
+        app.home.collection_browse.set_rows(
+            vec![
+                BrowseRow { id: 10, meta: None },
+                BrowseRow { id: 20, meta: None },
+            ],
+            &std::collections::HashMap::new(),
+        );
+        app.home.collection_browse.set_all_selected(true);
+        let (_, request) = app
+            .request_collection_pick_download()
+            .expect("a selection with mirrors enabled builds a request");
+        request.skip_already_imported
+    }
+
+    assert!(picked_request(true));
+    assert!(!picked_request(false));
+}
+
 #[test]
 fn reopening_collection_browse_preserves_picks() {
     use osu_collect::app::{GetMapsSource, HomeField};

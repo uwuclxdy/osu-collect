@@ -173,7 +173,9 @@ pub(crate) struct PrepareParams<'a> {
     /// and the library overwrites existing archives (`OnExists::Overwrite`).
     pub(crate) overwrite: bool,
     /// Beatmapsets already in the osu! library: pre-skipped before downloading
-    /// but still folded into `collection.db`. Empty for the selective/retry path.
+    /// but still folded into `collection.db`. Every arm resolves it off the
+    /// `skip_already_imported` toggle; empty means the toggle is off or the
+    /// library read failed.
     pub(crate) owned_ids: HashSet<u32>,
 }
 

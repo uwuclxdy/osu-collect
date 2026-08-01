@@ -8,6 +8,48 @@ fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
 
+/// The update-source arm carries the "skip already imported" toggle to the run.
+/// This is the arm the toggle matters most on — an update scan reports exactly
+/// the sets the user does not have installed, so "I already own this" is the
+/// common case. Both legs vary only the config toggle, so a call site that
+/// hardcodes either position reds one of them.
+#[test]
+fn selective_download_carries_the_skip_imported_toggle() {
+    use crate::app::update_source::{MissingBeatmapset, MissingStatus};
+    use crate::osu_db::LocalCollection;
+    use std::collections::HashMap;
+
+    fn update_request(skip_already_imported: bool) -> bool {
+        let mut app = App::new(Config::default());
+        app.config.skip_already_imported = skip_already_imported;
+        app.home.directory.value = "/tmp/osu-collect-test".to_string();
+        app.home.update.set_collections(vec![LocalCollection {
+            name: "alpha - 100".to_string(),
+            beatmap_checksums: Box::new([]),
+        }]);
+        app.home.update.set_missing_beatmaps(
+            vec![MissingBeatmapset {
+                id: 10,
+                status: MissingStatus::NotInstalled,
+                collection_id: 100,
+                collection_name: "alpha".to_string(),
+                selected: true,
+                previously_deleted: false,
+                enrich_diff_id: None,
+            }],
+            &HashMap::new(),
+        );
+
+        let (_, request) = app
+            .request_selective_download()
+            .expect("a selected collection with mirrors enabled builds a request");
+        request.skip_already_imported
+    }
+
+    assert!(update_request(true));
+    assert!(!update_request(false));
+}
+
 #[test]
 fn right_tab_switch_from_home_off_a_non_text_field() {
     use crate::app::HomeField;
