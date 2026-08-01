@@ -163,24 +163,16 @@ fn collection_download_button(form: &HomeTab) -> (String, bool) {
     }
 }
 
-/// Tooltip text for the focused download-directory field: the per-collection
-/// folder maps will be written to (`<base>/<collection folder>`), home collapsed
-/// to `~`. Until a collection resolves the folder name is unknown, so a
-/// `<collection>` placeholder stands in for it. A blank field resolves to the
-/// default directory.
+/// Tooltip text for the focused download-directory field: the per-run folder
+/// maps will be written to (`<base>/<run folder>`), home collapsed to `~`. Both
+/// halves come from the model ([`HomeTab::planned_folder_name`] is per-source),
+/// so this only formats. A blank field resolves to the default directory.
 fn directory_hint(form: &HomeTab) -> String {
+    // Joining via `Path` keeps the separator platform-correct (`\` on Windows)
+    // rather than a hardcoded `/`.
     let base = form.resolved_directory();
-    // Unknown until the collection resolves; a placeholder stands in for the
-    // per-collection folder. Joining via `Path` keeps the separator
-    // platform-correct (`\` on Windows) rather than a hardcoded `/`.
-    let folder = form
-        .resolved_folder_name
-        .as_deref()
-        .unwrap_or("<collection>");
-    format!(
-        "downloads to {}",
-        pretty_path(Path::new(&base).join(folder))
-    )
+    let path = Path::new(&base).join(form.planned_folder_name());
+    format!("downloads to {}", pretty_path(path))
 }
 
 /// Renders the Get Maps form: the source strip, the active source's own rows,

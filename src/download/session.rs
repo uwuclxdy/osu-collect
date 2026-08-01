@@ -441,7 +441,7 @@ async fn prepare_output_dir(
 /// of the same tag collide the way two runs of one collection do: concurrent →
 /// the second fails the per-output-dir lock; sequential → they merge into the
 /// one dir.
-fn ids_folder_name(prefix: &str, tag: &str) -> String {
+pub(crate) fn ids_folder_name(prefix: &str, tag: &str) -> String {
     let mut out = String::with_capacity(prefix.len() + tag.len() + 1);
     out.push_str(prefix);
     out.push('-');
@@ -459,16 +459,23 @@ fn ids_folder_name(prefix: &str, tag: &str) -> String {
     }
 }
 
+/// The per-run subdir for a selective download: `update-<id>` for a single
+/// collection, `update-<n>-collections` for a batch. Both the update source and
+/// the collection source's browse&pick land here, so a picked subset never
+/// writes into the whole collection's folder.
+pub(crate) fn selective_folder_name(collection_ids: &[u32]) -> String {
+    if let [id] = collection_ids {
+        format!("update-{id}")
+    } else {
+        format!("update-{}-collections", collection_ids.len())
+    }
+}
+
 async fn prepare_selective_output(
     directory: &str,
     collection_ids: &[u32],
 ) -> Result<OutputPreparation, DownloadError> {
-    let folder_name = if collection_ids.len() == 1 {
-        format!("update-{}", collection_ids[0])
-    } else {
-        format!("update-{}-collections", collection_ids.len())
-    };
-    prepare_output_dir(directory, &folder_name).await
+    prepare_output_dir(directory, &selective_folder_name(collection_ids)).await
 }
 
 async fn resolve_collection(collection_input: &str) -> Result<Collection, DownloadError> {

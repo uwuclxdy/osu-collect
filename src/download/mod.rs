@@ -13,6 +13,7 @@ pub use lock::ActiveDownloadRegistry;
 pub use pipeline::{
     spawn_download, spawn_ids_download, spawn_selective_download, try_remove_empty_output_dir,
 };
+pub(crate) use session::{ids_folder_name, selective_folder_name};
 
 pub use crate::config::constants::status;
 pub use osu_downloader::ArchiveValidation;
@@ -161,6 +162,15 @@ impl IdsRunSource {
         match self {
             Self::Search => "search",
             Self::Filter => "filter",
+        }
+    }
+}
+
+impl From<crate::app::FindBackend> for IdsRunSource {
+    fn from(backend: crate::app::FindBackend) -> Self {
+        match backend {
+            crate::app::FindBackend::Nzbasic => Self::Filter,
+            crate::app::FindBackend::Osu => Self::Search,
         }
     }
 }

@@ -117,7 +117,11 @@ fn home_directory_tooltip_shows_resolved_path_only_when_focused() {
         "unresolved tooltip must show the base path with a per-collection placeholder: {output}"
     );
 
-    // Once resolved, the placeholder is replaced by the real per-collection folder.
+    // Once resolved, the placeholder is replaced by the real per-collection
+    // folder. Seeded the way a landed `HomeResolveEvent::Resolved` leaves it: the
+    // field, the resolved id, and the folder name all name one collection.
+    app.home.collection.set_value("123");
+    app.home.set_resolved_collection(123, vec![1, 2]);
     app.home.resolved_folder_name = Some("MyCollection-123".to_string());
     let output = render_app(&app, 80, 24);
     assert!(
@@ -131,6 +135,135 @@ fn home_directory_tooltip_shows_resolved_path_only_when_focused() {
     assert!(
         !output.contains("downloads to"),
         "directory tooltip must only render while the directory field is focused"
+    );
+}
+
+#[test]
+fn home_directory_tooltip_tracks_the_per_source_run_folder() {
+    use crate::app::{GetMapsSource, HomeField};
+    use crate::osu_db::LocalCollection;
+
+    let mut app = App::new(Config::default());
+    app.home.focus = HomeField::Directory;
+    app.home.directory.set_value("~/osu-collect-tooltip-test");
+
+    // find, osu route: the run lands in `search-<folder_tag>`.
+    app.home.source = GetMapsSource::Find;
+    app.home.find.query.set_value("tekno");
+    let output = render_app(&app, 80, 24);
+    assert!(
+        output.contains("search-tekno") && !output.contains("<collection>"),
+        "find tooltip must show the search run folder: {output}"
+    );
+
+    // find, nzbasic route: same tag, `filter-` prefix.
+    app.home
+        .find
+        .note_results_backend(crate::app::FindBackend::Nzbasic);
+    let output = render_app(&app, 80, 24);
+    assert!(
+        output.contains("filter-tekno"),
+        "an nzbasic-routed find tooltip must show the filter run folder: {output}"
+    );
+
+    // update: the selective path writes `update-<collection id>`.
+    app.home.source = GetMapsSource::Update;
+    app.home.update.set_collections(vec![LocalCollection {
+        name: "Farm Maps - 12345".to_string(),
+        beatmap_checksums: vec![Default::default(); 3].into_boxed_slice(),
+    }]);
+    let output = render_app(&app, 80, 24);
+    assert!(
+        output.contains("update-12345"),
+        "update tooltip must show the selective run folder: {output}"
+    );
+}
+
+#[test]
+fn home_directory_tooltip_drops_a_resolve_the_field_moved_off() {
+    use crate::app::{BrowseRow, HomeField};
+
+    let mut app = App::new(Config::default());
+    app.home.focus = HomeField::Directory;
+    app.home.directory.set_value("~/osu-collect-tooltip-test");
+
+    // A landed resolve for 1234.
+    app.home.collection.set_value("1234");
+    app.home.set_resolved_collection(1234, vec![7, 8, 9]);
+    app.home.resolved_folder_name = Some("Farm-1234".to_string());
+    let output = render_app(&app, 80, 24);
+    assert!(
+        output.contains("Farm-1234"),
+        "a current resolve must show its collection folder: {output}"
+    );
+
+    // Retype to another valid id. `schedule_resolve` sends `Cleared` only for an
+    // UNPARSEABLE field, so the 1234 snapshot survives the debounce and survives
+    // a failed fetch outright — while `can_download` already lets the run fire
+    // against 5678, which writes a different folder.
+    app.home.collection.set_value("5678");
+    let output = render_app(&app, 80, 24);
+    assert!(
+        output.contains("<collection>") && !output.contains("Farm-1234"),
+        "a resolve the field has moved off must not name the destination: {output}"
+    );
+
+    // A picked subset routes through the selective path, which writes
+    // `update-<id>` rather than the whole collection's folder.
+    app.home.collection.set_value("1234");
+    let rows = vec![
+        BrowseRow { id: 7, meta: None },
+        BrowseRow { id: 8, meta: None },
+    ];
+    app.home
+        .collection_browse
+        .set_rows(rows, &app.home.meta_cache);
+    app.home.collection_browse.set_all_selected(true);
+    // Uncheck the cursor row so one of the two stays picked.
+    app.home.collection_browse.toggle_selected();
+    app.home.collection_browse_id = Some(1234);
+    assert!(
+        app.home.collection_subset_picked(),
+        "fixture must hold a proper nonempty subset"
+    );
+    let output = render_app(&app, 80, 24);
+    assert!(
+        output.contains("update-1234") && !output.contains("Farm-1234"),
+        "a picked subset must show the selective run folder: {output}"
+    );
+}
+
+#[test]
+fn home_directory_tooltip_names_a_multi_collection_update_run() {
+    use crate::app::{GetMapsSource, HomeField};
+    use crate::osu_db::LocalCollection;
+
+    let mut app = App::new(Config::default());
+    app.home.focus = HomeField::Directory;
+    app.home.directory.set_value("~/osu-collect-tooltip-test");
+    app.home.source = GetMapsSource::Update;
+
+    // Nothing checked yet: the id is unknown, but the `update-` shape is not.
+    let output = render_app(&app, 80, 24);
+    assert!(
+        output.contains("update-<collection>"),
+        "an unselected update source must show the run-folder shape: {output}"
+    );
+
+    app.home.update.set_collections(vec![
+        LocalCollection {
+            name: "Farm Maps - 12345".to_string(),
+            beatmap_checksums: vec![Default::default(); 3].into_boxed_slice(),
+        },
+        LocalCollection {
+            name: "Stream Maps - 67890".to_string(),
+            beatmap_checksums: vec![Default::default(); 2].into_boxed_slice(),
+        },
+    ]);
+    let output = render_app(&app, 80, 24);
+    assert!(
+        output.contains("update-2-collections"),
+        "a multi-collection update run must show the batch folder: {output}"
     );
 }
 

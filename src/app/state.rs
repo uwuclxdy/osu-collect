@@ -1698,15 +1698,7 @@ impl App {
             return None;
         }
 
-        let source = match self
-            .home
-            .find
-            .results_backend()
-            .unwrap_or_else(|| self.home.find.planned_backend())
-        {
-            FindBackend::Nzbasic => IdsRunSource::Filter,
-            FindBackend::Osu => IdsRunSource::Search,
-        };
+        let source = IdsRunSource::from(self.home.find.run_backend());
         let word = source.uploader();
         let label = self.home.find.run_label();
         let folder_tag = self.home.find.folder_tag();

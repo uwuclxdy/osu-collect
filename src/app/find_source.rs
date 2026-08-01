@@ -1728,6 +1728,16 @@ impl FindSource {
         self.results_backend
     }
 
+    /// The backend a download dispatched right now would be attributed to: the
+    /// RESOLVED backend of the loaded results, falling back to the form's planned
+    /// route when no fetch recorded one (e.g. test-seeded rows). Drives both the
+    /// run's uploader label and its output-subdir prefix, so the dispatch and the
+    /// directory tooltip cannot disagree about where a run lands.
+    pub fn run_backend(&self) -> FindBackend {
+        self.results_backend
+            .unwrap_or_else(|| self.planned_backend())
+    }
+
     // ── size backfill ─────────────────────────────────────────────────────────
 
     /// Claim the checked results still needing a nekoha size probe, marking each

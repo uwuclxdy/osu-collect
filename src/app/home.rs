@@ -10,10 +10,13 @@ use super::{
 use crate::{
     app::runtime::ProbeResult,
     config::{Config, MirrorConfig},
-    download::{ArchiveValidation, DownloadConfig, DownloadRequest},
+    download::{
+        ArchiveValidation, DownloadConfig, DownloadRequest, IdsRunSource, ids_folder_name,
+        selective_folder_name,
+    },
     mirrors::{Mirror, MirrorKind},
     osu_db::OsuClient,
-    utils::{CompletionResult, complete_dir, expand_tilde, pretty_path},
+    utils::{CompletionResult, complete_dir, expand_tilde, parse_collection_id, pretty_path},
 };
 use osu_downloader::search::BeatmapSetMeta;
 use std::{collections::HashMap, env, str::FromStr};
@@ -415,6 +418,12 @@ const UPDATE_FIELDS: &[HomeField] = &[
     HomeField::Download,
 ];
 
+/// Stand-in for the folder name of a collection that has not resolved yet.
+const PLACEHOLDER_COLLECTION: &str = "<collection>";
+/// Stand-in while no collection is checked on the update source. Keeps the
+/// `update-` prefix visible so the shape of the destination still reads.
+const PLACEHOLDER_UPDATE: &str = "update-<collection>";
+
 impl HomeField {
     pub fn is_text_input(self) -> bool {
         matches!(
@@ -785,6 +794,60 @@ impl HomeTab {
             self.default_directory.clone()
         } else {
             expand_tilde(typed)
+        }
+    }
+
+    /// Whether the cached resolve still describes what the collection field
+    /// holds. [`schedule_resolve`] only clears the snapshot when the field turns
+    /// UNPARSEABLE, so retyping one valid id to another leaves the previous
+    /// collection's name and id in place for the whole debounce + fetch, and for
+    /// good if that fetch fails. Every read of the snapshot goes through here.
+    ///
+    /// [`schedule_resolve`]: crate::app::runtime::schedule_resolve
+    fn collection_resolve_is_current(&self) -> bool {
+        let Some((resolved_id, _)) = self.resolved_collection.as_ref() else {
+            return false;
+        };
+        parse_collection_id(&self.collection.value).is_ok_and(|typed| typed == *resolved_id)
+    }
+
+    /// The per-run subdir a download dispatched right now would land in, under
+    /// [`resolved_directory`](Self::resolved_directory). The find and update arms
+    /// call the same namer the matching `prepare_*` path uses; the collection arms
+    /// replay a name the resolve already derived from `Collection::folder_name`.
+    ///
+    /// A placeholder stands in wherever the name is not knowable yet: the
+    /// collection source until a fetch for the id currently in the field lands,
+    /// the update source until a collection is checked.
+    pub fn planned_folder_name(&self) -> String {
+        match self.source {
+            GetMapsSource::Collection if self.collection_subset_picked() => self
+                .collection_browse_id
+                .map(|id| selective_folder_name(&[id]))
+                .unwrap_or_else(|| PLACEHOLDER_COLLECTION.to_string()),
+            GetMapsSource::Collection => self
+                .resolved_folder_name
+                .as_ref()
+                .filter(|_| self.collection_resolve_is_current())
+                .cloned()
+                .unwrap_or_else(|| PLACEHOLDER_COLLECTION.to_string()),
+            GetMapsSource::Find => ids_folder_name(
+                IdsRunSource::from(self.find.run_backend()).folder_prefix(),
+                &self.find.folder_tag(),
+            ),
+            GetMapsSource::Update => {
+                let ids: Vec<u32> = self
+                    .update
+                    .selected_collection_ids()
+                    .into_iter()
+                    .filter_map(|id| u32::try_from(id).ok())
+                    .collect();
+                if ids.is_empty() {
+                    PLACEHOLDER_UPDATE.to_string()
+                } else {
+                    selective_folder_name(&ids)
+                }
+            }
         }
     }
 
