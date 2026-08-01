@@ -31,7 +31,6 @@ pub(crate) enum SessionTarget {
     Selective {
         collection: Collection,
         collections: Vec<SelectiveDownloadCollection>,
-        collection_names: Vec<String>,
     },
     /// A raw-ids run (search / filter): no collection metadata, just a display
     /// label. The ids live on [`DownloadSession::beatmapset_ids`] and there is
@@ -65,14 +64,14 @@ impl SessionTarget {
                     output_dir: output.display.clone(),
                 });
             }
-            SessionTarget::Selective {
-                collection,
-                collection_names,
-                ..
-            } => {
+            SessionTarget::Selective { collection, .. } => {
                 emit(DownloadEvent::CollectionReady {
                     id,
-                    collection_name: selective_collection_name(collection_names).to_string(),
+                    // The collection's own name, not a second independently
+                    // recomputed title: `resolve_selective_with` is the sole
+                    // place that derives it, so there is nothing left here to
+                    // drift out of step with `selective_folder_name`.
+                    collection_name: collection.name.clone(),
                     uploader: collection.uploader.username.to_string(),
                     total_maps: collection.beatmapsets.len(),
                     output_dir: output.display.clone(),
@@ -238,7 +237,11 @@ impl DownloadSession {
                 prefetched,
             } => {
                 let service = HttpCollectionService::new(CollectionClient::new());
-                let (collection, collections, collection_names) = resolve_selective_with(
+                // `collection_names` (which of the requested ids actually fetched)
+                // is not carried further: the title `resolve_selective_with`
+                // already baked into `collection.name` is the one and only
+                // source `announce_ready` reads.
+                let (collection, collections, _collection_names) = resolve_selective_with(
                     &service,
                     collection_ids,
                     collections,
@@ -256,7 +259,6 @@ impl DownloadSession {
                     SessionTarget::Selective {
                         collection,
                         collections,
-                        collection_names,
                     },
                     output,
                     target_ids,
@@ -579,13 +581,23 @@ where
 
     let mut collection_names = Vec::with_capacity(fetch_results.len());
     let mut resolved_collections = Vec::with_capacity(fetch_results.len());
+    // The one collection's real owner, captured while iterating; read below
+    // only once `collection_ids` names a single request — the same gate
+    // `selective_collection_name` uses for its singular branch, so the title
+    // and the uploader can never disagree about whether this run has one
+    // collection or several.
+    let mut fetched_uploader: Option<Uploader> = None;
+    // Known upfront from the request itself, not from how the fetch turns
+    // out; reused below to skip the clone on every non-singular run and to
+    // gate the uploader decision on the same condition the title uses.
+    let is_single_request = matches!(collection_ids, [_]);
     let mut selected_collection = Collection {
         id: collection_ids.first().copied().unwrap_or_default(),
-        name: "updates".to_string(),
+        name: String::new(),
         description: None,
         uploader: Uploader {
             id: 0,
-            username: "updates".to_string(),
+            username: String::new(),
         },
         beatmapsets: Vec::new(),
         favourites: 0,
@@ -609,6 +621,9 @@ where
                 };
 
                 collection_names.push(collection.name.to_string());
+                if is_single_request {
+                    fetched_uploader = Some(collection.uploader.clone());
+                }
 
                 for beatmapset in collection.beatmapsets {
                     if target_set.contains(&beatmapset.id) {
@@ -635,11 +650,20 @@ where
         }
     }
 
-    selected_collection.name = selective_collection_name(&collection_names);
-
+    // Nothing resolved into this run, so there is nothing to download.
     if resolved_collections.is_empty() {
         return Err(DownloadError::EmptyCollection);
     }
+
+    selected_collection.name = selective_collection_name(collection_ids, &collection_names);
+    selected_collection.uploader = match (is_single_request, fetched_uploader) {
+        (true, Some(uploader)) => uploader,
+        _ => Uploader {
+            id: 0,
+            username: "multiple collections".to_string(),
+        },
+    };
+
     if selected_collection.beatmapsets.is_empty() {
         return Err(DownloadError::NoBeatmapsets);
     }
@@ -647,11 +671,21 @@ where
     Ok((selected_collection, resolved_collections, collection_names))
 }
 
-fn selective_collection_name(collection_names: &[String]) -> String {
-    if collection_names.len() == 1 {
-        format!("update: {}", collection_names[0])
+/// The selective run's title: `update: <name>` for one requested collection,
+/// `update: <n> collections` otherwise. Both branches key off the REQUESTED
+/// count (`collection_ids`) rather than how many actually fetched
+/// (`collection_names`): `selective_folder_name` — the run's actual output
+/// directory, already shown to the user pre-fetch as `home::planned_folder_name`
+/// — reads the same requested ids, so a title keyed on fetch outcomes could
+/// name a different count than the folder it is describing.
+fn selective_collection_name(collection_ids: &[u32], collection_names: &[String]) -> String {
+    if let [_] = collection_ids {
+        collection_names
+            .first()
+            .map(|name| format!("update: {name}"))
+            .unwrap_or_else(|| "update".to_string())
     } else {
-        format!("update: {} collections", collection_names.len())
+        format!("update: {} collections", collection_ids.len())
     }
 }
 

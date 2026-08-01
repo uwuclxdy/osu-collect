@@ -1,6 +1,6 @@
 use super::{
     DownloadSession, OutputPreparation, PrepareParams, PrepareTarget, SessionTarget,
-    ids_folder_name, partition_pending, resolve_selective_with,
+    ids_folder_name, partition_pending, resolve_selective_with, selective_folder_name,
 };
 use crate::core::collection::{Beatmap, Beatmapset, Collection, CollectionService, Uploader};
 use crate::download::IdsRunSource;
@@ -51,6 +51,18 @@ fn collection(id: u32, name: &str, ids: &[u32]) -> Collection {
         },
         beatmapsets: ids.iter().copied().map(beatmapset).collect(),
         favourites: 0,
+    }
+}
+
+/// Same fixture as `collection`, with a caller-chosen uploader username so a
+/// test can tell whether the real owner made it into the run's `Collection`.
+fn collection_with_uploader(id: u32, name: &str, ids: &[u32], uploader: &str) -> Collection {
+    Collection {
+        uploader: Uploader {
+            id: 0,
+            username: uploader.to_string(),
+        },
+        ..collection(id, name, ids)
     }
 }
 
@@ -231,6 +243,206 @@ async fn resolve_selective_skips_the_fetch_for_a_prefetched_collection() {
     let mut ticks = progress.lock().unwrap().clone();
     ticks.sort_unstable();
     assert_eq!(ticks, vec![0, 1, 2]);
+}
+
+// ── selective run's uploader: real owner vs no single owner ─────────────────
+
+/// A part-picked single-collection download must show the collection's real
+/// owner, not the hardcoded `updates` placeholder `resolve_selective_with` used
+/// to leave on `selected_collection.uploader` unconditionally.
+#[tokio::test]
+async fn resolve_selective_single_collection_shows_its_real_uploader() {
+    let service = MockService {
+        responses: vec![(
+            1,
+            Ok(collection_with_uploader(1, "alpha", &[10], "real_owner")),
+        )],
+    };
+    let requested = vec![SelectiveDownloadCollection {
+        id: 1,
+        name: String::new(),
+        beatmapset_ids: vec![10],
+    }];
+    let emit = |_event| {};
+    let (selected, _resolved, _names) =
+        resolve_selective_with(&service, &[1], requested, &[10], &HashMap::new(), 7, &emit)
+            .await
+            .expect("resolve must succeed");
+
+    assert_eq!(selected.uploader.username, "real_owner");
+}
+
+/// Two collections with different owners: neither is a legitimate single
+/// answer, so the run must not silently show whichever fetch the loop happened
+/// to process last.
+#[tokio::test]
+async fn resolve_selective_multi_collection_does_not_silently_pick_an_uploader() {
+    let service = MockService {
+        responses: vec![
+            (1, Ok(collection_with_uploader(1, "alpha", &[10], "alice"))),
+            (2, Ok(collection_with_uploader(2, "beta", &[11], "bob"))),
+        ],
+    };
+    let requested = vec![
+        SelectiveDownloadCollection {
+            id: 1,
+            name: String::new(),
+            beatmapset_ids: vec![10],
+        },
+        SelectiveDownloadCollection {
+            id: 2,
+            name: String::new(),
+            beatmapset_ids: vec![11],
+        },
+    ];
+    let emit = |_event| {};
+    let (selected, _resolved, _names) = resolve_selective_with(
+        &service,
+        &[1, 2],
+        requested,
+        &[10, 11],
+        &HashMap::new(),
+        7,
+        &emit,
+    )
+    .await
+    .expect("resolve must succeed");
+
+    assert_ne!(selected.uploader.username, "alice");
+    assert_ne!(selected.uploader.username, "bob");
+    assert_eq!(selected.uploader.username, "multiple collections");
+}
+
+// ── selective run's title vs its output folder: one source of truth ─────────
+
+/// One of two requested collections 404s. The title must count what was
+/// REQUESTED — the same source `selective_folder_name` reads, whose folder
+/// name is already shown to the user before any fetch runs
+/// (`home::planned_folder_name`) — not what happened to fetch, or the run's
+/// own page disagrees with its own directory.
+#[tokio::test]
+async fn resolve_selective_title_matches_folder_when_one_collection_404s() {
+    let service = MockService {
+        // collection 2 has no entry, so `MockService::fetch_collection` 404s it.
+        responses: vec![(1, Ok(collection(1, "alpha", &[10])))],
+    };
+    let requested = vec![
+        SelectiveDownloadCollection {
+            id: 1,
+            name: String::new(),
+            beatmapset_ids: vec![10],
+        },
+        SelectiveDownloadCollection {
+            id: 2,
+            name: String::new(),
+            beatmapset_ids: vec![11],
+        },
+    ];
+    // The same ids drive both the resolve and the folder-name assert below,
+    // so the two can only agree because the code actually ties them together.
+    let ids = [1u32, 2];
+    let emit = |_event| {};
+    let (selected, _resolved, names) = resolve_selective_with(
+        &service,
+        &ids,
+        requested,
+        &[10, 11],
+        &HashMap::new(),
+        7,
+        &emit,
+    )
+    .await
+    .expect("resolve must succeed");
+
+    // Only one collection actually fetched...
+    assert_eq!(names, vec!["alpha".to_string()]);
+    // ...but the title must still count the two that were REQUESTED, matching
+    // the folder name computed from the same requested ids.
+    assert_eq!(selected.name, "update: 2 collections");
+    assert_eq!(selective_folder_name(&ids), "update-2-collections");
+    // The uploader must key off the same requested-count gate as the title:
+    // showing the id-1 fetch's real owner here would contradict a title that
+    // just said this run spans two collections.
+    assert_eq!(selected.uploader.username, "multiple collections");
+}
+
+/// Every requested collection 404s: `resolved_collections` stays empty and the
+/// resolve must still fail with `EmptyCollection`, same as before this fix —
+/// this path never reaches `selective_collection_name` at all.
+#[tokio::test]
+async fn resolve_selective_all_404_still_returns_empty_collection() {
+    let service = MockService { responses: vec![] };
+    let requested = vec![
+        SelectiveDownloadCollection {
+            id: 1,
+            name: String::new(),
+            beatmapset_ids: vec![10],
+        },
+        SelectiveDownloadCollection {
+            id: 2,
+            name: String::new(),
+            beatmapset_ids: vec![11],
+        },
+    ];
+    let emit = |_event| {};
+    let err = resolve_selective_with(
+        &service,
+        &[1, 2],
+        requested,
+        &[10, 11],
+        &HashMap::new(),
+        7,
+        &emit,
+    )
+    .await
+    .expect_err("every collection 404ing must still fail the resolve");
+
+    assert!(matches!(
+        err,
+        crate::download::DownloadError::EmptyCollection
+    ));
+}
+
+/// `announce_ready` must show exactly the collection's own name and uploader —
+/// not recompute an independently-derived title that can drift from it (the
+/// exact shape of this defect: folder from requested ids, title from fetched
+/// ones), and not silently drop the uploader a hardcoded placeholder could
+/// reintroduce one layer up from where `resolve_selective_with` was fixed.
+/// `collections` carries one entry: `resolve_selective_with` never returns an
+/// empty one (it errors instead), so that is the only reachable fixture shape.
+#[test]
+fn selective_announce_ready_reuses_the_collection_name_and_uploader() {
+    let target = SessionTarget::Selective {
+        collection: collection_with_uploader(1, "update: 2 collections", &[10], "real_owner"),
+        collections: vec![SelectiveDownloadCollection {
+            id: 1,
+            name: "alpha".to_string(),
+            beatmapset_ids: vec![10],
+        }],
+    };
+    let output = OutputPreparation {
+        output_dir: PathBuf::from("/tmp/update-2-collections"),
+        display: "/tmp/update-2-collections".to_string(),
+    };
+    let events = Mutex::new(Vec::new());
+    target.announce_ready(
+        &|event| events.lock().unwrap().push(event),
+        7,
+        &output,
+        &[10],
+    );
+    let events = events.into_inner().unwrap();
+    match &events[0] {
+        DownloadEvent::CollectionReady {
+            collection_name,
+            uploader,
+            ..
+        } => {
+            assert_eq!(collection_name, "update: 2 collections");
+            assert_eq!(uploader, "real_owner");
+        }
+        other => panic!("expected CollectionReady, got {other:?}"),
+    }
 }
 
 // ── declined-retry exclusion: what the run actually enqueues ─────────────────
