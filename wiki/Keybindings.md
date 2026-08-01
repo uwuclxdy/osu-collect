@@ -32,6 +32,7 @@ Press <kbd>?</kbd> anywhere in the app for the in-app overlay. It carries the ke
 | <kbd>a</kbd> / <kbd>A</kbd> | Select all / none (update browse) |
 | <kbd>i</kbd> / <kbd>I</kbd> | Mark a set / whole collection as installed (update preview) |
 | <kbd>u</kbd> / <kbd>U</kbd> | Restore a marked-installed set / whole collection (update preview) |
+| <kbd>↵</kbd> <kbd>space</kbd> | Toggle a previously-deleted set between held back and re-included (update preview) |
 | <kbd>r</kbd> | Recheck failed collections (update source) |
 | <kbd>m</kbd> | Load more results / more titles in a browse |
 | <kbd>+</kbd> <kbd>-</kbd> | Adjust the thread count |

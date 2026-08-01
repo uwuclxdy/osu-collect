@@ -46,7 +46,7 @@ A date range with its own grammar: `2020..2024`, `2020-06-01..`, `..2024`. Inver
 
 ## Backend routing
 
-One form, two backends underneath: the osu! api v2 search and nzbasic's [batch-beatmap-downloader](https://github.com/nzbasic/batch-beatmap-downloader) (BBD) database. The form routes automatically by what you set. A `via osu! api` / `via nzbasic` tag on the `find` button's row always shows where the run will go, live as you edit. A combination that needs both backends errors out naming the two clashing fields instead of guessing.
+One form, two backends underneath: the osu! api v2 search and nzbasic's [batch-beatmap-downloader](https://github.com/nzbasic/batch-beatmap-downloader) (BBD) database. The form routes automatically by what you set. A `via osu! api` / `via nzbasic` tag on the `find` button's row always shows where the run will go, live as you edit. A combination that needs both backends errors out naming the two clashing fields instead of guessing. Editing criteria into a different backend after a run drops the loaded results and their selection. A toast names where the criteria moved; run find again to reload under the new route.
 
 | Forces nzbasic | Forces osu! api |
 |---|---|

@@ -12,7 +12,9 @@ Switch between the stable and lazer client with <kbd>c</kbd> on any tab; the cho
 
 `view N mapsets` opens a two-pane browse: collections on the left, the highlighted collection's missing maps on the right. Selection is per whole collection via checkboxes; <kbd>a</kbd> / <kbd>A</kbd> select all / none. A collection with no updates is inert: it can't be selected and sinks to the bottom in every sort mode.
 
-The `download (N)` button fetches only the missing maps of the checked collections.
+A set you deleted from your library on purpose stays held back, excluded from the `N new` count and from what downloads, so it won't quietly reappear as freshly missing. The preview tags it `previously deleted`; press <kbd>↵</kbd> or <kbd>space</kbd> on that row to toggle it between held back and `✓ re-included` for this run (on any other preview row those keys do nothing; the checkboxes live in the left pane). Re-including only lasts for the current scan, and a `held back` count joins `known bad` in the scan summary whenever something is being withheld.
+
+The `download (N)` button fetches only the missing maps of the checked collections that aren't held back.
 
 ## Marking maps installed
 
