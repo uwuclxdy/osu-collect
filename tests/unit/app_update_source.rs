@@ -174,6 +174,93 @@ fn selected_beatmapset_ids_returns_only_selected_collections() {
     assert_eq!(tab.selected_collection_ids(), vec![200]);
 }
 
+/// A beatmapset missing from two checked collections is one `MissingBeatmapset`
+/// row per collection it's missing from — the run dedupes that down to one id
+/// before it ever reaches precheck (`DownloadSession::prepare`,
+/// `src/download/session.rs`). The button label and the queued-toast count must
+/// agree with that same deduped total, not the raw per-collection row count.
+#[test]
+fn selected_new_count_dedupes_a_set_missing_from_two_collections() {
+    let mut tab = UpdateSource::new();
+    tab.set_collections(vec![
+        LocalCollection {
+            name: "Alpha - 100".to_string(),
+            beatmap_checksums: Box::new([]),
+        },
+        LocalCollection {
+            name: "Beta - 200".to_string(),
+            beatmap_checksums: Box::new([]),
+        },
+    ]);
+    tab.set_missing_beatmaps(
+        vec![missing(1, 100, false), missing(1, 200, false)],
+        &HashMap::new(),
+    );
+
+    assert_eq!(
+        tab.selected_beatmapset_ids(),
+        vec![1],
+        "one beatmapset, shared by two checked collections, counted once"
+    );
+    assert_eq!(
+        tab.selected_new_count(),
+        1,
+        "download button label matches the deduped run total"
+    );
+    // Right after a scan every with-updates collection is selected by default,
+    // so the scan-toast headline (`total_new_count`) and the button under it
+    // (`selected_new_count`) describe the same collections and must agree — a
+    // toast saying "2 missing mapsets" over a button saying "download 1 new"
+    // is the same drift as defect A, one layer up.
+    assert_eq!(
+        tab.total_new_count(),
+        tab.selected_new_count(),
+        "post-scan toast headline must not drift from the download button"
+    );
+}
+
+/// Beatmapset 5 previously deleted from both collections 100 and 200 (both
+/// still upstream, both checked): one row per collection, same shape as the
+/// double-count above but for `held_back_count`, which renders in the same
+/// toast/form block as `total_new_count`.
+#[test]
+fn held_back_count_dedupes_a_set_held_back_in_two_collections() {
+    let mut tab = UpdateSource::new();
+    tab.set_collections(vec![
+        LocalCollection {
+            name: "Alpha - 100".to_string(),
+            beatmap_checksums: Box::new([]),
+        },
+        LocalCollection {
+            name: "Beta - 200".to_string(),
+            beatmap_checksums: Box::new([]),
+        },
+    ]);
+    tab.set_missing_beatmaps(
+        vec![missing(5, 100, true), missing(5, 200, true)],
+        &HashMap::new(),
+    );
+
+    assert_eq!(
+        tab.held_back_count(),
+        1,
+        "one beatmapset, held back in two checked collections, counted once"
+    );
+
+    // Re-include both rows (the toggle's own mechanics are covered elsewhere;
+    // this pins the counting derivation, not how a row gets re-included) and
+    // check the headline lands on the same deduped total.
+    for set in &mut tab.selection.cached_missing_sets {
+        set.included = true;
+    }
+    assert_eq!(tab.held_back_count(), 0);
+    assert_eq!(
+        tab.total_new_count(),
+        1,
+        "the same beatmapset re-included from both collections is still one set"
+    );
+}
+
 /// One collection holding a previously-deleted set (10) and two normal ones
 /// (20, 30), with the collection checked. The shared fixture for the hold-back
 /// tests. The split is deliberately uneven — a 1-and-1 fixture lets a count that

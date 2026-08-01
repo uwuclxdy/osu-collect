@@ -572,12 +572,18 @@ impl UpdateSource {
     }
 
     /// Missing sets a run would enqueue across every collection (the form's
-    /// `N new across M collections` headline and the post-scan toast).
+    /// `N new across M collections` headline and the post-scan toast). Deduped
+    /// by beatmapset id, same as [`selected_new_count`](Self::selected_new_count)
+    /// — right after a scan every with-updates collection is selected by
+    /// default, so the two must agree or the toast and the button under it
+    /// disagree on a set shared by two collections.
     pub fn total_new_count(&self) -> usize {
+        let mut seen = HashSet::new();
         self.selection
             .cached_missing_sets
             .iter()
             .filter(|set| set.included)
+            .filter(|set| seen.insert(set.id))
             .count()
     }
 
@@ -591,17 +597,32 @@ impl UpdateSource {
 
     /// Missing sets the scan held back: previously deleted and not re-included.
     /// Surfaced on the form so a shrunken "N new" has something naming the gap.
+    /// Deduped by id, same as [`total_new_count`](Self::total_new_count) — the
+    /// two render in the same toast/form block, so a beatmapset held back in
+    /// two checked collections must not inflate one figure while the other
+    /// (already deduped) does not. A set held back in one collection but
+    /// included via another still counts here, same as it already did at the
+    /// raw row count before this dedupe: that's a distinct, pre-existing
+    /// ambiguity ("held back AND fetchable") this fix does not attempt to
+    /// resolve.
     pub fn held_back_count(&self) -> usize {
+        let mut seen = HashSet::new();
         self.selection
             .cached_missing_sets
             .iter()
             .filter(|set| !set.included)
+            .filter(|set| seen.insert(set.id))
             .count()
     }
 
     /// Missing sets whose collection is selected (the download-button count).
+    /// A beatmapset missing from two checked collections is one row per
+    /// collection in `cached_missing_sets`; the run dedupes by id before it
+    /// ever reaches precheck (`DownloadSession::prepare`,
+    /// `src/download/session.rs`), so this counts the same deduped total
+    /// rather than the raw per-collection row count.
     pub fn selected_new_count(&self) -> usize {
-        self.selected_missing_sets().count()
+        self.selected_beatmapset_ids().len()
     }
 
     /// Ids (as `u32`, matching the API) of collections with ≥1 pending missing
@@ -659,9 +680,16 @@ impl UpdateSource {
     }
 
     /// Beatmapset ids of every missing set an update run would enqueue
-    /// (whole-collection selection, minus the held-back sets).
+    /// (whole-collection selection, minus the held-back sets). Deduped: the
+    /// same beatmapset can be missing from more than one checked collection,
+    /// and the run counts and fetches it once (first occurrence kept, so an
+    /// unselected input order still matches the existing per-collection
+    /// ordering tests).
     pub fn selected_beatmapset_ids(&self) -> Vec<u32> {
-        self.selected_missing_sets().map(|set| set.id).collect()
+        let mut seen = HashSet::new();
+        self.selected_missing_sets()
+            .filter_map(|set| seen.insert(set.id).then_some(set.id))
+            .collect()
     }
 
     /// The per-collection slice of
