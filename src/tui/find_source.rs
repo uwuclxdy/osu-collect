@@ -339,8 +339,14 @@ fn push_supporter_facets(
                 width,
             ),
         );
+        // The hint anchors under whichever row of the pair holds focus, so it
+        // lands between `extra` and `rank` when `extra` is focused and below
+        // `rank` when `rank` is. A row whose second stage is advertised nowhere
+        // on screen is a stage nobody finds.
+        if focus == field {
+            push_chip_hint(items, focus, editing);
+        }
     }
-    push_chip_hint(items, focus, editing);
     items.push_focusable(
         HomeField::FindPlayed,
         widgets::cycle_item(
@@ -354,11 +360,11 @@ fn push_supporter_facets(
     );
 }
 
-/// The one `└ …` tooltip the multi-select pair carries, anchored under `rank`
-/// and live for either row's focus — so walking `extra` → `rank` reflows
-/// nothing. A row whose second stage is advertised nowhere on screen is a stage
-/// nobody finds, so it states its own grammar as well as the footer does; the
-/// key spellings match the footer's, since both land in the same frame.
+/// The one `└ …` tooltip the multi-select pair carries, anchored under
+/// whichever row holds focus. A row whose second stage is advertised nowhere on
+/// screen is a stage nobody finds, so it states its own grammar as well as the
+/// footer does; the key spellings match the footer's, since both land in the
+/// same frame.
 fn push_chip_hint(items: &mut widgets::FormItems<HomeField>, focus: HomeField, editing: bool) {
     if !focus.is_find_multi_chip() {
         return;

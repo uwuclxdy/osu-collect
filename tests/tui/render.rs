@@ -2144,11 +2144,12 @@ fn the_back_key_label_follows_what_q_does_on_a_descended_row() {
     assert_eq!(app.home.focus, HomeField::FindRank, "and stay on the row");
 }
 
-/// One tooltip for the pair, anchored under `rank` — which is what makes walking
-/// `extra` → `rank` reflow nothing. A hint per row would shift every row below
-/// the pair by one as focus moved between them.
+/// The tooltip anchors under whichever row of the pair holds focus — so a user
+/// sat on `extra` reads the hint next to it, not under `rank` where it is
+/// useless. Walking `extra` → `rank` shifts the hint (and `played` below it) by
+/// one row; that is the cost of the hint tracking focus.
 #[test]
-fn the_multi_select_hint_is_one_row_anchored_under_rank() {
+fn the_multi_select_hint_tracks_the_focused_row_of_the_pair() {
     use osu_collect::app::HomeField;
     const HINT: &str = "↵ edit (multiselect)";
 
@@ -2162,8 +2163,8 @@ fn the_multi_select_hint_is_one_row_anchored_under_rank() {
     );
     assert_eq!(
         row_of(&on_extra, HINT),
-        row_of(&on_extra, "]XH") + 1,
-        "the hint sits under `rank`, not under the focused `extra`: {on_extra:?}"
+        row_of(&on_extra, "storyboard") + 1,
+        "the hint sits under the focused `extra`: {on_extra:?}"
     );
 
     app.home.focus = HomeField::FindRank;
@@ -2174,9 +2175,9 @@ fn the_multi_select_hint_is_one_row_anchored_under_rank() {
         "the hint stays live for the other row of the pair: {on_rank:?}"
     );
     assert_eq!(
-        row_of(&on_extra, "played"),
-        row_of(&on_rank, "played"),
-        "walking between the two rows reflowed the form"
+        row_of(&on_rank, HINT),
+        row_of(&on_rank, "]XH") + 1,
+        "the hint sits under the focused `rank`: {on_rank:?}"
     );
 }
 
