@@ -3180,6 +3180,13 @@ impl App {
             DownloadEvent::SkippedImported { id: _, count } => {
                 self.toast_info(format!("skipped {count} already imported"));
             }
+            DownloadEvent::CollectionsUnresolved { id: _, count } => {
+                self.toast_warn(format!(
+                    "{count} collection{} could not be fetched; \
+                     their maps arrived without collection membership",
+                    if count == 1 { "" } else { "s" }
+                ));
+            }
             DownloadEvent::Finished { id, summary } => {
                 self.settle_run(id, |page| {
                     page.stage = DownloadStage::Completed;

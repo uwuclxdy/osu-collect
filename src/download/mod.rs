@@ -294,6 +294,13 @@ pub enum DownloadEvent {
         id: DownloadId,
         count: usize,
     },
+    /// Some requested collections could not be fetched at resolve time, so
+    /// their beatmapsets download without collection membership in
+    /// `collection.db`. Surfaced as a one-shot warning toast.
+    CollectionsUnresolved {
+        id: DownloadId,
+        count: usize,
+    },
     BeatmapVerified {
         id: DownloadId,
         duration_us: u64,

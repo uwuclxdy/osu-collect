@@ -1501,3 +1501,79 @@ async fn a_completed_lazer_run_preserves_held_back_and_does_not_undo_a_re_includ
         "R was stripped by the re-include exclusion; it must not be carried back as deleted",
     );
 }
+
+/// A collection whose upstream fetch fails at resolve time is silently dropped
+/// from the `collection.db` writer's input, so its maps download without
+/// collection membership and the user is never told. The `CollectionsUnresolved`
+/// event fires once per run with the failed count, surfaced as a warning toast
+/// by `handle_download_event`.
+#[tokio::test]
+async fn a_failed_collection_fetch_emits_the_unresolved_event() {
+    use crate::core::collection::{Collection, CollectionService};
+    use crate::download::session::resolve_selective_with;
+    use crate::utils::AppError;
+
+    struct MockService {
+        fail_for: HashSet<u32>,
+    }
+
+    impl CollectionService for MockService {
+        async fn fetch_collection(&self, id: u32) -> crate::utils::Result<Collection> {
+            if self.fail_for.contains(&id) {
+                Err(AppError::api("not found"))
+            } else {
+                Ok(test_collection(
+                    id,
+                    vec![
+                        test_beatmapset(10, &["hash-a"]),
+                        test_beatmapset(20, &["hash-b"]),
+                    ],
+                ))
+            }
+        }
+    }
+
+    let service = MockService {
+        fail_for: HashSet::from([200]),
+    };
+    let requested = vec![
+        make_selective(100, "coll-100", vec![10, 20]),
+        make_selective(200, "coll-200", vec![30]),
+    ];
+    let events: Arc<Mutex<Vec<DownloadEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&events);
+    let emit: Arc<dyn Fn(DownloadEvent) + Send + Sync> =
+        Arc::new(move |event| sink.lock().unwrap().push(event));
+
+    let result = resolve_selective_with(
+        &service,
+        &[100, 200],
+        requested,
+        &[10, 20, 30],
+        &HashMap::new(),
+        7,
+        emit.as_ref(),
+    )
+    .await
+    .expect("at least one collection resolved");
+
+    let unresolved = events.lock().unwrap().iter().find_map(|event| match event {
+        DownloadEvent::CollectionsUnresolved { count, .. } => Some(*count),
+        _ => None,
+    });
+    assert_eq!(
+        unresolved,
+        Some(1),
+        "one of two collections 404'd; the event must name that count",
+    );
+
+    // The 404'd collection is absent from the resolved payloads — its maps
+    // download but get no `collection.db` entry.
+    let (_, collections, _) = result;
+    assert_eq!(
+        collections.len(),
+        1,
+        "only the fetched collection is represented",
+    );
+    assert_eq!(collections[0].id, 100);
+}

@@ -581,6 +581,7 @@ where
 
     let mut collection_names = Vec::with_capacity(fetch_results.len());
     let mut resolved_collections = Vec::with_capacity(fetch_results.len());
+    let mut failed_count = 0usize;
     // The one collection's real owner, captured while iterating; read below
     // only once `collection_ids` names a single request — the same gate
     // `selective_collection_name` uses for its singular branch, so the title
@@ -646,8 +647,16 @@ where
                     error = %err,
                     "skipping missing collection in selective download"
                 );
+                failed_count += 1;
             }
         }
+    }
+
+    if failed_count > 0 {
+        emit(DownloadEvent::CollectionsUnresolved {
+            id,
+            count: failed_count,
+        });
     }
 
     // Nothing resolved into this run, so there is nothing to download.
