@@ -180,11 +180,6 @@ pub async fn run_update_collections(
         .map(|diff| diff.manually_added.len())
         .sum::<usize>();
 
-    let failed_beatmapset_ids = failed_maps::failed_maps_path()
-        .as_deref()
-        .map(failed_maps::load)
-        .map(|failed_maps| failed_maps.ids())
-        .unwrap_or_default();
     let ignored_beatmapset_ids = ignored_maps::ignored_maps_path()
         .map(|path| ignored_maps::reconcile_installed(&path, &local_set_ids))
         .unwrap_or_default();
@@ -199,8 +194,15 @@ pub async fn run_update_collections(
         local_checksums_set,
         &collections,
         snapshot_diffs,
+        // Loaded inline so the scoped count can only come from the fetch
+        // result, not the store's whole length — no named variable to hoist
+        // a `.len()` onto.
         runtime::FetchCompareSettings {
-            hidden_failed_beatmapset_ids: failed_beatmapset_ids,
+            hidden_failed_beatmapset_ids: failed_maps::failed_maps_path()
+                .as_deref()
+                .map(failed_maps::load)
+                .map(|fm| fm.ids())
+                .unwrap_or_default(),
             ignored_beatmapset_ids,
         },
     )

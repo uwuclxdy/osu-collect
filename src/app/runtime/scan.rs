@@ -485,11 +485,6 @@ fn spawn_fetch_task(
         .values()
         .map(|diff| diff.manually_added.len())
         .sum();
-    let failed_beatmapset_ids = failed_maps::failed_maps_path()
-        .as_deref()
-        .map(failed_maps::load)
-        .map(|failed_maps| failed_maps.ids())
-        .unwrap_or_default();
     // Drop any manually-ignored id that is now genuinely installed, then hide
     // the rest from this scan.
     let ignored_beatmapset_ids = ignored_maps::ignored_maps_path()
@@ -507,8 +502,16 @@ fn spawn_fetch_task(
             all_local_checksums,
             &local_collections_raw,
             snapshot_diffs,
+            // The failed-maps store is loaded inline and consumed here so the
+            // scoped count can only come from `FetchMissingResult.hidden_failed_count`,
+            // not the store's whole length — there is no named variable to hoist
+            // a `.len()` call onto.
             FetchCompareSettings {
-                hidden_failed_beatmapset_ids: failed_beatmapset_ids,
+                hidden_failed_beatmapset_ids: failed_maps::failed_maps_path()
+                    .as_deref()
+                    .map(failed_maps::load)
+                    .map(|fm| fm.ids())
+                    .unwrap_or_default(),
                 ignored_beatmapset_ids,
             },
         )
