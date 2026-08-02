@@ -28,7 +28,23 @@ fn press(code: KeyCode) -> KeyEvent {
 /// whose home cache already holds resolved beatmapset ids. Writes a
 /// `failed-beatmapsets.json` with two of those ids into a tempdir and points
 /// the app at it via `failed_maps_path_override`.
-fn app_with_failed_maps(mode: RetryFailedOnDownload) -> (App, TempDir) {
+///
+/// The tempdir also hosts the config file, and a `TempEnvVar` guard redirects
+/// `OSU_COLLECT_CONFIG` at it for the helper's lifetime. `request_download`
+/// persists recent inputs by calling `save_config`, which resolves that env var
+/// — without the guard, a parallel `config_theme` test can see its own temp
+/// config overwritten. Returned alongside `(App, TempDir)` so the caller binds
+/// the guard for as long as the app is used.
+fn app_with_failed_maps(
+    mode: RetryFailedOnDownload,
+) -> (App, TempDir, crate::test_env::TempEnvVar) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("config.toml");
+    let env = crate::test_env::TempEnvVar::set(
+        "OSU_COLLECT_CONFIG",
+        config_path.to_str().expect("config path is utf-8"),
+    );
+
     let mut app = App::new(Config::default());
     app.config.retry_failed_on_download = mode;
     app.home.collection.value = COLLECTION_ID.to_string();
@@ -38,7 +54,6 @@ fn app_with_failed_maps(mode: RetryFailedOnDownload) -> (App, TempDir) {
     app.home
         .set_resolved_collection(COLLECTION_ID, COLLECTION_BEATMAPSET_IDS.to_vec());
 
-    let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("failed-beatmapsets.json");
     save(
         &FailedMapsFile {
@@ -49,7 +64,7 @@ fn app_with_failed_maps(mode: RetryFailedOnDownload) -> (App, TempDir) {
     );
     app.failed_maps_path_override = Some(path);
     app.active_tab = Tab::Home;
-    (app, dir)
+    (app, dir, env)
 }
 
 // ── config: cycle + serde ────────────────────────────────────────────────────
@@ -102,7 +117,7 @@ fn old_config_without_retry_field_loads_with_ask_default() {
 
 #[test]
 fn yes_mode_skips_modal_and_includes_failed_ids() {
-    let (mut app, _dir) = app_with_failed_maps(RetryFailedOnDownload::Yes);
+    let (mut app, _dir, _env) = app_with_failed_maps(RetryFailedOnDownload::Yes);
 
     let result = app.request_download();
     assert!(result.is_some(), "Yes mode must dispatch without a modal");
@@ -119,7 +134,7 @@ fn yes_mode_skips_modal_and_includes_failed_ids() {
 
 #[test]
 fn no_mode_skips_modal_and_excludes_failed_ids() {
-    let (mut app, _dir) = app_with_failed_maps(RetryFailedOnDownload::No);
+    let (mut app, _dir, _env) = app_with_failed_maps(RetryFailedOnDownload::No);
 
     let result = app.request_download();
     assert!(result.is_some(), "No mode must dispatch without a modal");
@@ -137,7 +152,7 @@ fn no_mode_skips_modal_and_excludes_failed_ids() {
 
 #[test]
 fn ask_mode_opens_modal_when_failures_intersect() {
-    let (mut app, _dir) = app_with_failed_maps(RetryFailedOnDownload::Ask);
+    let (mut app, _dir, _env) = app_with_failed_maps(RetryFailedOnDownload::Ask);
 
     let result = app.request_download();
     assert!(
@@ -157,7 +172,7 @@ fn ask_mode_opens_modal_when_failures_intersect() {
 
 #[test]
 fn ask_mode_enter_dispatches_with_retry() {
-    let (mut app, _dir) = app_with_failed_maps(RetryFailedOnDownload::Ask);
+    let (mut app, _dir, _env) = app_with_failed_maps(RetryFailedOnDownload::Ask);
     let _ = app.request_download();
     assert!(app.confirm_retry_on_start.is_some());
 
@@ -177,7 +192,7 @@ fn ask_mode_enter_dispatches_with_retry() {
 
 #[test]
 fn ask_mode_skip_button_dispatches_without_retry() {
-    let (mut app, _dir) = app_with_failed_maps(RetryFailedOnDownload::Ask);
+    let (mut app, _dir, _env) = app_with_failed_maps(RetryFailedOnDownload::Ask);
     let _ = app.request_download();
     assert!(app.confirm_retry_on_start.is_some());
 
@@ -201,7 +216,7 @@ fn ask_mode_skip_button_dispatches_without_retry() {
 
 #[test]
 fn ask_mode_cancel_button_discards_download() {
-    let (mut app, _dir) = app_with_failed_maps(RetryFailedOnDownload::Ask);
+    let (mut app, _dir, _env) = app_with_failed_maps(RetryFailedOnDownload::Ask);
     let downloads_before = app.downloads.len();
     let _ = app.request_download();
     assert!(app.confirm_retry_on_start.is_some());
@@ -225,7 +240,7 @@ fn ask_mode_cancel_button_discards_download() {
 
 #[test]
 fn ask_mode_esc_cancels_download() {
-    let (mut app, _dir) = app_with_failed_maps(RetryFailedOnDownload::Ask);
+    let (mut app, _dir, _env) = app_with_failed_maps(RetryFailedOnDownload::Ask);
     let downloads_before = app.downloads.len();
     let _ = app.request_download();
     assert!(app.confirm_retry_on_start.is_some());
@@ -245,6 +260,13 @@ fn ask_mode_esc_cancels_download() {
 
 #[test]
 fn no_intersection_skips_modal_under_ask() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("config.toml");
+    let _env = crate::test_env::TempEnvVar::set(
+        "OSU_COLLECT_CONFIG",
+        config_path.to_str().expect("config path is utf-8"),
+    );
+
     let mut app = App::new(Config::default());
     app.config.retry_failed_on_download = RetryFailedOnDownload::Ask;
     app.home.collection.value = COLLECTION_ID.to_string();
@@ -253,7 +275,6 @@ fn no_intersection_skips_modal_under_ask() {
     app.home
         .set_resolved_collection(COLLECTION_ID, vec![1, 2, 3]);
 
-    let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("failed-beatmapsets.json");
     save(
         &FailedMapsFile {
