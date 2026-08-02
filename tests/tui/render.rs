@@ -1321,6 +1321,47 @@ fn config_tab_shows_mirrors_section_before_download() {
     assert!(m < d, "mirrors section should render before download");
 }
 
+/// The "log in to enable" hint rides under the osu! official row itself, not
+/// under the loop's tail. The try-order is user-reorderable, so a tail slot
+/// lands the hint under whichever mirror happens to be last — useless to a
+/// user sat on osu! official two rows up. Default order has osu! official last,
+/// which is exactly why the bug was invisible without a reorder.
+#[test]
+fn mirror_locked_hint_sits_under_osu_official_when_it_is_not_last() {
+    use osu_collect::app::ConfigField;
+    use osu_collect::mirrors::MirrorKind;
+
+    let mut app = make_app();
+    app.config.set_login_failed();
+    app.next_tab();
+    app.next_tab(); // home → downloads → config
+
+    // Move osu! official off the tail by swapping it with the mirror above it
+    // (nzbasic by default). `mirror_order` is the single source for both nav
+    // and render, so a swap here is exactly what `⇧↓` on nzbasic does in
+    // production.
+    let order = &mut app.config.mirror_order;
+    let api_idx = order
+        .iter()
+        .position(|&k| k == MirrorKind::OsuApi)
+        .expect("osu! official is a built-in mirror");
+    assert!(
+        api_idx > 0,
+        "osu! official must not already be first; the test needs room to move it up"
+    );
+    order.swap(api_idx, api_idx - 1);
+
+    app.config.focus = ConfigField::MirrorOsuOfficial;
+    let rows = render_rows(&app, 120, 60);
+    let hint_row = row_of(&rows, "log in to enable");
+    let official_row = row_of(&rows, "osu! official");
+    assert_eq!(
+        hint_row,
+        official_row + 1,
+        "the locked hint must sit directly under osu! official: {rows:?}"
+    );
+}
+
 // ── enrichment loading cues ──────────────────────────────────────────────────
 
 #[test]
