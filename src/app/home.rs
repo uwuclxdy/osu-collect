@@ -394,9 +394,10 @@ const FIND_FIELDS: &[HomeField] = &[
 /// Find-source focus order with the `advanced filters` disclosure collapsed: the
 /// five supporter facets and the 13 per-attribute range inputs are skipped so
 /// navigation stays on the primary form. [`HomeTab::active_fields`] picks between
-/// this and [`FIND_FIELDS`] based on the disclosure state, then drops the
-/// supporter-only rows from whichever it picked — the two dimensions are
-/// independent, and a row hidden on either must not be tab-reachable.
+/// this and [`FIND_FIELDS`] based on the disclosure state, then selects a
+/// pre-computed non-supporter variant of the picked list when the supporter
+/// gate is closed — the two dimensions are independent, and a row hidden on
+/// either must not be tab-reachable.
 const FIND_FIELDS_COLLAPSED: &[HomeField] = &[
     HomeField::Source,
     HomeField::FindQuery,
@@ -404,6 +405,72 @@ const FIND_FIELDS_COLLAPSED: &[HomeField] = &[
     HomeField::FindMode,
     HomeField::FindStatus,
     HomeField::FindExplicit,
+    HomeField::FindSpecial,
+    HomeField::FindSort,
+    HomeField::FindLimit,
+    HomeField::FindAdvanced,
+    HomeField::FindRun,
+    HomeField::FindBrowse,
+    HomeField::Mirrors,
+    HomeField::Directory,
+    HomeField::Threads,
+    HomeField::AutoOverwrite,
+    HomeField::Video,
+    HomeField::Download,
+];
+
+/// Non-supporter variant of [`FIND_FIELDS`]: the same focus order with the six
+/// supporter-only rows ([`HomeField::FindExplicit`], [`FindGenre`](HomeField::FindGenre),
+/// [`FindLanguage`](HomeField::FindLanguage), [`FindExtra`](HomeField::FindExtra),
+/// [`FindRank`](HomeField::FindRank), [`FindPlayed`](HomeField::FindPlayed)) removed,
+/// preserving the relative order of the rest. [`HomeTab::active_fields`] picks
+/// this over [`FIND_FIELDS`] when the supporter gate is closed, so a non-supporter
+/// never gets a tab-reachable row the render hides. The relationship to
+/// [`FIND_FIELDS`] is pinned by `non_supporter_field_lists_match_runtime_filter`.
+const FIND_FIELDS_NOSUPPORTER: &[HomeField] = &[
+    HomeField::Source,
+    HomeField::FindQuery,
+    HomeField::FindPreset,
+    HomeField::FindMode,
+    HomeField::FindStatus,
+    HomeField::FindSpecial,
+    HomeField::FindSort,
+    HomeField::FindLimit,
+    HomeField::FindAdvanced,
+    HomeField::FindStars,
+    HomeField::FindAr,
+    HomeField::FindCs,
+    HomeField::FindOd,
+    HomeField::FindHp,
+    HomeField::FindBpm,
+    HomeField::FindLength,
+    HomeField::FindKeys,
+    HomeField::FindFavourites,
+    HomeField::FindRanked,
+    HomeField::FindArtist,
+    HomeField::FindCreator,
+    HomeField::FindTitle,
+    HomeField::FindRun,
+    HomeField::FindBrowse,
+    HomeField::Mirrors,
+    HomeField::Directory,
+    HomeField::Threads,
+    HomeField::AutoOverwrite,
+    HomeField::Video,
+    HomeField::Download,
+];
+
+/// Non-supporter variant of [`FIND_FIELDS_COLLAPSED`]: the same focus order
+/// with [`HomeField::FindExplicit`] (the only supporter-only row in the
+/// collapsed list) removed, preserving the relative order of the rest. Same
+/// role as [`FIND_FIELDS_NOSUPPORTER`] for the collapsed disclosure state; the
+/// relationship is pinned by `non_supporter_field_lists_match_runtime_filter`.
+const FIND_FIELDS_COLLAPSED_NOSUPPORTER: &[HomeField] = &[
+    HomeField::Source,
+    HomeField::FindQuery,
+    HomeField::FindPreset,
+    HomeField::FindMode,
+    HomeField::FindStatus,
     HomeField::FindSpecial,
     HomeField::FindSort,
     HomeField::FindLimit,
@@ -1097,26 +1164,30 @@ impl HomeTab {
     ///
     /// The find source has TWO independent visibility dimensions — the `advanced
     /// filters` disclosure and the supporter gate — so the disclosure picks the
-    /// list and the gate filters it. A row the render hides must not be reachable
-    /// by tab, which is what makes this filter, rather than the render, the
-    /// authority both read from.
-    pub(crate) fn active_fields(&self, supporter: bool) -> Vec<HomeField> {
-        let fields: &'static [HomeField] = match self.source {
+    /// list and the gate picks a pre-computed non-supporter variant of it. A row
+    /// the render hides must not be reachable by tab, which is what makes this
+    /// selection, rather than the render, the authority both read from. Returns a
+    /// static slice: the four find variants are pinned by
+    /// `non_supporter_field_lists_match_runtime_filter`, and the collection /
+    /// update lists contain no supporter-only rows.
+    pub(crate) fn active_fields(&self, supporter: bool) -> &'static [HomeField] {
+        match self.source {
             GetMapsSource::Collection => COLLECTION_FIELDS,
             GetMapsSource::Update => UPDATE_FIELDS,
             GetMapsSource::Find => {
                 if self.find.show_advanced_filters() || self.focus.is_advanced() {
-                    FIND_FIELDS
-                } else {
+                    if supporter {
+                        FIND_FIELDS
+                    } else {
+                        FIND_FIELDS_NOSUPPORTER
+                    }
+                } else if supporter {
                     FIND_FIELDS_COLLAPSED
+                } else {
+                    FIND_FIELDS_COLLAPSED_NOSUPPORTER
                 }
             }
-        };
-        fields
-            .iter()
-            .copied()
-            .filter(|field| supporter || !field.is_supporter_only())
-            .collect()
+        }
     }
 
     /// Move focus off a supporter row once the gate closes under it (a logout, a
@@ -1142,19 +1213,19 @@ impl HomeTab {
     }
 
     pub fn next_field(&mut self, supporter: bool) {
-        self.focus = next_field(&self.active_fields(supporter), self.focus);
+        self.focus = next_field(self.active_fields(supporter), self.focus);
     }
 
     pub fn prev_field(&mut self, supporter: bool) {
-        self.focus = prev_field(&self.active_fields(supporter), self.focus);
+        self.focus = prev_field(self.active_fields(supporter), self.focus);
     }
 
     pub fn first_field(&mut self, supporter: bool) {
-        self.focus = first_field(&self.active_fields(supporter), self.focus);
+        self.focus = first_field(self.active_fields(supporter), self.focus);
     }
 
     pub fn last_field(&mut self, supporter: bool) {
-        self.focus = last_field(&self.active_fields(supporter), self.focus);
+        self.focus = last_field(self.active_fields(supporter), self.focus);
     }
 
     /// Whether the collection field holds a reference — the whole-collection

@@ -1020,3 +1020,33 @@ fn download_button_disabled_with_no_mirrors_on_every_source() {
         "update arm is live with a mirror"
     );
 }
+
+/// Pins the pre-computed non-supporter field lists to the runtime filter
+/// `is_supporter_only` defines. [`HomeTab::active_fields`] selects between
+/// static slices instead of filtering per keypress, so a contributor editing
+/// `FIND_FIELDS` or `is_supporter_only` without updating the `_NOSUPPORTER`
+/// variants would silently re-introduce tab-reachable rows the render hides.
+/// This test fails before that ships.
+#[test]
+fn non_supporter_field_lists_match_runtime_filter() {
+    use crate::app::home::{
+        FIND_FIELDS, FIND_FIELDS_COLLAPSED, FIND_FIELDS_COLLAPSED_NOSUPPORTER,
+        FIND_FIELDS_NOSUPPORTER,
+    };
+    assert_eq!(
+        FIND_FIELDS_NOSUPPORTER,
+        FIND_FIELDS
+            .iter()
+            .copied()
+            .filter(|f| !f.is_supporter_only())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        FIND_FIELDS_COLLAPSED_NOSUPPORTER,
+        FIND_FIELDS_COLLAPSED
+            .iter()
+            .copied()
+            .filter(|f| !f.is_supporter_only())
+            .collect::<Vec<_>>()
+    );
+}
