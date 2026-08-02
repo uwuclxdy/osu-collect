@@ -1261,3 +1261,243 @@ async fn a_completed_run_leaves_a_held_back_set_still_held_back_on_the_next_scan
         "baseline is the pre-run local membership plus the held-back set, nothing else"
     );
 }
+
+/// The lazer arm of the snapshot fold chain, driven end-to-end through
+/// `request_selective_download` → `persist_snapshots_if_complete` → next scan.
+/// The stable arm is pinned by the test above; this is its lazer counterpart.
+/// The app defaults to lazer, whose snapshot is keyed by beatmapset id rather
+/// than checksum.
+///
+/// Extends the fixture with a **re-included set** to pin the
+/// `exclude_reincluded_sets` call inside `request_selective_download` (whose
+/// call site is unpinned by any other test). Without that call the fold carries
+/// the re-included set back into the written baseline as deleted, undoing the
+/// re-include on the next scan. Removing it passes every other test in the
+/// suite; this one reds.
+#[tokio::test]
+async fn a_completed_lazer_run_preserves_held_back_and_does_not_undo_a_re_include() {
+    use crate::app::App;
+    use crate::app::runtime::scan::{CollectionBeatmapset, missing_from_candidate};
+    use crate::app::runtime::snapshot_diffs_for_scan;
+    use crate::app::snapshots::{self, CollectionSnapshot, CollectionSnapshotFile, SnapshotDiff};
+    use crate::app::update_source::{MissingBeatmapset, MissingStatus};
+    use crate::config::Config;
+    use crate::osu_db::{LocalBeatmap, LocalBeatmapset, LocalCollection};
+
+    fn md5(seed: u8) -> crate::osu_db::Md5 {
+        let mut out = [0u8; 16];
+        out[0] = seed;
+        out
+    }
+
+    // Collection 200: A installed, B new upstream, M held-back, R re-included.
+    // Set ids: A=1, B=2, M=3, R=5.
+    let (a, b, m, r) = (md5(0xa1), md5(0xb2), md5(0xcc), md5(0xd4));
+    let dir = tempdir().expect("temp dir");
+    let snapshot_dir = dir.path().to_path_buf();
+
+    // Old baseline: all four sets were present before the deletions.
+    snapshots::save(
+        &CollectionSnapshotFile::new(
+            200,
+            "coll - 200".to_string(),
+            CollectionSnapshot {
+                stable_hashes: Vec::new(),
+                lazer_ids: vec![1, 3, 5],
+            },
+        ),
+        &snapshots::snapshot_path(&snapshot_dir, 200),
+    );
+
+    // Isolate the on-disk stores `App::new` reads at construction
+    // (docs/architecture.md § "On-disk stores").
+    let auth_path = snapshot_dir.join("auth.json");
+    std::fs::write(
+        &auth_path,
+        serde_json::to_string(&crate::auth::StoredAuth {
+            client_id: "5".to_string(),
+            client_secret: "secret".to_string(),
+            redirect_uri: String::new(),
+            access_token: "token".to_string(),
+            refresh_token: None,
+            expires_at: u64::MAX,
+            scopes: vec!["*".to_string()],
+            supporter: Some(true),
+        })
+        .expect("serialize stub auth"),
+    )
+    .expect("write stub auth.json");
+    let state_path = snapshot_dir.join("collection_state.toml");
+    let _env = crate::test_env::TempEnvVar::set_all([
+        (
+            snapshots::SNAPSHOT_ENV_DIR,
+            snapshot_dir.to_str().expect("utf-8 temp path"),
+        ),
+        (crate::auth::AUTH_ENV_PATH, auth_path.to_str().unwrap()),
+        (
+            crate::app::collection_state::STATE_ENV_PATH,
+            state_path.to_str().unwrap(),
+        ),
+    ]);
+
+    let mut app = App::new(Config::default());
+    app.library.client_type = OsuClient::Lazer;
+    app.home.directory.value = snapshot_dir.join("out").to_string_lossy().into_owned();
+
+    // Local library: the collection holds A only. For lazer,
+    // `current_snapshots` maps checksums → set ids via the beatmapset index,
+    // so the beatmapsets must carry both id and checksum.
+    app.home.update.set_collections(vec![LocalCollection {
+        name: "coll - 200".to_string(),
+        beatmap_checksums: Box::new([a]),
+    }]);
+    app.home.update.set_local_beatmapsets(vec![LocalBeatmapset {
+        id: 1,
+        beatmaps: Box::new([LocalBeatmap { checksum: a }]),
+    }]);
+    app.home.update.set_missing_beatmaps(
+        vec![
+            MissingBeatmapset {
+                id: 2,
+                status: MissingStatus::NotInstalled,
+                collection_id: 200,
+                collection_name: "coll - 200".to_string(),
+                included: true,
+                previously_deleted: false,
+                checksums: Box::new([]),
+                enrich_diff_id: None,
+            },
+            MissingBeatmapset {
+                id: 3,
+                status: MissingStatus::NotInstalled,
+                collection_id: 200,
+                collection_name: "coll - 200".to_string(),
+                included: false,
+                previously_deleted: true,
+                checksums: Box::new([m]),
+                enrich_diff_id: None,
+            },
+            MissingBeatmapset {
+                id: 5,
+                status: MissingStatus::NotInstalled,
+                collection_id: 200,
+                collection_name: "coll - 200".to_string(),
+                included: true,
+                previously_deleted: true,
+                checksums: Box::new([r]),
+                enrich_diff_id: None,
+            },
+        ],
+        &HashMap::new(),
+    );
+    // Scan-time diff: old baseline [1,3,5] \ current [1] = [3,5].
+    app.home.update.scan.snapshot_diffs = HashMap::from([(
+        200,
+        SnapshotDiff {
+            manually_deleted: CollectionSnapshot {
+                stable_hashes: Vec::new(),
+                lazer_ids: vec![3, 5],
+            },
+            manually_added: CollectionSnapshot::default(),
+        },
+    )]);
+
+    let (_, request) = app
+        .request_selective_download()
+        .expect("a mixed collection with mirrors enabled builds a request");
+    // B and R are run targets; M is held back.
+    assert_eq!(
+        request.beatmapset_ids,
+        vec![2, 5],
+        "precondition: M is held back, B and R are enqueued",
+    );
+    assert_eq!(
+        request.collections[0].beatmapset_ids,
+        vec![2, 5],
+        "the per-collection payload carries the run's sets, not the held-back M",
+    );
+
+    // Both targets download and verify.
+    let verified: HashSet<u32> = HashSet::from([2, 5]);
+    super::persist_snapshots_if_complete(
+        request.snapshot_dir.clone(),
+        request.snapshots.clone(),
+        &request.beatmapset_ids,
+        &verified,
+    )
+    .await
+    .expect("snapshot persist must not fail");
+
+    // Written baseline: A (id=1) from the current library plus M (id=3)
+    // folded back by `retain_held_back_in_snapshots`. R (id=5) was stripped
+    // by `exclude_reincluded_sets` before the fold, so it is absent.
+    let written =
+        snapshots::load(&snapshots::snapshot_path(&snapshot_dir, 200)).expect("snapshot written");
+    assert_eq!(
+        written.snapshot.lazer_ids,
+        vec![1, 3],
+        "baseline carries A and the held-back M; R was stripped by the re-include exclusion",
+    );
+
+    // Next scan: B was imported, so the local library now holds A and B.
+    let next_local = vec![LocalCollection {
+        name: "coll - 200".to_string(),
+        beatmap_checksums: Box::new([a, b]),
+    }];
+    let next_beatmapsets = [
+        LocalBeatmapset {
+            id: 1,
+            beatmaps: Box::new([LocalBeatmap { checksum: a }]),
+        },
+        LocalBeatmapset {
+            id: 2,
+            beatmaps: Box::new([LocalBeatmap { checksum: b }]),
+        },
+    ];
+    let next_snapshots = snapshots::current_snapshots(
+        OsuClient::Lazer,
+        &next_local,
+        next_beatmapsets.iter(),
+        |_| Some(200),
+    );
+    let diffs = snapshot_diffs_for_scan(&snapshot_dir, &[200], &next_snapshots);
+
+    // M (id=3) stays held back: the fold carried it, and it is still absent
+    // from the local library, so the next diff still names it as deleted.
+    let rebuilt_m = missing_from_candidate(
+        &CollectionBeatmapset {
+            id: 3,
+            checksums: vec![m],
+            enrich_diff_id: None,
+        },
+        200,
+        "coll - 200".to_string(),
+        OsuClient::Lazer,
+        &diffs,
+    );
+    assert!(
+        rebuilt_m.previously_deleted,
+        "M stays held back through the lazer arm",
+    );
+    assert!(!rebuilt_m.included, "so it stays held back");
+
+    // R (id=5) was stripped by `exclude_reincluded_sets` before the fold, so
+    // the written baseline does not carry it, and the next scan does not
+    // classify it as deleted. Without that call R would be in the baseline,
+    // the next diff would name it, and the re-include would be undone.
+    let rebuilt_r = missing_from_candidate(
+        &CollectionBeatmapset {
+            id: 5,
+            checksums: vec![r],
+            enrich_diff_id: None,
+        },
+        200,
+        "coll - 200".to_string(),
+        OsuClient::Lazer,
+        &diffs,
+    );
+    assert!(
+        !rebuilt_r.previously_deleted,
+        "R was stripped by the re-include exclusion; it must not be carried back as deleted",
+    );
+}
