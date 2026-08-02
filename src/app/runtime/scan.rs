@@ -208,6 +208,10 @@ pub(super) fn handle_updates_event(
                 let state = app.collection_state.clone();
                 tokio::task::spawn_blocking(move || collection_state::save(&state, &path));
             }
+            // Persist scan-time baselines so a map deleted from the local library
+            // after this scan is detectable as previously deleted on the next one.
+            // Suppressed while any download is active — see `persist_scan_baselines`.
+            persist_scan_baselines(app);
             // Kick the missing-set enrichment's first page if the scan-land seed
             // left anything to fetch (a cache-only result needs none).
             app.home
@@ -261,6 +265,38 @@ pub(super) fn handle_updates_event(
             app.report_scan_error(msg);
             None
         }
+    }
+}
+
+/// Build and persist collection baselines from the local library captured at
+/// scan time, so a map deleted from the library after being observed is
+/// detectable as previously deleted on the next scan. A plain TUI scan
+/// deliberately writes nothing while a download is active: the run's completion
+/// write builds from request-time library data (stale by the time it lands), so
+/// it would overwrite this fresher baseline. The next scan after the run catches
+/// up. Mirrors the headless CLI's `persist_baselines`, routing through the
+/// shared held-back fold so deletion records survive the write.
+fn persist_scan_baselines(app: &App) {
+    if app.is_downloading() {
+        return;
+    }
+    let mut baselines = snapshots::current_snapshots(
+        app.library.client_type,
+        &app.home.update.scan.local_collections_raw,
+        app.home.update.scan.local_beatmapsets.iter(),
+        |name| extract_collection_id(name).and_then(|id| u32::try_from(id).ok()),
+    );
+    retain_held_back_in_snapshots(
+        &mut baselines,
+        app.library.client_type,
+        &app.home.update.scan.snapshot_diffs,
+    );
+    if let Some(dir) = snapshots::snapshots_dir() {
+        tokio::task::spawn_blocking(move || {
+            for (collection_id, snapshot) in baselines {
+                snapshots::save(&snapshot, &snapshots::snapshot_path(&dir, collection_id));
+            }
+        });
     }
 }
 

@@ -2,7 +2,7 @@
 
 use super::{
     BeatmapsetVerdict, CollectionBeatmapset, FetchCompareSettings, build_scan_summary,
-    classify_beatmapset, exclude_reincluded_sets, missing_from_candidate,
+    classify_beatmapset, exclude_reincluded_sets, missing_from_candidate, persist_scan_baselines,
     retain_held_back_in_snapshots, scan_collection_candidates, scan_fetched_collections, snapshots,
 };
 use crate::app::snapshots::{CollectionSnapshot, SnapshotDiff};
@@ -560,5 +560,120 @@ fn exclude_reincluded_is_scoped_to_the_sets_own_collection() {
         result[&200].manually_deleted.lazer_ids,
         vec![5],
         "collection 200's hold-back for set 5 survives"
+    );
+}
+
+// ── scan-time baseline writer (a deletion observed by a plain scan must be
+// detectable as previously deleted, not plain missing) ──────────────────────
+
+/// Build an `App` whose update-source scan state holds one local collection
+/// ("col - 100", containing beatmapset 1) and a snapshot diff recording
+/// beatmapset 7 as manually deleted (absent from the local library). The env
+/// guards must already be in place — `App::new` reads `STATE_ENV_PATH` and
+/// `AUTH_ENV_PATH` at construction (`docs/architecture.md` § On-disk stores).
+fn app_with_local_collection_and_a_deleted_set() -> crate::app::App {
+    use crate::config::Config;
+    use crate::osu_db::{LocalBeatmap, LocalBeatmapset, LocalCollection};
+
+    let cksum = md5(0xa1);
+    let mut app = crate::app::App::new(Config::default());
+    app.library.client_type = OsuClient::Lazer;
+    app.home.update.set_collections(vec![LocalCollection {
+        name: "col - 100".to_string(),
+        beatmap_checksums: Box::new([cksum]),
+    }]);
+    app.home.update.set_local_beatmapsets(vec![LocalBeatmapset {
+        id: 1,
+        beatmaps: Box::new([LocalBeatmap { checksum: cksum }]),
+    }]);
+    app.home.update.scan.snapshot_diffs = HashMap::from([lazer_deleted(100, &[7])]);
+    app
+}
+
+/// A scan with no download in flight persists a baseline built from the local
+/// library, folded through the shared held-back logic so the deletion record
+/// (set 7, absent locally) survives. The next scan sees set 7 as previously
+/// deleted rather than plain missing.
+#[tokio::test(flavor = "multi_thread")]
+async fn scan_baselines_persist_when_no_download_is_active() {
+    use crate::app::collection_state::STATE_ENV_PATH;
+    use crate::auth::AUTH_ENV_PATH;
+    use crate::test_env::TempEnvVar;
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+    let _env = TempEnvVar::set_all([
+        (snapshots::SNAPSHOT_ENV_DIR, dir.path().to_str().unwrap()),
+        (
+            STATE_ENV_PATH,
+            dir.path().join("state.toml").to_str().unwrap(),
+        ),
+        (AUTH_ENV_PATH, "/dev/null/no-such-auth"),
+    ]);
+
+    let app = app_with_local_collection_and_a_deleted_set();
+    persist_scan_baselines(&app);
+
+    // The write is fire-and-forget spawn_blocking; poll for the file.
+    let path = snapshots::snapshot_path(dir.path(), 100);
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            if path.exists() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("snapshot file was not written within 3s");
+
+    let written = snapshots::load(&path).expect("snapshot file loads");
+    assert!(
+        written.snapshot.lazer_ids.contains(&1),
+        "the locally-present set must be in the baseline"
+    );
+    assert!(
+        written.snapshot.lazer_ids.contains(&7),
+        "the held-back deletion record must survive the write"
+    );
+}
+
+/// A scan while a download is active writes nothing. The run's completion
+/// write builds from request-time data and would overwrite this fresher
+/// baseline, so the scan-time write is suppressed entirely.
+#[tokio::test(flavor = "multi_thread")]
+async fn scan_baselines_skip_when_a_download_is_active() {
+    use crate::app::CollectionPage;
+    use crate::app::collection_state::STATE_ENV_PATH;
+    use crate::auth::AUTH_ENV_PATH;
+    use crate::test_env::TempEnvVar;
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+    let _env = TempEnvVar::set_all([
+        (snapshots::SNAPSHOT_ENV_DIR, dir.path().to_str().unwrap()),
+        (
+            STATE_ENV_PATH,
+            dir.path().join("state.toml").to_str().unwrap(),
+        ),
+        (AUTH_ENV_PATH, "/dev/null/no-such-auth"),
+    ]);
+
+    let mut app = app_with_local_collection_and_a_deleted_set();
+    // `CollectionPage::new` defaults to `DownloadStage::Pending`, which
+    // `is_settled()` is false — so `is_downloading()` returns true.
+    app.downloads
+        .push(CollectionPage::new(1, "active run".to_string(), 1));
+
+    persist_scan_baselines(&app);
+
+    // The guard returns before spawn_blocking, so nothing is in flight. A brief
+    // sleep catches the mutation case (guard removed → write lands).
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let path = snapshots::snapshot_path(dir.path(), 100);
+    assert!(
+        !path.exists(),
+        "no snapshot should be written while a download is active"
     );
 }
