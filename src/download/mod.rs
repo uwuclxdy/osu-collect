@@ -154,11 +154,13 @@ pub struct SelectiveDownloadRequest {
 }
 
 /// Which Get Maps source produced a raw-ids run. Decides the run's uploader
-/// label and its output-subdir prefix (`search-*` / `filter-*`).
+/// label and its output-subdir prefix (`search-*` / `filter-*`). `Retry`
+/// reuses the source run's output dir (empty prefix → no subfolder).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdsRunSource {
     Search,
     Filter,
+    Retry,
 }
 
 impl IdsRunSource {
@@ -167,14 +169,18 @@ impl IdsRunSource {
         match self {
             Self::Search => "search",
             Self::Filter => "filter",
+            Self::Retry => "retry",
         }
     }
 
-    /// Prefix of the per-run output subdir (`<prefix>-<folder_tag>`).
+    /// Prefix of the per-run output subdir (`<prefix>-<folder_tag>`). `Retry`
+    /// returns empty so [`ids_folder_name`] produces `""`, and the run reuses
+    /// `config.directory` as-is instead of nesting inside it.
     pub(crate) fn folder_prefix(self) -> &'static str {
         match self {
             Self::Search => "search",
             Self::Filter => "filter",
+            Self::Retry => "",
         }
     }
 }

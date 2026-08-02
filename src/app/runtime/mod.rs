@@ -933,8 +933,7 @@ fn dispatch_command(
                 && let Some((new_id, request)) =
                     app.start_retry_download(download_id, retryable_ids)
             {
-                let handle =
-                    download::spawn_selective_download(new_id, request, download_tx.clone());
+                let handle = download::spawn_ids_download(new_id, request, download_tx.clone());
                 info!(
                     source_download_id = download_id,
                     retry_download_id = new_id,

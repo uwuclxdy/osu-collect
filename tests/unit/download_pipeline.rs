@@ -1577,3 +1577,65 @@ async fn a_failed_collection_fetch_emits_the_unresolved_event() {
     );
     assert_eq!(collections[0].id, 100);
 }
+
+/// A retry dispatches `StartIdsDownload`, not `StartSelectiveDownload`: the
+/// old path sent an empty `collection_ids` list through selective resolve,
+/// which returned `EmptyCollection` before the pipeline was ever entered.
+/// `IdsRunSource::Retry` also collapses the folder name to empty so the run
+/// reuses the source run's output dir instead of nesting inside it.
+#[tokio::test]
+async fn retry_builds_an_ids_request_that_reuses_the_source_output_dir() {
+    use crate::app::App;
+    use crate::config::Config;
+
+    let dir = tempdir().expect("temp dir");
+    let auth_path = dir.path().join("auth.json");
+    std::fs::write(&auth_path, b"{}").expect("write stub auth");
+    let state_path = dir.path().join("collection_state.toml");
+    let _env = crate::test_env::TempEnvVar::set_all([
+        (crate::auth::AUTH_ENV_PATH, auth_path.to_str().unwrap()),
+        (
+            crate::app::collection_state::STATE_ENV_PATH,
+            state_path.to_str().unwrap(),
+        ),
+    ]);
+
+    let mut app = App::new(Config::default());
+
+    // Seed a completed run with download config + output dir.
+    let source_id = 100;
+    let source_output = dir.path().join("source-run");
+    let mut page =
+        crate::app::collection::CollectionPage::new(source_id, "source run".to_string(), 1);
+    page.stage = crate::download::DownloadStage::Completed;
+    page.download_config = Some(DownloadConfig {
+        directory: String::new(),
+        mirrors: vec![
+            osu_downloader::Mirror::custom("http://127.0.0.1:1/{id}").expect("custom mirror"),
+        ],
+        concurrent: 1,
+        archive_validation: ArchiveValidation::Off,
+        auto_skip_rate_limited: false,
+        rate_limit_skip_secs: 60,
+    });
+    page.output_dir = Some(source_output.to_string_lossy().into_owned());
+    app.downloads.push(page);
+
+    let failed_ids = vec![42, 99];
+    let (new_id, request) = app
+        .start_retry_download(source_id, failed_ids.clone())
+        .expect("retry builds a request");
+
+    assert_ne!(new_id, source_id, "retry gets a new download id");
+    assert_eq!(request.beatmapset_ids, failed_ids);
+    assert_eq!(request.source, crate::download::IdsRunSource::Retry);
+    assert_eq!(
+        request.folder_tag, "",
+        "empty tag + empty prefix → no subfolder, so the run reuses the source dir",
+    );
+    assert_eq!(
+        request.config.directory,
+        source_output.to_string_lossy(),
+        "retry config carries the source run's output dir, not a nested path",
+    );
+}

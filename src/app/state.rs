@@ -3499,7 +3499,7 @@ impl App {
         &mut self,
         source_download_id: DownloadId,
         ids: Vec<u32>,
-    ) -> Option<(DownloadId, SelectiveDownloadRequest)> {
+    ) -> Option<(DownloadId, IdsDownloadRequest)> {
         let page = self.downloads.iter().find(|p| p.id == source_download_id)?;
         let config = page.download_config.clone()?;
         let output_dir = page
@@ -3531,27 +3531,19 @@ impl App {
         self.downloads.push(retry_page);
         self.focus_new_download_run();
 
-        let request = SelectiveDownloadRequest {
-            collection_ids: vec![],
-            beatmapset_ids: ids.clone(),
-            collections: vec![SelectiveDownloadCollection {
-                id: 0,
-                name: title,
-                beatmapset_ids: ids,
-            }],
+        let request = IdsDownloadRequest {
+            beatmapset_ids: ids,
+            label: title,
+            // Empty tag + empty prefix (Retry) → `ids_folder_name` produces "",
+            // so the run reuses the source run's output dir instead of nesting.
+            folder_tag: String::new(),
+            source: IdsRunSource::Retry,
             config: retry_config,
-            snapshot_dir: None,
-            snapshots: vec![],
-            // Carried for parity with the other two `SelectiveDownloadRequest`
-            // sites rather than for an effect: `collection_ids` is empty here, so
-            // `resolve_selective_with` returns `EmptyCollection` and this run
-            // fails before `prepare`. The toggle takes effect once that is fixed.
+            auto_overwrite: false,
             skip_already_imported: self.config.skip_already_imported,
             osu_client: self.library.client_type,
             osu_path: self.library.osu_path(),
-            // A retry carries no collection ids to resolve, so there is nothing to
-            // reuse a cached payload for.
-            prefetched: HashMap::new(),
+            known_sizes: HashMap::new(),
         };
         Some((new_id, request))
     }
