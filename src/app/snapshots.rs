@@ -208,66 +208,52 @@ pub fn current_snapshots<'a>(
         .collect()
 }
 
-/// Fold every held-back set back into a freshly-built snapshot, so a completed
-/// run's baseline still says the user deleted them.
+/// Fold every entry the old baseline recorded as deleted back into a
+/// freshly-built snapshot, so a completed run's baseline still says the user
+/// deleted them.
 ///
-/// A snapshot is the baseline the next scan diffs against, and `manually_deleted`
-/// is `previous \ current`. [`current_snapshots`] reads the LOCAL library, where
-/// a held-back set is absent — so writing it verbatim asserts the set is no
-/// longer deleted, which is exactly the inference that is wrong: it is absent
-/// *because* the user deleted it and the run deliberately did not re-fetch it.
+/// `manually_deleted` is `previous \ current` ([`diff_snapshot`]). A snapshot is
+/// the baseline the next scan diffs against. [`current_snapshots`] reads the
+/// LOCAL library, where a deleted set is absent — so writing it verbatim asserts
+/// the set is no longer deleted, which is exactly the inference that is wrong:
+/// it is absent *because* the user deleted it and the run deliberately did not
+/// re-fetch it.
 ///
 /// Rebuilding the baseline rather than withholding the write keeps the rest of
 /// the collection current: withholding freezes the whole baseline for as long as
 /// anything is held back, so an unrelated local addition keeps re-reporting as
-/// "added since last scan" forever. Only the held-back entries are carried over.
+/// "added since last scan" forever. Only the deleted entries are carried over.
 ///
-/// **Assumption, and it fails open.** On the stable client this re-expresses a
-/// set from the UPSTREAM diff hashes the scan captured, and the next scan's diff
-/// compares them against LOCAL collection hashes — so it holds only while the two
-/// sides hash a given difficulty identically. That is not a new dependency: the
-/// membership check this rebuild feeds already compares the same two sources.
-/// But the failure mode is silent and one-directional — a mirror serving
-/// re-hashed diffs would make held-back entries stop matching, `manually_deleted`
-/// would come back empty, and sets the user deleted would quietly return rather
-/// than erroring. Nothing here can detect that; a re-hash upstream needs the
-/// comparison keyed on something stable (set id on both sides) instead.
+/// Sourcing the fold from the diff rather than the scan's missing list is what
+/// keeps a marked-installed set's deletion recorded: marking it installed drops
+/// it from the missing list (and the next scan's ignored-maps gate hides it from
+/// the candidate list entirely), but it stays in `manually_deleted` for as long
+/// as it is absent from the local library. A fold that read the missing list
+/// would lose it; this one cannot.
 ///
-/// **Second assumption, same class and same direction: a held-back set always has
-/// at least one hash to re-express itself with, and that holds only because the
-/// detection and this rebuild read ONE slice.** On stable a set is flagged deleted
-/// by `CollectionBeatmapset::is_in_snapshot`, which returns true only when one of
-/// `beatmapset.checksums` is in `manually_deleted`; `missing_from_candidate` then
-/// fills `MissingBeatmapset.checksums` from that same slice. So a set detectable
-/// as deleted necessarily carries a matching hash, and a set whose hashes all
-/// dropped could never have been held back on stable in the first place. Source
-/// this rebuild's hashes from anywhere other than the slice the detection read —
-/// a fresh upstream fetch, the local db, a narrowed field — and the guarantee is
-/// gone: a set can then be flagged deleted while carrying nothing to write back,
-/// the rebuild silently contributes no entry, and the deletion disappears at the
-/// next scan. No test can catch that, because the fixture would have to be a
-/// state today's single source cannot produce.
-pub fn retain_held_back<'a>(
+/// **Assumption, and it fails open.** The carried-over hashes are LOCAL
+/// collection hashes (the baseline was built from the local library, and the
+/// next scan diffs against the same source). It holds only while the local
+/// representation of a difficulty's hash is stable across scans. The failure
+/// mode is silent and one-directional: if the local library re-hashes a
+/// difficulty (e.g. across osu! versions), `manually_deleted` comes back empty
+/// and sets the user deleted quietly return rather than erroring. Nothing here
+/// can detect that; it needs the comparison keyed on something stable (set id
+/// on both sides) instead.
+pub fn retain_held_back(
     snapshot: &mut CollectionSnapshot,
     client: OsuClient,
-    held_back: impl IntoIterator<Item = (u32, &'a [Md5])>,
+    manually_deleted: &CollectionSnapshot,
 ) {
     match client {
         OsuClient::Stable => {
             let mut hashes = std::mem::take(&mut snapshot.stable_hashes);
-            for (_, checksums) in held_back {
-                hashes.extend(
-                    checksums
-                        .iter()
-                        .filter(|cksum| !checksum::is_empty(cksum))
-                        .map(|&cksum| checksum::to_hex(cksum)),
-                );
-            }
+            hashes.extend(manually_deleted.stable_hashes.iter().cloned());
             snapshot.stable_hashes = sorted_unique(hashes);
         }
         OsuClient::Lazer => {
             let mut ids = std::mem::take(&mut snapshot.lazer_ids);
-            ids.extend(held_back.into_iter().map(|(id, _)| u64::from(id)));
+            ids.extend(manually_deleted.lazer_ids.iter().copied());
             snapshot.lazer_ids = sorted_unique(ids);
         }
     }

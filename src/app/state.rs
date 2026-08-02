@@ -1348,11 +1348,20 @@ impl App {
         // A held-back set is absent from the local library, so the baseline built
         // above would tell the next scan it is no longer deleted — and it is not a
         // run target, so the completion gate cannot withhold the write on its
-        // behalf. Put it back before the snapshot leaves for the pipeline.
+        // behalf. Put it back before the snapshot leaves for the pipeline. The
+        // diff (not the missing list) is the source: a set marked installed
+        // leaves the missing list but stays in the diff for as long as it is
+        // absent locally. Re-included sets are stripped first so the fold does
+        // not carry them back as deleted, which would undo the re-include.
+        let fold_diffs = runtime::exclude_reincluded_sets(
+            self.home.update.scan.snapshot_diffs.clone(),
+            self.library.client_type,
+            &self.home.update.selection.cached_missing_sets,
+        );
         runtime::retain_held_back_in_snapshots(
             &mut current_snapshots,
             self.library.client_type,
-            &self.home.update.selection.cached_missing_sets,
+            &fold_diffs,
         );
         let snapshots: Vec<_> = collection_ids
             .iter()

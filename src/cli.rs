@@ -174,6 +174,7 @@ pub async fn run_update_collections(
         .as_deref()
         .map(|dir| runtime::snapshot_diffs_for_scan(dir, &collection_ids, &current_snapshots))
         .unwrap_or_default();
+    let snapshot_diffs_for_persist = snapshot_diffs.clone();
     let added_count = snapshot_diffs
         .values()
         .map(|diff| diff.manually_added.len())
@@ -240,13 +241,12 @@ pub async fn run_update_collections(
         }
         if let Some(snapshot_dir) = snapshot_dir {
             let client = args.client;
-            let missing_for_persist = missing.clone();
             match tokio::task::spawn_blocking(move || {
                 persist_baselines(
                     &snapshot_dir,
                     current_snapshots,
                     client,
-                    &missing_for_persist,
+                    &snapshot_diffs_for_persist,
                 );
             })
             .await
@@ -319,9 +319,9 @@ fn persist_baselines(
     snapshot_dir: &std::path::Path,
     mut baselines: HashMap<u32, snapshots::CollectionSnapshotFile>,
     client: OsuClient,
-    missing: &[MissingBeatmapset],
+    snapshot_diffs: &HashMap<u32, snapshots::SnapshotDiff>,
 ) {
-    runtime::retain_held_back_in_snapshots(&mut baselines, client, missing);
+    runtime::retain_held_back_in_snapshots(&mut baselines, client, snapshot_diffs);
     for (collection_id, snapshot) in baselines {
         snapshots::save(
             &snapshot,

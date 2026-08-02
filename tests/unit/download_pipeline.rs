@@ -1054,7 +1054,7 @@ async fn a_completed_run_leaves_a_held_back_set_still_held_back_on_the_next_scan
     use crate::app::App;
     use crate::app::runtime::scan::{CollectionBeatmapset, missing_from_candidate};
     use crate::app::runtime::snapshot_diffs_for_scan;
-    use crate::app::snapshots::{self, CollectionSnapshot, CollectionSnapshotFile};
+    use crate::app::snapshots::{self, CollectionSnapshot, CollectionSnapshotFile, SnapshotDiff};
     use crate::app::update_source::{MissingBeatmapset, MissingStatus};
     use crate::config::Config;
     use crate::osu_db::{LocalBeatmap, LocalBeatmapset, LocalCollection, checksum};
@@ -1166,6 +1166,19 @@ async fn a_completed_run_leaves_a_held_back_set_still_held_back_on_the_next_scan
         ],
         &HashMap::new(),
     );
+    // The scan normally computes the diff (old baseline vs local lib) and stores
+    // it for the request path. This test bypasses the scan, so set it by hand:
+    // M is in the old baseline, absent locally, so it is manually deleted.
+    app.home.update.scan.snapshot_diffs = HashMap::from([(
+        100,
+        SnapshotDiff {
+            manually_deleted: CollectionSnapshot {
+                stable_hashes: vec![checksum::to_hex(m)],
+                lazer_ids: Vec::new(),
+            },
+            manually_added: CollectionSnapshot::default(),
+        },
+    )]);
 
     let (_, request) = app
         .request_selective_download()

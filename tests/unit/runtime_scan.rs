@@ -2,8 +2,8 @@
 
 use super::{
     BeatmapsetVerdict, CollectionBeatmapset, FetchCompareSettings, build_scan_summary,
-    classify_beatmapset, missing_from_candidate, retain_held_back_in_snapshots,
-    scan_collection_candidates, scan_fetched_collections, snapshots,
+    classify_beatmapset, exclude_reincluded_sets, missing_from_candidate,
+    retain_held_back_in_snapshots, scan_collection_candidates, scan_fetched_collections, snapshots,
 };
 use crate::app::snapshots::{CollectionSnapshot, SnapshotDiff};
 use crate::app::update_source::{MissingBeatmapset, MissingStatus};
@@ -51,12 +51,12 @@ fn a_previously_deleted_candidate_is_built_held_back() {
     );
     assert!(deleted.previously_deleted);
     assert!(!deleted.included, "the run must not enqueue it");
-    // Carried ONLY here: the snapshot rebuild re-expresses this set from these
-    // hashes, and nothing else ever reads the field.
+    // `exclude_reincluded_sets` reads these to strip a re-included set's hashes
+    // from the stable diff. Nothing else does.
     assert_eq!(
         deleted.checksums.as_ref(),
         candidate(7).checksums.as_slice(),
-        "a held-back set carries the checksums the stable rebuild needs"
+        "a held-back set carries the checksums the re-include exclusion needs"
     );
 
     let kept = missing_from_candidate(
@@ -70,7 +70,7 @@ fn a_previously_deleted_candidate_is_built_held_back() {
     assert!(kept.included, "so the run enqueues it");
     assert!(
         kept.checksums.is_empty(),
-        "and it pays no allocation for a field only a held-back set reads"
+        "a non-deleted set pays no allocation for a field only the exclusion reads"
     );
 }
 
@@ -367,50 +367,61 @@ fn md5(seed: u8) -> Md5 {
     out
 }
 
-fn held_back(id: u32, collection_id: u32, checksums: &[Md5]) -> MissingBeatmapset {
-    MissingBeatmapset {
-        id,
-        status: MissingStatus::NotInstalled,
+/// A diff whose `manually_deleted` carries the given stable hashes for one
+/// collection. The fold sources from here, not from the scan's missing list.
+fn stable_deleted(collection_id: u32, hashes: &[Md5]) -> (u32, SnapshotDiff) {
+    (
         collection_id,
-        collection_name: format!("col - {collection_id}"),
-        included: false,
-        previously_deleted: true,
-        checksums: checksums.to_vec().into_boxed_slice(),
-        enrich_diff_id: None,
-    }
+        SnapshotDiff {
+            manually_deleted: CollectionSnapshot {
+                stable_hashes: hashes.iter().map(|&h| checksum::to_hex(h)).collect(),
+                lazer_ids: Vec::new(),
+            },
+            manually_added: CollectionSnapshot::default(),
+        },
+    )
 }
 
-/// Stable snapshots are keyed by beatmap hash, so a held-back set is re-expressed
-/// from the checksums the scan captured. An INCLUDED set must not be folded in —
-/// it is genuinely absent from the library and the next scan should keep finding
-/// it missing.
-#[test]
-fn rebuild_readds_only_held_back_sets_stable() {
-    let (a, m, b) = (md5(0xa1), md5(0xcc), md5(0xb2));
-    let mut files = HashMap::from([(100, snapshot_file(100, &[a], &[]))]);
-    let mut fetchable = held_back(2, 100, &[b]);
-    fetchable.included = true;
-    fetchable.previously_deleted = false;
+/// A diff whose `manually_deleted` carries the given lazer ids for one
+/// collection.
+fn lazer_deleted(collection_id: u32, ids: &[u64]) -> (u32, SnapshotDiff) {
+    (
+        collection_id,
+        SnapshotDiff {
+            manually_deleted: CollectionSnapshot {
+                stable_hashes: Vec::new(),
+                lazer_ids: ids.to_vec(),
+            },
+            manually_added: CollectionSnapshot::default(),
+        },
+    )
+}
 
-    retain_held_back_in_snapshots(
-        &mut files,
-        OsuClient::Stable,
-        &[held_back(3, 100, &[m]), fetchable],
-    );
+/// Stable snapshots are keyed by beatmap hash. Only what the old baseline
+/// recorded as deleted rejoins the new one.
+#[test]
+fn rebuild_folds_only_manually_deleted_stable_hashes() {
+    let (a, m) = (md5(0xa1), md5(0xcc));
+    let mut files = HashMap::from([(100, snapshot_file(100, &[a], &[]))]);
+    let diffs = HashMap::from([stable_deleted(100, &[m])]);
+
+    retain_held_back_in_snapshots(&mut files, OsuClient::Stable, &diffs);
 
     assert_eq!(
         files[&100].snapshot.stable_hashes,
         vec![checksum::to_hex(a), checksum::to_hex(m)],
-        "the held-back set rejoins the baseline; the still-missing one does not"
+        "the deleted set rejoins the baseline"
     );
 }
 
-/// Lazer snapshots are keyed by set id, so the same decision reads a different
-/// field. Both arms exist, so both are enumerated.
+/// Lazer snapshots are keyed by set id. Both arms exist, so both are enumerated.
 #[test]
-fn rebuild_readds_only_held_back_sets_lazer() {
+fn rebuild_folds_only_manually_deleted_lazer_ids() {
     let mut files = HashMap::from([(100, snapshot_file(100, &[], &[1]))]);
-    retain_held_back_in_snapshots(&mut files, OsuClient::Lazer, &[held_back(3, 100, &[])]);
+    let diffs = HashMap::from([lazer_deleted(100, &[3])]);
+
+    retain_held_back_in_snapshots(&mut files, OsuClient::Lazer, &diffs);
+
     assert_eq!(files[&100].snapshot.lazer_ids, vec![1, 3]);
     assert!(
         files[&100].snapshot.stable_hashes.is_empty(),
@@ -418,18 +429,136 @@ fn rebuild_readds_only_held_back_sets_lazer() {
     );
 }
 
-/// A held-back set only rejoins ITS OWN collection's baseline.
+/// A deleted entry only rejoins ITS OWN collection's baseline.
 #[test]
-fn rebuild_is_scoped_to_the_held_back_sets_collection() {
+fn rebuild_is_scoped_to_the_diffs_collection() {
     let mut files = HashMap::from([
         (100, snapshot_file(100, &[], &[1])),
         (200, snapshot_file(200, &[], &[9])),
     ]);
-    retain_held_back_in_snapshots(&mut files, OsuClient::Lazer, &[held_back(3, 100, &[])]);
+    let diffs = HashMap::from([lazer_deleted(100, &[3])]);
+
+    retain_held_back_in_snapshots(&mut files, OsuClient::Lazer, &diffs);
+
     assert_eq!(files[&100].snapshot.lazer_ids, vec![1, 3]);
     assert_eq!(
         files[&200].snapshot.lazer_ids,
         vec![9],
-        "collection 200 holds nothing back, so its baseline is untouched"
+        "collection 200 has no diff, so its baseline is untouched"
+    );
+}
+
+/// The fold sources from the baseline diff, not the scan's missing list. A set
+/// the user marked installed is absent from the missing list (and the next
+/// scan's ignored-maps gate hides it from the candidate list entirely), but it
+/// stays in `manually_deleted` for as long as it is absent from the local
+/// library. The fold must preserve it.
+#[test]
+fn rebuild_preserves_a_deleted_set_absent_from_the_missing_list() {
+    let mut files = HashMap::from([(100, snapshot_file(100, &[], &[1]))]);
+    let diffs = HashMap::from([lazer_deleted(100, &[5])]);
+
+    retain_held_back_in_snapshots(&mut files, OsuClient::Lazer, &diffs);
+
+    assert_eq!(
+        files[&100].snapshot.lazer_ids,
+        vec![1, 5],
+        "a marked-installed set's deletion record survives the fold"
+    );
+}
+
+// ── re-include exclusion (strips re-included sets before the fold) ───────────
+
+fn missing_entry(
+    id: u32,
+    collection_id: u32,
+    included: bool,
+    previously_deleted: bool,
+) -> MissingBeatmapset {
+    MissingBeatmapset {
+        id,
+        status: MissingStatus::NotInstalled,
+        collection_id,
+        collection_name: format!("col {collection_id}"),
+        included,
+        previously_deleted,
+        checksums: Box::new([]),
+        enrich_diff_id: None,
+    }
+}
+
+/// A re-included set must be stripped from the diff's `manually_deleted` before
+/// the fold, or the run writes it back as deleted and the next scan undoes the
+/// re-include. A held-back set (not re-included) stays.
+#[test]
+fn exclude_reincluded_strips_reincluded_keeps_held_back_lazer() {
+    let diffs = lazer_deleted(100, &[3, 5]);
+    let missing = vec![
+        missing_entry(3, 100, true, true),  // re-included
+        missing_entry(5, 100, false, true), // still held back
+    ];
+
+    let result = exclude_reincluded_sets(HashMap::from([diffs]), OsuClient::Lazer, &missing);
+
+    assert_eq!(result[&100].manually_deleted.lazer_ids, vec![5]);
+}
+
+/// Same exclusion on the stable arm: the re-included set's hashes are removed.
+#[test]
+fn exclude_reincluded_strips_reincluded_stable() {
+    let (m, r) = (md5(0xcc), md5(0xdd));
+    let diffs = stable_deleted(100, &[m, r]);
+    let missing = vec![
+        MissingBeatmapset {
+            id: 3,
+            status: MissingStatus::NotInstalled,
+            collection_id: 100,
+            collection_name: "col 100".to_string(),
+            included: true,
+            previously_deleted: true,
+            checksums: Box::new([m]),
+            enrich_diff_id: None,
+        },
+        missing_entry(5, 100, false, true),
+    ];
+
+    let result = exclude_reincluded_sets(HashMap::from([diffs]), OsuClient::Stable, &missing);
+
+    assert_eq!(
+        result[&100].manually_deleted.stable_hashes,
+        vec![checksum::to_hex(r)],
+        "only the re-included set's hash is removed; the held-back set stays"
+    );
+}
+
+/// No re-includes → the diff is returned unchanged.
+#[test]
+fn exclude_reincluded_noop_without_reincludes() {
+    let diffs = lazer_deleted(100, &[3, 5]);
+    let missing = vec![missing_entry(3, 100, false, true)];
+
+    let result = exclude_reincluded_sets(HashMap::from([diffs]), OsuClient::Lazer, &missing);
+
+    assert_eq!(result[&100].manually_deleted.lazer_ids, vec![3, 5]);
+}
+
+/// Re-including a set in one collection must not strip it from another
+/// collection's diff. A set can be held-back in multiple collections; the
+/// re-include is per-collection.
+#[test]
+fn exclude_reincluded_is_scoped_to_the_sets_own_collection() {
+    let diffs = HashMap::from([lazer_deleted(100, &[5]), lazer_deleted(200, &[5])]);
+    let missing = vec![missing_entry(5, 100, true, true)]; // re-included in 100 only
+
+    let result = exclude_reincluded_sets(diffs, OsuClient::Lazer, &missing);
+
+    assert!(
+        result[&100].manually_deleted.lazer_ids.is_empty(),
+        "collection 100's hold-back for set 5 is stripped (re-included)"
+    );
+    assert_eq!(
+        result[&200].manually_deleted.lazer_ids,
+        vec![5],
+        "collection 200's hold-back for set 5 survives"
     );
 }

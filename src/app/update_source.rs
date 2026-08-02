@@ -128,11 +128,10 @@ pub struct MissingBeatmapset {
     pub included: bool,
     pub previously_deleted: bool,
     /// This set's upstream beatmap checksums, captured at scan time and **empty
-    /// unless `previously_deleted`** — only a held-back set reads them, to keep
-    /// itself recorded as deleted in the snapshot a completed run writes
-    /// (`snapshots::retain_held_back`). The stable client's snapshot is keyed by
-    /// beatmap hash, so a set id alone cannot be re-expressed in it; the lazer
-    /// snapshot keys on the set id and never reads this at all.
+    /// unless `previously_deleted`**. Read only by
+    /// `runtime::scan::exclude_reincluded_sets` to strip a re-included set's
+    /// hashes from the stable baseline diff before the fold. The lazer arm keys
+    /// on set id and never reads this.
     pub checksums: Box<[Md5]>,
     /// One diff (beatmap) id from this set, captured at scan time, to seed the
     /// osu-batch enrichment pager (`GET /beatmaps?ids[]=` keys on diff ids, not
@@ -159,6 +158,12 @@ pub struct ScanState {
     pub scan_status: ScanStatus,
     pub scan_generation: u64,
     pub failed_beatmapset_count: usize,
+    /// `previous \ current` per scanned collection, captured at scan time so the
+    /// run-request path can fold held-back entries into the baseline without
+    /// re-reading the old files. Stable from scan to request: the local library
+    /// data it was computed against is the same cached data the request rebuilds
+    /// from, and marking sets installed changes neither side of the diff.
+    pub snapshot_diffs: HashMap<u32, crate::app::snapshots::SnapshotDiff>,
 }
 
 impl ScanState {
@@ -170,6 +175,7 @@ impl ScanState {
             scan_status: ScanStatus::Idle,
             scan_generation: 0,
             failed_beatmapset_count: 0,
+            snapshot_diffs: HashMap::new(),
         }
     }
 }
@@ -1172,6 +1178,7 @@ impl UpdateSource {
         self.selection.collections_default_order.clear();
         self.scan.all_local_checksums.clear();
         self.scan.local_beatmapsets.clear();
+        self.scan.snapshot_diffs.clear();
         self.selection.cached_missing_sets.clear();
         self.selection.marked_installed.clear();
         self.selection.collections_cursor = None;

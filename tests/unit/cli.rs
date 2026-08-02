@@ -101,7 +101,7 @@ fn cli_report_counts_hold_nothing_back_without_a_deletion() {
 #[test]
 fn cli_persisted_baselines_keep_held_back_sets_recorded_as_deleted() {
     use super::persist_baselines;
-    use crate::app::snapshots::{self, CollectionSnapshot, CollectionSnapshotFile};
+    use crate::app::snapshots::{self, CollectionSnapshot, CollectionSnapshotFile, SnapshotDiff};
     use crate::osu_db::{Md5, OsuClient, checksum};
 
     fn md5(seed: u8) -> Md5 {
@@ -112,8 +112,6 @@ fn cli_persisted_baselines_keep_held_back_sets_recorded_as_deleted() {
     let (a, m) = (md5(0xa1), md5(0xcc));
     let dir = tempfile::tempdir().expect("temp dir");
 
-    let mut deleted = missing(3, 100, true);
-    deleted.checksums = Box::new([m]);
     // The scan's baseline reads the LOCAL library, where M is already gone.
     let current = HashMap::from([(
         100,
@@ -126,13 +124,18 @@ fn cli_persisted_baselines_keep_held_back_sets_recorded_as_deleted() {
             },
         ),
     )]);
+    let diffs = HashMap::from([(
+        100,
+        SnapshotDiff {
+            manually_deleted: CollectionSnapshot {
+                stable_hashes: vec![checksum::to_hex(m)],
+                lazer_ids: Vec::new(),
+            },
+            manually_added: CollectionSnapshot::default(),
+        },
+    )]);
 
-    persist_baselines(
-        dir.path(),
-        current,
-        OsuClient::Stable,
-        &[missing(2, 100, false), deleted],
-    );
+    persist_baselines(dir.path(), current, OsuClient::Stable, &diffs);
 
     let written =
         snapshots::load(&snapshots::snapshot_path(dir.path(), 100)).expect("baseline written");

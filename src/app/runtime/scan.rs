@@ -497,6 +497,7 @@ fn spawn_fetch_task(
         .unwrap_or_default();
 
     app.home.update.scan.scan_status = ScanStatus::FetchingCollection;
+    app.home.update.scan.snapshot_diffs = snapshot_diffs.clone();
 
     let handle = tokio::spawn(async move {
         let result = fetch_missing_beatmapsets(
@@ -884,8 +885,66 @@ pub async fn fetch_missing_beatmapsets(
     })
 }
 
-/// Rebuild every scanned collection's snapshot so the sets this scan held back
-/// stay recorded as deleted in it.
+/// Strip entries the user re-included this session from each collection's
+/// `manually_deleted`, so [`retain_held_back_in_snapshots`] does not carry them
+/// back into the baseline as deleted. A re-include is the user's decision to
+/// re-fetch a previously-deleted set; writing it back as deleted would undo the
+/// re-include on the next scan (the set would be held back again before the user
+/// can import what the run fetched). The headless CLI has no re-include, so only
+/// the TUI call site needs this.
+pub fn exclude_reincluded_sets(
+    mut diffs: HashMap<u32, snapshots::SnapshotDiff>,
+    client_type: OsuClient,
+    missing: &[MissingBeatmapset],
+) -> HashMap<u32, snapshots::SnapshotDiff> {
+    let reincluded: Vec<&MissingBeatmapset> = missing
+        .iter()
+        .filter(|set| set.included && set.previously_deleted)
+        .collect();
+    if reincluded.is_empty() {
+        return diffs;
+    }
+    // Group by collection so a re-include in one collection does not strip
+    // another collection's hold-back for the same set.
+    match client_type {
+        OsuClient::Stable => {
+            let mut excluded_by_col: HashMap<u32, HashSet<String>> = HashMap::new();
+            for set in &reincluded {
+                let entry = excluded_by_col.entry(set.collection_id).or_default();
+                for &cksum in set.checksums.iter() {
+                    entry.insert(checksum::to_hex(cksum));
+                }
+            }
+            for (collection_id, diff) in diffs.iter_mut() {
+                if let Some(excluded) = excluded_by_col.get(collection_id) {
+                    diff.manually_deleted
+                        .stable_hashes
+                        .retain(|h| !excluded.contains(h));
+                }
+            }
+        }
+        OsuClient::Lazer => {
+            let mut excluded_by_col: HashMap<u32, HashSet<u64>> = HashMap::new();
+            for set in &reincluded {
+                excluded_by_col
+                    .entry(set.collection_id)
+                    .or_default()
+                    .insert(u64::from(set.id));
+            }
+            for (collection_id, diff) in diffs.iter_mut() {
+                if let Some(excluded) = excluded_by_col.get(collection_id) {
+                    diff.manually_deleted
+                        .lazer_ids
+                        .retain(|id| !excluded.contains(id));
+                }
+            }
+        }
+    }
+    diffs
+}
+
+/// Rebuild every scanned collection's snapshot so the sets the old baseline
+/// recorded as deleted stay recorded as deleted in the new one.
 ///
 /// Both snapshot writers go through here — the TUI's completed-run persist
 /// (`request_selective_download` → `persist_snapshots_if_complete`) and the
@@ -894,28 +953,26 @@ pub async fn fetch_missing_beatmapsets(
 /// omits exactly the sets the user deleted. Without this, finishing a run (or
 /// merely running the report) resets the baseline and the next scan concludes
 /// nothing was ever deleted.
+///
+/// Sourcing from `snapshot_diffs` rather than the scan's missing list is what
+/// keeps a marked-installed set's deletion alive: marking installed pulls the
+/// row from the missing list, and the next scan's ignored-maps gate hides it
+/// before the candidate list is built, so no missing-list fold can ever see it
+/// again. The diff (`previous \ current`) still carries it for as long as the
+/// set is absent from the local library.
 pub fn retain_held_back_in_snapshots(
     snapshot_files: &mut HashMap<u32, snapshots::CollectionSnapshotFile>,
     client_type: OsuClient,
-    missing: &[MissingBeatmapset],
+    snapshot_diffs: &HashMap<u32, snapshots::SnapshotDiff>,
 ) {
-    // Holding nothing back is the overwhelmingly common scan, so settle it once
-    // instead of re-walking `missing` and allocating a vec per collection to
-    // discover the same emptiness N times.
-    let held_back: Vec<&MissingBeatmapset> = missing.iter().filter(|set| !set.included).collect();
-    if held_back.is_empty() {
-        return;
-    }
     for (collection_id, file) in snapshot_files.iter_mut() {
-        let for_collection: Vec<(u32, &[Md5])> = held_back
-            .iter()
-            .filter(|set| set.collection_id == *collection_id)
-            .map(|set| (set.id, set.checksums.as_ref()))
-            .collect();
-        if for_collection.is_empty() {
+        let Some(diff) = snapshot_diffs.get(collection_id) else {
+            continue;
+        };
+        if diff.manually_deleted.is_empty() {
             continue;
         }
-        snapshots::retain_held_back(&mut file.snapshot, client_type, for_collection);
+        snapshots::retain_held_back(&mut file.snapshot, client_type, &diff.manually_deleted);
     }
 }
 
@@ -951,15 +1008,11 @@ pub(crate) fn missing_from_candidate(
         // re-include it in the browse.
         included: !previously_deleted,
         previously_deleted,
-        // Only a held-back set's checksums are ever read (to keep it recorded in
-        // the stable snapshot), so a scan does not pay an allocation per missing
-        // set for a field nothing will look at — and the lazer arm never reads
-        // them at all.
-        //
-        // This must keep reading the SAME slice `is_in_snapshot` just read above:
-        // that shared source is the only reason a set flagged deleted is
-        // guaranteed to carry a hash the rebuild can re-express it with. Sourcing
-        // it elsewhere fails open and silently (`snapshots::retain_held_back`).
+        // Read only by `exclude_reincluded_sets` to strip a re-included set's
+        // hashes from the stable diff before the fold. Must come from the SAME
+        // slice `is_in_snapshot` just read: that shared source is the only
+        // guarantee a flagged set carries the hashes that match the diff, so the
+        // strip actually removes them. Sourcing elsewhere fails open and silently.
         checksums: if previously_deleted {
             beatmapset.checksums.clone().into_boxed_slice()
         } else {
