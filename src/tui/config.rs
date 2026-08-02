@@ -266,9 +266,12 @@ fn build_config_items(
             )
         };
         items.push_focusable(field, item);
-    }
-    if show_chrome && focus == ConfigField::MirrorOsuOfficial && !logged_in {
-        items.push(widgets::help_item(HELP_OSU_OFFICIAL_LOCKED));
+        // The locked hint rides under the osu!official row itself, not the
+        // loop's tail: the try-order is user-reorderable, so a tail slot can
+        // land it under a different mirror.
+        if show_chrome && field == ConfigField::MirrorOsuOfficial && !logged_in {
+            items.push(widgets::help_item(HELP_OSU_OFFICIAL_LOCKED));
+        }
     }
     for (idx, row) in form.custom_mirrors.rows().iter().enumerate() {
         let field = ConfigField::MirrorCustomUrl(idx);
