@@ -980,6 +980,10 @@ mod tests;
 #[path = "../../../tests/unit/runtime_loop.rs"]
 mod loop_tests;
 
+#[cfg(test)]
+#[path = "../../../tests/unit/runtime_dispatch.rs"]
+mod dispatch_tests;
+
 fn signal_abort_downloads(downloads: &mut HashMap<DownloadId, DownloadHandle>) {
     if downloads.is_empty() {
         return;
