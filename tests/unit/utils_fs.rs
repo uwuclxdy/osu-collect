@@ -10,8 +10,9 @@ fn pretty_path_collapses_home_subpath() {
         return; // no home configured in this environment — skip
     };
     let songs = home.join("Songs");
-    let expected = format!("~{}Songs", std::path::MAIN_SEPARATOR);
-    assert_eq!(pretty_path(&songs).as_ref(), expected);
+    // Display-only: `~` is followed by `/` on every platform — `pretty_path`
+    // normalizes the Windows separator away (the filesystem never reads this).
+    assert_eq!(pretty_path(&songs).as_ref(), "~/Songs");
 }
 
 #[test]
@@ -135,6 +136,17 @@ fn pretty_path_empty_path_does_not_panic() {
     let _ = result.as_ref();
 }
 
+/// `pretty_path` normalizes `\` to `/` on Windows (display-only); on other
+/// platforms the string passes through untouched.
+#[cfg(windows)]
+fn normalized(s: &str) -> String {
+    s.replace('\\', "/")
+}
+#[cfg(not(windows))]
+fn normalized(s: &str) -> String {
+    s.to_string()
+}
+
 #[test]
 fn pretty_path_strips_windows_verbatim_drive_prefix() {
     // `std::fs::canonicalize` hands back `\\?\C:\…` on Windows; the TUI must show
@@ -142,7 +154,7 @@ fn pretty_path_strips_windows_verbatim_drive_prefix() {
     // (the embedded `C:\Users\cloudy` is never the test host's home → no `~`).
     assert_eq!(
         pretty_path(Path::new(r"\\?\C:\Users\cloudy\Downloads\play later-67")).as_ref(),
-        r"C:\Users\cloudy\Downloads\play later-67"
+        normalized(r"C:\Users\cloudy\Downloads\play later-67")
     );
 }
 
@@ -151,6 +163,6 @@ fn pretty_path_strips_windows_verbatim_unc_prefix() {
     // `\\?\UNC\server\share` is the verbatim form of `\\server\share`.
     assert_eq!(
         pretty_path(Path::new(r"\\?\UNC\server\share\maps")).as_ref(),
-        r"\\server\share\maps"
+        normalized(r"\\server\share\maps")
     );
 }
