@@ -405,6 +405,7 @@ fn open_collection_browse_descends_immediately_and_requests_enrichment() {
 
     let mut app = app();
     app.home.source = GetMapsSource::Collection;
+    app.home.collection.set_value("7");
     app.home.set_resolved_collection(7, vec![10, 20]);
     // Nothing cached this session → titles still need paging.
     app.home.resolved_enrich_pairs = vec![(10, 100), (20, 200)];
@@ -434,6 +435,7 @@ fn open_collection_browse_fully_cached_descends_without_enrichment() {
 
     let mut app = app();
     app.home.source = GetMapsSource::Collection;
+    app.home.collection.set_value("7");
     app.home.set_resolved_collection(7, vec![10, 20]);
     app.home.resolved_enrich_pairs = vec![(10, 100), (20, 200)];
     // Both sets already known this session → seeding prunes every page.

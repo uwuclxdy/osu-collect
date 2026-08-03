@@ -857,6 +857,10 @@ impl HomeTab {
     /// Cache the resolved beatmapset id list for the current collection. Read
     /// by `App::request_download` to intersect with persisted failures.
     pub fn set_resolved_collection(&mut self, collection_id: u32, beatmapset_ids: Vec<u32>) {
+        debug_assert!(
+            self.collection_field_names(collection_id),
+            "resolved collection id {collection_id} must match the collection field"
+        );
         self.resolved_collection = Some((collection_id, beatmapset_ids));
     }
 

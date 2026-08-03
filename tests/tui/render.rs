@@ -189,6 +189,7 @@ fn home_cta_scrolls_into_view_on_short_terminal() {
     // A picked subset makes the CTA read the unique "download (2)"; the bare
     // "download" label would otherwise collide with the "download directory"
     // field, so this pins the assertion to the button, not surrounding chrome.
+    app.home.collection.set_value("1");
     app.home.set_resolved_collection(1, vec![10, 20, 30]);
     app.home.collection_browse.set_rows(
         vec![
@@ -263,6 +264,7 @@ fn collection_view_maps_button_shows_when_resolved() {
     use osu_collect::app::GetMapsSource;
     let mut app = make_app();
     app.home.source = GetMapsSource::Collection;
+    app.home.collection.set_value("7");
     app.home.set_resolved_collection(7, vec![10, 20, 30]);
     let content = render_content(&app, 80, 30);
     assert!(
@@ -276,6 +278,7 @@ fn collection_view_maps_button_renders_above_download_section() {
     use osu_collect::app::GetMapsSource;
     let mut app = make_app();
     app.home.source = GetMapsSource::Collection;
+    app.home.collection.set_value("7");
     app.home.set_resolved_collection(7, vec![10, 20, 30]);
     // `render_content` is row-major, so an earlier byte index == a higher row.
     // `view N maps` now groups with the collection field, above the shared
@@ -361,6 +364,7 @@ fn collection_browse_shows_focus_caret_and_uppercase_title() {
 
     let mut app = make_app();
     app.home.source = GetMapsSource::Collection;
+    app.home.collection.set_value("7");
     app.home.set_resolved_collection(7, vec![10, 20, 30]);
     app.home.focus = HomeField::CollectionBrowse;
     // Descend into browse&pick: the list pane owns focus, so its cursor row draws
@@ -1371,6 +1375,7 @@ fn collection_browse_opens_id_only_immediately_on_enter() {
 
     let mut app = make_app();
     app.home.source = GetMapsSource::Collection;
+    app.home.collection.set_value("7");
     app.home.set_resolved_collection(7, vec![10, 20, 30]);
     // Unenriched (set, diff) pairs so the open still has titles to page.
     app.home.resolved_enrich_pairs = vec![(10, 100), (20, 200), (30, 300)];

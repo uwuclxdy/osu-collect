@@ -174,7 +174,7 @@ fn s_cycles_the_other_enabled_buttons_when_already_on_one() {
     // Non-empty collection + default mirrors → download enabled; a resolved
     // collection → `view N maps` enabled. Enabled buttons in field order are
     // [CollectionBrowse, Download].
-    app.home.collection.set_value("123");
+    app.home.collection.set_value("7");
     app.home.set_resolved_collection(7, vec![10, 20, 30]);
     app.home.focus = HomeField::Collection;
     // First `s` (not on a button) jumps to the last enabled button.
@@ -1400,9 +1400,11 @@ fn collection_pick_download_uses_snapshotted_id_not_late_resolve() {
     fn browsing_111(resolved: u32) -> App {
         let mut app = make_app();
         app.home.source = GetMapsSource::Collection;
-        // The state an `open_collection_browse` for 111 leaves: the field naming
-        // it, the snapshot, and the browse bound to it.
-        app.home.collection.set_value("111");
+        // The state an `open_collection_browse` for 111 leaves: the field names
+        // `resolved` (a later resolve that landed), and the browse stays bound to
+        // 111 — the mismatch tests the defence-in-depth guards inside
+        // `picked_collection_id` and the dispatch settle.
+        app.home.collection.set_value(resolved.to_string());
         app.home.collection_browse_id = Some(111);
         app.home.collection_browse.set_rows(
             vec![
@@ -1470,6 +1472,7 @@ fn reopening_collection_browse_preserves_picks() {
     use osu_collect::app::{GetMapsSource, HomeField};
     let mut app = make_app();
     app.home.source = GetMapsSource::Collection;
+    app.home.collection.set_value("7");
     app.home.set_resolved_collection(7, vec![10, 20, 30]);
     app.home.focus = HomeField::CollectionBrowse;
 
@@ -1561,19 +1564,20 @@ fn a_retyped_collection_id_cannot_dispatch_the_old_collections_picks() {
     );
 }
 
-/// The settle inside the dispatch, with nothing having run it first. Today every
-/// collection-field edit funnels through `mutate_collection_then_resolve`, so
-/// this pair is not reachable from the keyboard — that is exactly what the guard
-/// is for, and a fixture built by hand is the only way to pin defence in depth.
-/// Both halves are load-bearing here: `picked_collection_id` alone accepts this
-/// pair (browse id and resolved id still agree on 42), and the settle alone
-/// leaves the browse id standing for a reader that goes straight to it.
+/// The settle inside the dispatch, pinned against a state the production path CAN
+/// reach: the field edits away from the resolved id before the settle runs. The
+/// dispatch's own settle is what catches it — the fixture just skips the keystroke
+/// that would have run the settle first. Both halves are load-bearing here:
+/// `picked_collection_id` alone accepts this pair (browse id and resolved id still
+/// agree on 42), and the settle alone leaves the browse id standing for a reader
+/// that goes straight to it.
 #[test]
 fn the_picked_subset_dispatch_settles_before_it_reads_the_browse_id() {
     use osu_collect::app::{BrowseRow, GetMapsSource};
 
     let mut app = make_app();
     app.home.source = GetMapsSource::Collection;
+    app.home.collection.set_value("42");
     app.home.set_resolved_collection(42, vec![10, 20]);
     app.home.collection_browse_id = Some(42);
     app.home.collection_browse.set_rows(
@@ -1607,6 +1611,7 @@ fn the_picked_subset_dispatch_settles_before_it_reads_the_browse_id() {
     // fixture, differing only in whether anything is checked.
     let mut app = make_app();
     app.home.source = GetMapsSource::Collection;
+    app.home.collection.set_value("42");
     app.home.set_resolved_collection(42, vec![10, 20]);
     app.home.collection_browse_id = Some(42);
     app.home.collection_browse.set_rows(

@@ -929,6 +929,7 @@ fn download_button_disabled_with_no_mirrors_on_every_source() {
     // collection-subset arm: a proper subset is picked
     home.source = GetMapsSource::Collection;
     home.collection_browse_id = Some(5);
+    home.collection.set_value("5");
     home.set_resolved_collection(5, vec![10, 20, 30]);
     home.collection_browse.set_rows(
         vec![
