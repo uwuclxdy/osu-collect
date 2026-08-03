@@ -29,9 +29,10 @@ const LABEL_STATUS: &str = "categories";
 const LABEL_SORT: &str = "sort";
 const LABEL_ADVANCED: &str = "advanced filters";
 const LABEL_CTA: &str = "find";
-/// The six osu!supporter-gated facets. Hidden outright for anyone else — the
-/// design language's login-gated-section rule — so none of these labels renders
-/// unless `App.config.supporter` is a confirmed `true`.
+/// Rank and played are the two osu!supporter-gated facets. Genre, language,
+/// extra, and explicit work without supporter (live-probed 2026-08-03) and
+/// render unconditionally. The two gated labels never render unless
+/// `App.config.supporter` is a confirmed `true`.
 const LABEL_EXPLICIT: &str = "explicit";
 const LABEL_GENRE: &str = "genre";
 const LABEL_LANGUAGE: &str = "language";
@@ -142,20 +143,18 @@ pub fn push_form_rows(
         ),
     );
     // `explicit` sits between categories and special, matching the osu! website's
-    // own filter block. Supporter-gated like the five in the advanced section.
-    if supporter {
-        items.push_focusable(
-            HomeField::FindExplicit,
-            widgets::cycle_item(
-                LABEL_EXPLICIT,
-                find.explicit_labels(),
-                find.explicit_label(),
-                focus == HomeField::FindExplicit,
-                LABEL_WIDTH,
-                width,
-            ),
-        );
-    }
+    // own filter block.
+    items.push_focusable(
+        HomeField::FindExplicit,
+        widgets::cycle_item(
+            LABEL_EXPLICIT,
+            find.explicit_labels(),
+            find.explicit_label(),
+            focus == HomeField::FindExplicit,
+            LABEL_WIDTH,
+            width,
+        ),
+    );
     items.push_focusable(
         HomeField::FindSpecial,
         widgets::cycle_item(
@@ -204,9 +203,7 @@ pub fn push_form_rows(
         advanced_filters_item(show_advanced, advanced_focused),
     );
     if show_advanced {
-        if supporter {
-            push_supporter_facets(items, find, focus, editing, width);
-        }
+        push_advanced_facets(items, find, focus, editing, width, supporter);
         for (field, input) in [
             (HomeField::FindStars, &find.stars),
             (HomeField::FindAr, &find.ar),
@@ -281,18 +278,23 @@ pub fn push_form_rows(
     }
 }
 
-/// The five supporter facets that open the advanced section, ahead of the
-/// per-attribute ranges: `genre  language  extra  rank  played`. `extra` and
-/// `rank` are MULTI-select — several chips can be on at once, so each renders
-/// its own pick marks ([`widgets::multi_chip_item`]) rather than a single
-/// accented value, and descends into a chip cursor on `↵`.
-fn push_supporter_facets(
+/// The five facets that open the advanced section, ahead of the per-attribute
+/// ranges: `genre  language  extra  rank  played`. `extra` and `rank` are
+/// MULTI-select — several chips can be on at once, so each renders its own pick
+/// marks ([`widgets::multi_chip_item`]) rather than a single accented value,
+/// and descends into a chip cursor on `↵`.
+///
+/// Genre, language, and extra render unconditionally (live-probed 2026-08-03);
+/// rank and played only render when `supporter` is true.
+fn push_advanced_facets(
     items: &mut widgets::FormItems<HomeField>,
     find: &FindSource,
     focus: HomeField,
     editing: bool,
     width: u16,
+    supporter: bool,
 ) {
+    // Ungated: genre, language, extra.
     for (field, label, labels, selected) in [
         (
             HomeField::FindGenre,
@@ -312,52 +314,53 @@ fn push_supporter_facets(
             widgets::cycle_item(label, labels, selected, focus == field, LABEL_WIDTH, width),
         );
     }
-    for (field, label, labels, chips) in [
-        (
-            HomeField::FindExtra,
+    items.push_focusable(
+        HomeField::FindExtra,
+        widgets::multi_chip_item(
             LABEL_EXTRA,
             find.extra_labels(),
-            &find.extra,
-        ),
-        (
-            HomeField::FindRank,
-            LABEL_RANK,
-            find.rank_labels(),
-            &find.rank,
-        ),
-    ] {
-        items.push_focusable(
-            field,
-            widgets::multi_chip_item(
-                label,
-                labels,
-                |idx| chips.contains(idx),
-                chips.cursor(),
-                focus == field,
-                editing && focus == field,
-                LABEL_WIDTH,
-                width,
-            ),
-        );
-        // The hint anchors under whichever row of the pair holds focus, so it
-        // lands between `extra` and `rank` when `extra` is focused and below
-        // `rank` when `rank` is. A row whose second stage is advertised nowhere
-        // on screen is a stage nobody finds.
-        if focus == field {
-            push_chip_hint(items, focus, editing);
-        }
-    }
-    items.push_focusable(
-        HomeField::FindPlayed,
-        widgets::cycle_item(
-            LABEL_PLAYED,
-            find.played_labels(),
-            find.played_label(),
-            focus == HomeField::FindPlayed,
+            |idx| find.extra.contains(idx),
+            find.extra.cursor(),
+            focus == HomeField::FindExtra,
+            editing && focus == HomeField::FindExtra,
             LABEL_WIDTH,
             width,
         ),
     );
+    if focus == HomeField::FindExtra {
+        push_chip_hint(items, focus, editing);
+    }
+
+    // Supporter-gated: rank, played.
+    if supporter {
+        items.push_focusable(
+            HomeField::FindRank,
+            widgets::multi_chip_item(
+                LABEL_RANK,
+                find.rank_labels(),
+                |idx| find.rank.contains(idx),
+                find.rank.cursor(),
+                focus == HomeField::FindRank,
+                editing && focus == HomeField::FindRank,
+                LABEL_WIDTH,
+                width,
+            ),
+        );
+        if focus == HomeField::FindRank {
+            push_chip_hint(items, focus, editing);
+        }
+        items.push_focusable(
+            HomeField::FindPlayed,
+            widgets::cycle_item(
+                LABEL_PLAYED,
+                find.played_labels(),
+                find.played_label(),
+                focus == HomeField::FindPlayed,
+                LABEL_WIDTH,
+                width,
+            ),
+        );
+    }
 }
 
 /// The one `└ …` tooltip the multi-select pair carries, anchored under

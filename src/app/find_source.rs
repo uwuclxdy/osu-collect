@@ -918,13 +918,18 @@ const _: () = assert!(matches!(
 /// and editable, so there is no hidden query state. `none` is the plain reset.
 const PRESET_LABELS: &[&str] = &["none", "all ranked", "loved", "farm", "stream", "7★+"];
 
-// ── supporter-only facets ────────────────────────────────────────────────────
+// ── osu-only facets (partly supporter-gated) ───────────────────────────────────
 //
 // Six osu!-website facets the nzbasic database cannot express, so each forces
-// the osu route. Every one of them only took effect for a supporter token when
-// probed against the live API (2026-07-31), so the whole group is hidden unless
-// `ConfigTab::supporter` is a confirmed `true` — an unknown reads as not a
-// supporter and the rows stay hidden.
+// the osu route. Live-probed 2026-07-31 (supporter) and 2026-08-03
+// (non-supporter, aimcapped):
+//
+//   genre (g), language (l), extra (e), nsfw — active without supporter
+//   rank (r), played — require supporter (api returns total=0 without it)
+//
+// The two supporter-gated rows are hidden unless `ConfigTab::supporter` is a
+// confirmed `true`; the other four render unconditionally. Details + raw id-set
+// comparisons in `docs/references/osu-search-qdsl.md` § 3.2.
 
 /// Explicit-content chip; `explicit_idx` indexes this and [`EXPLICIT_NSFW`].
 /// `any` sends no `nsfw` parameter at all, which is what makes it the account's
@@ -1099,10 +1104,9 @@ pub struct FindSource {
     mode_idx: usize,
     status_idx: usize,
     sort_idx: usize,
-    /// The six supporter-only facets. Each is inexpressible on nzbasic, so each
-    /// forces the osu route once moved off its default; all six are hidden
-    /// entirely (rows AND tab order) unless the account is a confirmed
-    /// supporter, so a non-supporter can never move one off default.
+    /// Genre / language / extra / explicit: osu-only facets that work without
+    /// supporter (live-probed 2026-08-03). Rank and played require supporter —
+    /// those two rows are hidden for non-supporters.
     explicit_idx: usize,
     genre_idx: usize,
     language_idx: usize,
@@ -1215,14 +1219,14 @@ impl FindSource {
         self.advanced_filters_open || self.has_any_advanced_input()
     }
 
-    /// Whether any advanced-section control carries a value: the five supporter
-    /// facets that live there, or one of the 13 per-attribute range/text inputs.
-    /// The facets count unconditionally — a supporter CAN set one and then lose
-    /// the gate, and skipping them here would only swap one stranding for
-    /// another (a live value hidden instead of a disclosure pinned open).
-    /// [`clear_supporter_facets`] is what settles that case, at the flip.
-    /// `explicit` is deliberately absent — it renders in the main FILTERS block,
-    /// not behind the disclosure.
+    /// Whether any advanced-section control carries a value: the five facets
+    /// that live there, or one of the 13 per-attribute range/text inputs. The
+    /// two supporter-gated facets (rank, played) count unconditionally — a
+    /// supporter CAN set one and then lose the gate, and skipping them here
+    /// would only swap one stranding for another (a live value hidden instead of
+    /// a disclosure pinned open). [`clear_supporter_facets`] is what settles
+    /// that case, at the flip. `explicit` is deliberately absent — it renders in
+    /// the main FILTERS block, not behind the disclosure.
     ///
     /// [`clear_supporter_facets`]: Self::clear_supporter_facets
     fn has_any_advanced_input(&self) -> bool {
@@ -1246,22 +1250,21 @@ impl FindSource {
             || !self.title.value.is_empty()
     }
 
-    /// Return the six supporter facets to their defaults.
+    /// Return the two supporter-gated facets (rank, played) to their defaults.
+    /// The other four osu-only facets (genre, language, extra, explicit) are
+    /// ungated (live-probed 2026-08-03) and a non-supporter CAN set them, so
+    /// the gate closing must NOT clear their values — that would silently undo a
+    /// deliberate choice.
     ///
-    /// Run whenever the supporter gate closes, because the rows stop rendering
-    /// but the values do not stop applying: a stray facet keeps forcing the osu
-    /// route, keeps naming itself in a conflict message for a field with no row
-    /// on screen, keeps [`show_advanced_filters`] pinned true so the disclosure
-    /// no longer responds, and keeps riding into the folder tag. Cycling the
+    /// Run whenever the supporter gate closes, because rank + played stop
+    /// rendering but would still force the osu route, name themselves in a
+    /// conflict message for a field with no row on screen, pin
+    /// [`show_advanced_filters`] open, and ride into the folder tag. Cycling the
     /// preset chip was the only way out, which nobody would find.
     ///
     /// [`show_advanced_filters`]: Self::show_advanced_filters
     pub fn clear_supporter_facets(&mut self) {
-        self.explicit_idx = 0;
-        self.genre_idx = 0;
-        self.language_idx = 0;
         self.played_idx = 0;
-        self.extra.clear();
         self.rank.clear();
     }
 
@@ -1284,9 +1287,9 @@ impl FindSource {
         self.mode_idx = 0;
         self.status_idx = STATUS_DEFAULT_IDX;
         self.sort_idx = 0;
-        // The six supporter facets are osu-forcers too, so a leftover one turns
-        // a nzbasic-seeding preset (farm, stream) into a routing conflict — the
-        // exact failure the reset above exists to prevent.
+        // The two supporter-gated facets are osu-forcers too, so a leftover one
+        // turns a nzbasic-seeding preset (farm, stream) into a routing conflict —
+        // the exact failure the reset above exists to prevent.
         self.clear_supporter_facets();
         for field in [
             &mut self.query,

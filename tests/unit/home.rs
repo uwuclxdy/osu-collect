@@ -766,13 +766,13 @@ fn tab_order(home: &mut HomeTab, supporter: bool) -> Vec<HomeField> {
     }
 }
 
-const SUPPORTER_ROWS: [HomeField; 6] = [
-    HomeField::FindExplicit,
+const SUPPORTER_ROWS: [HomeField; 2] = [HomeField::FindRank, HomeField::FindPlayed];
+/// Genre, language, extra, explicit — osu-only but ungated (probed 2026-08-03).
+const UNGATED_OSU_FACETS: [HomeField; 4] = [
     HomeField::FindGenre,
     HomeField::FindLanguage,
     HomeField::FindExtra,
-    HomeField::FindRank,
-    HomeField::FindPlayed,
+    HomeField::FindExplicit,
 ];
 
 fn find_home(open_advanced: bool) -> HomeTab {
@@ -792,21 +792,33 @@ fn supporter_rows_leave_the_tab_order_for_a_non_supporter() {
     for open_advanced in [false, true] {
         let mut home = find_home(open_advanced);
         let gated = tab_order(&mut home, false);
+        // The two gated rows must not be reachable.
         for row in SUPPORTER_ROWS {
             assert!(
                 !gated.contains(&row),
                 "{row:?} is tab-reachable without supporter (advanced open: {open_advanced})"
             );
         }
-        // The rows around them are untouched, so the gate removed exactly the six.
-        assert!(gated.contains(&HomeField::FindStatus) && gated.contains(&HomeField::FindSpecial));
+        // The four ungated osu facets ARE reachable (when their section is open).
+        for row in UNGATED_OSU_FACETS {
+            let in_order = gated.contains(&row);
+            // explicit lives in the main filters block — always reachable.
+            // genre/language/extra are behind the disclosure — only when open.
+            if row == HomeField::FindExplicit || open_advanced {
+                assert!(
+                    in_order,
+                    "{row:?} must be reachable without supporter (advanced open: {open_advanced})"
+                );
+            }
+        }
     }
 }
 
 #[test]
 fn supporter_rows_join_the_tab_order_for_a_supporter() {
-    // Collapsed: only `explicit` (it lives in the main filters block); the other
-    // five are behind the disclosure and stay out until it opens.
+    // Collapsed: explicit is always reachable (filters block); the five advanced
+    // facets (genre, language, extra, rank, played) are behind the disclosure and
+    // stay out until it opens — regardless of supporter status.
     let mut home = find_home(false);
     let collapsed = tab_order(&mut home, true);
     assert!(collapsed.contains(&HomeField::FindExplicit));
@@ -825,14 +837,22 @@ fn supporter_rows_join_the_tab_order_for_a_supporter() {
 
     let mut home = find_home(true);
     let open = tab_order(&mut home, true);
+    // The ungated four are always reachable when the disclosure is open; the
+    // gated two are only reachable for a supporter.
+    for row in UNGATED_OSU_FACETS {
+        assert!(
+            open.contains(&row),
+            "{row:?} (ungated) missing from the open tab order"
+        );
+    }
     for row in SUPPORTER_ROWS {
         assert!(
             open.contains(&row),
-            "{row:?} missing from the supporter tab order"
+            "{row:?} (supporter-gated) missing from the open tab order"
         );
     }
     // Order follows the render: explicit between categories and special; the
-    // five facets open the advanced section, ahead of `stars`.
+    // advanced facets open the advanced section, ahead of `stars`.
     let at = |field: HomeField| {
         open.iter()
             .position(|&f| f == field)

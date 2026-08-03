@@ -419,13 +419,10 @@ const FIND_FIELDS_COLLAPSED: &[HomeField] = &[
     HomeField::Download,
 ];
 
-/// Non-supporter variant of [`FIND_FIELDS`]: the same focus order with the six
-/// supporter-only rows ([`HomeField::FindExplicit`], [`FindGenre`](HomeField::FindGenre),
-/// [`FindLanguage`](HomeField::FindLanguage), [`FindExtra`](HomeField::FindExtra),
-/// [`FindRank`](HomeField::FindRank), [`FindPlayed`](HomeField::FindPlayed)) removed,
-/// preserving the relative order of the rest. [`HomeTab::active_fields`] picks
-/// this over [`FIND_FIELDS`] when the supporter gate is closed, so a non-supporter
-/// never gets a tab-reachable row the render hides. The relationship to
+/// Non-supporter variant of [`FIND_FIELDS`]: the same focus order with the two
+/// supporter-only rows ([`HomeField::FindRank`], [`FindPlayed`](HomeField::FindPlayed))
+/// removed, preserving the relative order of the rest. [`HomeTab::active_fields`] picks
+/// this over [`FIND_FIELDS`] when the supporter gate is closed. The relationship to
 /// [`FIND_FIELDS`] is pinned by `non_supporter_field_lists_match_runtime_filter`.
 const FIND_FIELDS_NOSUPPORTER: &[HomeField] = &[
     HomeField::Source,
@@ -433,10 +430,14 @@ const FIND_FIELDS_NOSUPPORTER: &[HomeField] = &[
     HomeField::FindPreset,
     HomeField::FindMode,
     HomeField::FindStatus,
+    HomeField::FindExplicit,
     HomeField::FindSpecial,
     HomeField::FindSort,
     HomeField::FindLimit,
     HomeField::FindAdvanced,
+    HomeField::FindGenre,
+    HomeField::FindLanguage,
+    HomeField::FindExtra,
     HomeField::FindStars,
     HomeField::FindAr,
     HomeField::FindCs,
@@ -461,8 +462,8 @@ const FIND_FIELDS_NOSUPPORTER: &[HomeField] = &[
 ];
 
 /// Non-supporter variant of [`FIND_FIELDS_COLLAPSED`]: the same focus order
-/// with [`HomeField::FindExplicit`] (the only supporter-only row in the
-/// collapsed list) removed, preserving the relative order of the rest. Same
+/// with the now-ungated rows included — the two supporter-only rows (rank,
+/// played) are already absent from the collapsed list, not removed here. Same
 /// role as [`FIND_FIELDS_NOSUPPORTER`] for the collapsed disclosure state; the
 /// relationship is pinned by `non_supporter_field_lists_match_runtime_filter`.
 const FIND_FIELDS_COLLAPSED_NOSUPPORTER: &[HomeField] = &[
@@ -471,6 +472,7 @@ const FIND_FIELDS_COLLAPSED_NOSUPPORTER: &[HomeField] = &[
     HomeField::FindPreset,
     HomeField::FindMode,
     HomeField::FindStatus,
+    HomeField::FindExplicit,
     HomeField::FindSpecial,
     HomeField::FindSort,
     HomeField::FindLimit,
@@ -593,21 +595,14 @@ impl HomeField {
         matches!(self, HomeField::FindExtra | HomeField::FindRank)
     }
 
-    /// Whether this row is one of the six osu!supporter-gated facets. Every one
-    /// of them was only honoured for a supporter token when probed against the
-    /// live API, so they are hidden — not disabled — for anyone else, per the
-    /// design language's login-gated-section rule. Unknown supporter status
-    /// reads as `false`, so the rows stay hidden until it is confirmed.
+    /// Whether this row is one of the two osu!supporter-gated facets (rank
+    /// achieved, played). The other four — explicit, genre, language, extra —
+    /// were confirmed to work for non-supporter on 2026-08-03 (live probe,
+    /// `docs/references/osu-search-qdsl.md` § 3.2), so they render unconditionally.
+    /// Unknown supporter status reads as `false`, so the two gated rows stay
+    /// hidden until it is confirmed.
     pub fn is_supporter_only(self) -> bool {
-        matches!(
-            self,
-            HomeField::FindExplicit
-                | HomeField::FindGenre
-                | HomeField::FindLanguage
-                | HomeField::FindExtra
-                | HomeField::FindRank
-                | HomeField::FindPlayed
-        )
+        matches!(self, HomeField::FindRank | HomeField::FindPlayed)
     }
 
     /// Whether this is a disclosure row that `space`/`enter` expand/collapse.
