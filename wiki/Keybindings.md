@@ -27,7 +27,7 @@ Press <kbd>?</kbd> anywhere in the app for the in-app overlay. It carries the ke
 | <kbd>1</kbd>-<kbd>3</kbd> | Jump straight to a source (find / collection / update) |
 | <kbd>←</kbd> <kbd>→</kbd> | Focus the list / preview pane inside a browse |
 | <kbd>↑</kbd> <kbd>↓</kbd> | Step through the difficulty list in a focused preview |
-| <kbd>↵</kbd> <kbd>space</kbd> | Open a multi-pick find row (`extra` / `rank`) for editing; inside it <kbd>←</kbd> <kbd>→</kbd> move between chips and <kbd>space</kbd> toggles the one you are on. <kbd>↵</kbd> / <kbd>esc</kbd> / <kbd>q</kbd> leave |
+| <kbd>↵</kbd> <kbd>space</kbd> | Open a multi-pick find row (`extra` / `rank`) for editing; inside it <kbd>←</kbd> <kbd>→</kbd> move between chips; <kbd>space</kbd> toggles the one you are on. <kbd>↵</kbd> / <kbd>esc</kbd> / <kbd>q</kbd> leave |
 | <kbd>s</kbd> | Jump to the last enabled action button (find / scan / view maps / download); cycle the sort in the update browse |
 | <kbd>a</kbd> / <kbd>A</kbd> | Select all / none (update browse) |
 | <kbd>i</kbd> / <kbd>I</kbd> | Mark a set / whole collection as installed (update preview) |

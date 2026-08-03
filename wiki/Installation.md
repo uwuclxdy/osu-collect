@@ -25,8 +25,7 @@ The Windows installer needs no admin rights. It does the following:
 
 Download the binary for your OS from [Releases](https://github.com/uwuclxdy/osu-collect/releases/latest) and run it in a terminal.
 
-> [!NOTE]
-> osu!collect runs in a terminal. Windows users should be able to open it with a double click as well, though it's not guaranteed; open an [issue](https://github.com/uwuclxdy/osu-collect/issues/new/choose) if it doesn't work. Windows Terminal or PowerShell 7+ are recommended.
+osu!collect runs in a terminal. On Windows a double click usually opens it too, though that's not guaranteed; Windows Terminal or PowerShell 7+ are recommended. If it doesn't start, open an [issue](https://github.com/uwuclxdy/osu-collect/issues/new/choose).
 
 ## Install from source
 

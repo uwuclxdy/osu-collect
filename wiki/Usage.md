@@ -20,8 +20,8 @@ Every source shares the same download section (mirrors, directory, threads, over
 |---|---|
 | **Collection URL or ID** | Accepts `https://osucollector.com/collections/{id}` or a bare ID. Resolves as you type and remembers recent collections. *Required for the collection source.* |
 | **Download directory** | Defaults to the last used folder. <kbd>tab</kbd> completes filesystem paths during editing. |
-| **Threads** | Parallel downloads. Defaults to your CPU core count; 20 or fewer avoids rate limiting. Adjust with <kbd>+</kbd> / <kbd>-</kbd>. |
-| **Overwrite existing** | Off (default) verifies and skips maps already on disk; on skips the recheck and redownloads every map fresh. |
+| **Threads** | Parallel downloads, defaulting to your CPU core count; 20 or fewer avoids rate limiting. Adjust with <kbd>+</kbd> / <kbd>-</kbd>. |
+| **Overwrite existing** | Off (default) verifies and skips maps already on disk; on skips the recheck and redownloads every map. |
 | **Video** | Includes beatmap videos (on by default); off downloads video-free where the mirror supports it. |
 
 Custom mirror URLs and the built-in mirror toggles live on the config tab → [Mirrors](Mirrors).
@@ -34,17 +34,9 @@ Every download is MD5-hashed as it streams and checked for a valid archive shape
 
 Every run lives on the downloads tab: active runs first, then finished ones, then past runs restored from disk. History survives restarts, cancelled runs included. A new download switches to this tab by default; turn off `display.jump_to_downloads` to stay where you are.
 
-Delete a finished run or a past history entry from the list with <kbd>d</kbd> (an active run can't be deleted; cancel it with <kbd>q</kbd> first). It asks to confirm; tick "don't ask again" with <kbd>space</kbd> in the prompt to skip the confirmation from then on (re-enable it by setting `display.confirm_delete_history = true` in the config file).
+Delete a finished run or a past history entry from the list with <kbd>d</kbd> (an active run can't be deleted; cancel it with <kbd>q</kbd> first). It asks to confirm; <kbd>space</kbd> ticks "don't ask again" and skips the prompt from then on (re-enable via `display.confirm_delete_history`, [Configuration](Configuration#display)).
 
-Open a run with <kbd>↵</kbd> to see live per-map progress, download speed, ETA, rate-limit countdowns per map, plus a failure summary with reasons.
-
-| Key | Action (inside an open run) |
-|---|---|
-| <kbd>r</kbd> | Retry all failed maps |
-| <kbd>s</kbd> | Defer maps stuck on a rate-limit cooldown so they retry later |
-| <kbd>S</kbd> | Drop maps stuck on a rate-limit cooldown for the rest of the run |
-| <kbd>q</kbd> | Cancel the run during a download |
-| <kbd>esc</kbd> / <kbd>←</kbd> | Step back to the run list without cancelling |
+Open a run with <kbd>↵</kbd> to see live per-map progress, download speed, ETA, rate-limit countdowns per map, plus a failure summary with reasons. Its keys are in [Keybindings](Keybindings#downloads-tab).
 
 ## Failed maps
 
@@ -52,4 +44,4 @@ Failures persist per collection between runs. Three ways to retry them:
 
 - press <kbd>r</kbd> inside the open run,
 - accept the prompt on your next download of that collection (`download.retry_failed_on_download` = `ask` / `yes` / `no`),
-- let rate-limited maps re-queue themselves: a map that stays throttled past the auto-defer delay (60s of actual waiting by default, `download.rate_limit_skip_secs`) goes back in the queue on its own.
+- let rate-limited maps re-queue themselves after the auto-defer delay ([Mirrors](Mirrors#rate-limit-handling)).

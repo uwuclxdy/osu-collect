@@ -25,7 +25,7 @@ The config tab is the mirror editor: toggle each built-in on or off, reorder the
 
 - Requests to each mirror are spaced out; the spacing widens when a mirror pushes back, then decays once it calms down.
 - A throttled mirror sits out its cooldown while the rest keep downloading. Per-map countdowns show in the open run.
-- A map that hits a limit goes back in the queue rather than getting dropped. One that stays throttled past the auto-defer delay (60s of actual waiting by default, `download.rate_limit_skip_secs`) re-queues on its own.
+- A throttled map goes back in the queue rather than getting dropped; one that stays throttled past the auto-defer delay (60s of actual waiting by default, `download.rate_limit_skip_secs`) re-queues on its own.
 - In an open run, <kbd>s</kbd> defers the currently stuck maps yourself; <kbd>S</kbd> drops them for the rest of the run.
 
 ## Custom mirrors
@@ -41,4 +41,4 @@ Once logged in the account row reads `logged in`, with `· supporter` appended w
 The login goes through osu!lazer's first-party client, the only client allowed to request beatmap-download privilege. If osu! needs to verify a new device, the panel prompts for the emailed code. Your password is sent only to `osu.ppy.sh` and never stored; only the resulting token lives in a local `auth.json`.
 
 > [!WARNING]
-> This uses osu!lazer's first-party login, an unofficial grey area. The official mirror is rate-limited (roughly 10 to 20 downloads per hour) and stays off by default. Keep it as a last-resort source. Requests to osu! are throttled automatically (about one per second, shared across all download threads) to stay within its general API rate; the hourly download cap still applies and shows up as a temporary rate-limit when reached.
+> osu!lazer's first-party login is an unofficial grey area. The osu! official mirror is rate-limited (roughly 10 to 20 downloads per hour) and stays off by default; keep it as a last resort. Requests to osu! are throttled automatically (about one per second, shared across all download threads), but the hourly download cap still applies and shows up as a temporary rate-limit when reached.

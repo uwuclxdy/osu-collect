@@ -14,6 +14,3 @@ New here? Start with [Installation](Installation), then [Usage](Usage).
 | [Keybindings](Keybindings) | Every key, including the vim keymap |
 | [Configuration](Configuration) | `config.toml` locations, every key with its default |
 | [Mirrors](Mirrors) | Built-in mirror list, rate-limit handling, custom mirrors, osu! login |
-
-> [!NOTE]
-> This wiki is a read-only mirror of the `wiki/` folder in the main repo. Edits made through the wiki UI get overwritten on the next sync; open a PR against `wiki/` instead.

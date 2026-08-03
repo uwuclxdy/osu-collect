@@ -20,10 +20,10 @@ Built-in mirror toggles. Hosts and what each mirror is good at: [Mirrors](Mirror
 | `sayobot` | `true` | |
 | `nekoha` | `true` | |
 | `beatconnect` | `true` | |
-| `osudl` | `true` | Covers ranked / approved / loved sets only; rotation backfills the rest |
+| `osudl` | `true` | |
 | `catboy` | `true` | |
-| `hinamizawa` | `false` | Races the other mirrors server-side, enable if you're hitting rate limits |
-| `nzbasic` | `false` | A solo developer's free instance; coverage is what its backend has cached |
+| `hinamizawa` | `false` | |
+| `nzbasic` | `false` | |
 | `osu_official` | `false` | Needs osu! login ([Mirrors](Mirrors#logging-in-with-your-osu-account)) |
 | `urls` | `[]` | Custom mirror URL templates, each containing `{id}`. Tried after the built-ins, in list order |
 | `order` | `[]` | Try-order for the built-ins as host keys (reorder on the config tab with <kbd>⇧</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd>). Unknown keys are dropped, missing built-ins are appended |
@@ -32,13 +32,13 @@ Built-in mirror toggles. Hosts and what each mirror is good at: [Mirrors](Mirror
 
 | Key | Default | Notes |
 |---|---|---|
-| `concurrent` | CPU core count | Parallel downloads. Values above 50 trigger a warning; 20 or fewer avoids rate limiting |
+| `concurrent` | CPU core count | Parallel downloads; values above 50 trigger a warning |
 | `video` | `true` | Include beatmap videos; `false` uses each mirror's no-video variant where supported |
 | `archive_validation` | `"magic"` | `.osz` integrity check: `"off"`, `"magic"` (ZIP header) or `"eocd"` (full footer scan) |
 | `retry_failed_on_download` | `"ask"` | When a new download overlaps previously failed maps: `"ask"`, `"yes"` (always retry), `"no"` (skip silently) |
 | `auto_skip_rate_limited` | `true` | Give up on a map once it has waited out rate-limit cooldowns for `rate_limit_skip_secs` |
 | `rate_limit_skip_secs` | `60` | Counts only time actually spent waiting on cooldowns |
-| `skip_already_imported` | `true` | Skip maps already in your osu! library (reads the selected client's `osu!.db` / lazer database); they still go into the generated `collection.db` |
+| `skip_already_imported` | `true` | Skip maps already in your osu! library; they still land in the generated `collection.db` |
 
 ## `[display]`
 
@@ -62,7 +62,7 @@ Built-in mirror toggles. Hosts and what each mirror is good at: [Mirrors](Mirror
 
 | Key | Default | Notes |
 |---|---|---|
-| `auto_update` | `true` | Download and install a newer release automatically. `false` still checks for updates (toast + indicator + <kbd>u</kbd> changelog) |
+| `auto_update` | `true` | Download and install a newer release automatically ([Installation](Installation#self-updating)) |
 | `prereleases` | `false` | Allow updating to GitHub prereleases |
 
 ## `[recent]`
