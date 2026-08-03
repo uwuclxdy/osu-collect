@@ -344,6 +344,7 @@ pub async fn run(
         mirror_probe: None,
         mirror_probe_cancel: None,
         mirror_probe_tx: mirror_probe_tx.clone(),
+        update_apply: None,
     };
 
     // Home-tab startup work: probe mirror latency, and resolve the pre-filled
@@ -947,7 +948,10 @@ fn dispatch_command(
         }
         Some(AppCommand::StartUpdate) => {
             info!("User confirmed update; downloading and applying");
-            spawn_apply_update(update_tx.clone(), app.config.prereleases);
+            tasks.update_apply = Some(spawn_apply_update(
+                update_tx.clone(),
+                app.config.prereleases,
+            ));
         }
         Some(AppCommand::Quit) => {
             if downloads.is_empty() {
@@ -1059,4 +1063,8 @@ struct BackgroundTasks {
     mirror_probe: Option<tokio::task::JoinHandle<()>>,
     mirror_probe_cancel: Option<tokio::sync::watch::Sender<bool>>,
     mirror_probe_tx: mpsc::UnboundedSender<MirrorProbeEvent>,
+    /// Handle for the apply-update task spawned by [`AppCommand::StartUpdate`].
+    /// Fire-and-forget in practice, but stored so the dispatch-arm test can
+    /// assert the spawn happened.
+    update_apply: Option<tokio::task::JoinHandle<()>>,
 }

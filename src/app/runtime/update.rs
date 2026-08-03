@@ -53,11 +53,15 @@ pub(super) fn spawn_update_check(
 
 /// Spawn the download+apply flow the user confirmed from the update modal.
 /// `prereleases` must match the channel that surfaced the update so the apply
-/// re-finds the same release.
-pub(super) fn spawn_apply_update(tx: mpsc::UnboundedSender<UpdateEvent>, prereleases: bool) {
+/// re-finds the same release. Returns the [`JoinHandle`] so the caller can
+/// track (or abort) the spawned task.
+pub(super) fn spawn_apply_update(
+    tx: mpsc::UnboundedSender<UpdateEvent>,
+    prereleases: bool,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         report_apply(&tx, prereleases).await;
-    });
+    })
 }
 
 /// Run `check_and_apply`, reporting the download → install/fail outcome as

@@ -146,6 +146,7 @@ impl Fixture {
             mirror_probe: None,
             mirror_probe_cancel: None,
             mirror_probe_tx,
+            update_apply: None,
         };
 
         Self {
@@ -641,7 +642,10 @@ async fn retry_all_failed_spawns_ids_download_from_failed_page() {
 #[tokio::test]
 async fn focus_output_dir_switches_to_home_and_targets_directory_field() {
     let mut fx = Fixture::new();
-    // Leave Home + Directory so we can confirm the arm overrides.
+    // Pre-set away from the defaults so we confirm the arm overrides, not
+    // that the defaults are still standing.
+    fx.app.active_tab = Tab::Config;
+    fx.app.editing = true;
     assert!(!fx.dispatch(Some(AppCommand::FocusOutputDir)));
     assert_eq!(fx.app.active_tab, Tab::Home, "switched to the home tab");
     assert_eq!(
@@ -660,13 +664,16 @@ async fn focus_output_dir_switches_to_home_and_targets_directory_field() {
 #[tokio::test]
 async fn start_update_returns_false_without_panicking() {
     let mut fx = Fixture::new();
-    // spawn_apply_update runs a real GitHub release check that may find nothing
-    // (Ok(None) -> silent), so the receiver can stay empty legitimately — the
-    // observable contract here is "dispatch is safe and returns false."
-    // The arm IS mutation-verified separately (see report).
+    // The spawned task hits the real GitHub API and may return Ok(None), so
+    // update_rx can stay empty legitimately. The stored handle pins the
+    // dispatch arm: deleting the spawn call leaves the slot None.
     assert!(
         !fx.dispatch(Some(AppCommand::StartUpdate)),
         "StartUpdate never signals quit"
+    );
+    assert!(
+        fx.tasks.update_apply.is_some(),
+        "StartUpdate must spawn the apply-update task"
     );
 }
 
