@@ -25,8 +25,9 @@ fn strip_verbatim_prefix(s: &str) -> Cow<'_, str> {
     }
 }
 
-/// Format `path` for display: drop the Windows verbatim prefix, then collapse a
-/// leading home directory to `~`.
+/// Format `path` for display: drop the Windows verbatim prefix, collapse a
+/// leading home directory to `~`, and on Windows use `/` separators
+/// (display-only, the filesystem never reads this string).
 ///
 /// Returns `"~"` (a `&'static str` borrow) when `path` is exactly the home
 /// directory, `"~/…"` (owned) when it is a subdirectory, and the cleaned path
@@ -41,12 +42,19 @@ pub fn pretty_path(path: impl AsRef<Path>) -> Cow<'static, str> {
             return Cow::Borrowed("~");
         }
         if let Ok(stripped) = path.strip_prefix(&home) {
-            // Join so the separator after `~` matches the platform (`\` on Windows).
             let collapsed = Path::new("~").join(stripped);
-            return Cow::Owned(collapsed.to_string_lossy().into_owned());
+            #[cfg(windows)]
+            let s = collapsed.to_string_lossy().into_owned().replace('\\', "/");
+            #[cfg(not(windows))]
+            let s = collapsed.to_string_lossy().into_owned();
+            return Cow::Owned(s);
         }
     }
-    Cow::Owned(path.to_string_lossy().into_owned())
+    #[cfg(windows)]
+    let s = path.to_string_lossy().into_owned().replace('\\', "/");
+    #[cfg(not(windows))]
+    let s = path.to_string_lossy().into_owned();
+    Cow::Owned(s)
 }
 
 /// Expand a leading `~` or `~/` (also `~\` on Windows) to the user's home
