@@ -1831,10 +1831,15 @@ fn find_app(supporter: bool) -> App {
     app
 }
 
-/// Every one of the six labels, so a row that slipped past the gate is caught by
-/// name rather than by an aggregate count. Matched with a trailing space, which
-/// is what separates the `rank` row from the `ranked` one it sits above.
-const FACET_LABELS: [&str; 6] = [
+/// The two supporter-gated facet labels, matched with a trailing space to
+/// disambiguate from nearby rows (`rank` vs `ranked`).
+const GATED_FACET_LABELS: [&str; 2] = ["rank ", "played "];
+
+/// Genre, language, extra, explicit — osu-only but ungated (probed 2026-08-03).
+const UNGATED_FACET_LABELS: [&str; 4] = ["explicit ", "genre ", "language ", "extra "];
+
+/// All six facet labels, for the supporter full-render test.
+const ALL_FACET_LABELS: [&str; 6] = [
     "explicit ",
     "genre ",
     "language ",
@@ -1844,16 +1849,21 @@ const FACET_LABELS: [&str; 6] = [
 ];
 
 #[test]
-fn supporter_facets_do_not_render_without_supporter() {
+fn supporter_gated_facets_do_not_render_without_supporter() {
     let content = render_content(&find_app(false), 90, 60);
-    for label in FACET_LABELS {
+    for label in GATED_FACET_LABELS {
         assert!(
             !content.contains(label),
-            "{label} renders for a non-supporter: {content}"
+            "{label} rendered for a non-supporter: {content}"
         );
     }
-    // The rows the gate must NOT touch are still there, so this is a targeted
-    // absence and not an empty render.
+    // The ungated four DO render.
+    for label in UNGATED_FACET_LABELS {
+        assert!(
+            content.contains(label),
+            "{label} missing for a non-supporter: {content}"
+        );
+    }
     assert!(content.contains("categories") && content.contains("special"));
     assert!(content.contains("favourites"), "advanced section is open");
 }
@@ -1861,7 +1871,7 @@ fn supporter_facets_do_not_render_without_supporter() {
 #[test]
 fn supporter_facets_render_with_their_chips_for_a_supporter() {
     let content = render_content(&find_app(true), 90, 60);
-    for label in FACET_LABELS {
+    for label in ALL_FACET_LABELS {
         assert!(
             content.contains(label),
             "{label} row missing for a supporter: {content}"

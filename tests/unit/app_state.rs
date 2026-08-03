@@ -267,73 +267,71 @@ fn a_transition_that_keeps_supporter_keeps_the_facets() {
     ));
 }
 
-/// Both doors that shut the gate must return the six facets to default. A value
-/// left behind applies from a control nobody can see: it forces a route, names
-/// itself in a conflict message, pins the `advanced filters` disclosure open so
-/// `space` on it does nothing, and moves the on-disk folder tag.
+/// Both doors that shut the gate must clear only the two still-gated facets
+/// (rank, played). The four ungated facets (genre, language, extra, explicit)
+/// were confirmed to work for non-supporters on 2026-08-03, so clearing them
+/// would silently undo a deliberate choice. The route and disclosure stay,
+/// reflecting that those ungated facets are still active osu-forcers.
 #[test]
-fn the_gate_closing_returns_every_supporter_facet_to_default() {
+fn the_gate_closing_clears_only_gated_facets_and_leaves_ungated_alone() {
     use crate::app::{FindRoute, HomeField};
     for (door, close) in [
         ("logout", App::set_logged_out as fn(&mut App)),
         ("failed login", App::set_login_failed as fn(&mut App)),
     ] {
-        let plain_tag = {
-            let mut fresh = supporter_mid_edit();
-            fresh.home.find.cycle_genre(false); // back to `any`
-            fresh.home.find.folder_tag()
-        };
         let mut app = supporter_mid_edit();
+        assert!(app.config.supporter());
+        assert_ne!(app.home.find.genre_label(), "any", "{door}: precondition");
         assert!(
             app.home.find.show_advanced_filters(),
             "{door}: precondition"
         );
-        assert_ne!(
-            app.home.find.folder_tag(),
-            plain_tag,
-            "{door}: precondition"
-        );
+        // Set a rank filter too — this one IS gated and must be cleared.
+        app.home.find.rank.toggle();
 
         close(&mut app);
 
-        assert_eq!(app.home.find.genre_label(), "any", "{door}");
+        // Genre is ungated: stays as-is. A non-supporter CAN set it, and it
+        // still forces osu, so the route stays Conflict (vs the farm special).
+        assert_eq!(
+            app.home.find.genre_label(),
+            "unspecified",
+            "{door}: genre persists"
+        );
         assert!(
-            !app.home.find.show_advanced_filters(),
-            "{door}: the disclosure is stuck open with no row to close it"
+            matches!(app.home.find.resolved_route(), FindRoute::Conflict { .. }),
+            "{door}: farm+genre still conflict; genre was not cleared"
         );
-        assert_eq!(
-            app.home.find.resolved_route(),
-            FindRoute::Nzbasic,
-            "{door}: `farm` alone routes nzbasic; a stray facet turns it into a \
-             conflict naming a field that no longer renders"
-        );
-        assert_eq!(
-            app.home.find.folder_tag(),
-            plain_tag,
-            "{door}: an invisible facet must not keep steering the download dir"
-        );
+        // Rank IS gated: cleared.
+        assert!(app.home.find.rank.is_empty(), "{door}: rank cleared");
+        // Focus: genre is no longer supporter-only, so no clamp — focus stays.
         assert_eq!(
             app.home.focus,
-            HomeField::Source,
-            "{door}: focus must leave a row that stops rendering"
+            HomeField::FindGenre,
+            "{door}: focus stays on an ungated row"
         );
     }
 }
 
-/// The settle runs at the FLIP, not at the next keypress. Nothing is pressed
-/// here: the frame right after a logout would otherwise render with focus parked
-/// on a row it does not draw.
+/// The settle runs at the FLIP, not at the next keypress. Focus stays on genre
+/// (it is no longer supporter-only after the re-classification), and the
+/// ungated facet keeps its value — a non-supporter CAN set it.
 #[test]
 fn the_gate_settles_without_waiting_for_a_keypress() {
     use crate::app::HomeField;
     let mut app = supporter_mid_edit();
+    assert_eq!(app.home.focus, HomeField::FindGenre, "precondition");
     app.set_logged_out();
     assert_eq!(
         app.home.focus,
-        HomeField::Source,
-        "no key was pressed; the clamp has to fire where the flag flips"
+        HomeField::FindGenre,
+        "focus stays — genre is no longer supporter-only, so no clamp fires"
     );
-    assert_eq!(app.home.find.genre_label(), "any");
+    assert_eq!(
+        app.home.find.genre_label(),
+        "unspecified",
+        "genre persists — a non-supporter CAN set it"
+    );
 }
 
 // ── the find route moving off the loaded results ──────────────────────────────
@@ -507,7 +505,7 @@ fn the_supporter_gate_closing_settles_the_find_route() {
     app.active_tab = Tab::Home;
     app.home.source = GetMapsSource::Find;
     app.set_login_complete(true);
-    app.home.find.cycle_genre(true); // a gated osu forcer — the route is osu
+    app.home.find.cycle_genre(true); // genre → osu
     app.home
         .find
         .browse
@@ -529,16 +527,29 @@ fn the_supporter_gate_closing_settles_the_find_route() {
         "a conflict is not a move"
     );
 
-    // No key from here: the facet reset alone hands the route to nzbasic.
+    // No key from here. Genre is ungated (2026-08-03), so it stays set — the
+    // route settle fires but finds Conflict (farm + genre still clash) and
+    // returns early. The results survive because the criteria have not changed
+    // in a way that moves the route.
     app.set_logged_out();
-    assert_eq!(app.home.find.resolved_route(), FindRoute::Nzbasic);
     assert!(
-        app.home.find.browse.rows.is_empty(),
-        "the settle has to fire where the facets are cleared, not on the next key"
+        matches!(app.home.find.resolved_route(), FindRoute::Conflict { .. }),
+        "farm+genre still conflict; genre was not cleared"
     );
-    assert_eq!(app.home.find.results_backend(), None);
+    assert_eq!(
+        app.home.find.browse.rows.len(),
+        1,
+        "a conflict is not a move — results survive"
+    );
+    assert_eq!(
+        app.home.find.results_backend(),
+        Some(FindBackend::Osu),
+        "backend unchanged"
+    );
+    // Results survive, non-osu-official mirrors are available, and rows are
+    // selected — the download button stays enabled.
     assert!(
-        !app.home
+        app.home
             .button_enabled(HomeField::Download, app.osu_official_unlocked())
     );
 }

@@ -2017,12 +2017,14 @@ fn find_form_tab_order_matches_the_rendered_order() {
     // supporter order instead and failed on `FindExplicit`. This is the
     // NON-supporter order; both legs are pinned at the model level in
     // `app::home`'s tests.
+    // Collapsed non-supporter tab order: explicit now renders unconditionally.
     app.config.set_logged_out();
     for expected in [
         HomeField::FindQuery,
         HomeField::FindPreset,
         HomeField::FindMode,
         HomeField::FindStatus,
+        HomeField::FindExplicit,
         HomeField::FindSpecial,
         HomeField::FindSort,
         HomeField::FindLimit,
@@ -2043,11 +2045,16 @@ fn find_form_expanded_tab_order_runs_the_ranges_after_the_disclosure() {
     use osu_collect::app::{GetMapsSource, HomeField};
     let mut app = make_app();
     app.home.source = GetMapsSource::Find;
-    // Same reason as the fixture above: pin the gate shut rather than inherit
-    // whatever account this machine has stored.
     app.config.set_logged_out();
     app.home.focus = HomeField::FindAdvanced;
     app.handle_key(press(KeyCode::Char(' '))); // open the disclosure
+    // Genre, language, extra render unconditionally; rank+played are hidden.
+    app.handle_key(press(KeyCode::Down));
+    assert_eq!(app.home.focus, HomeField::FindGenre);
+    app.handle_key(press(KeyCode::Down));
+    assert_eq!(app.home.focus, HomeField::FindLanguage);
+    app.handle_key(press(KeyCode::Down));
+    assert_eq!(app.home.focus, HomeField::FindExtra);
     app.handle_key(press(KeyCode::Down));
     assert_eq!(app.home.focus, HomeField::FindStars);
     app.home.focus = HomeField::FindTitle; // the last range input
@@ -2175,14 +2182,14 @@ fn every_exit_from_a_descended_row_puts_the_mode_back() {
 #[test]
 fn the_supporter_gate_closing_takes_the_descended_row_with_it() {
     use osu_collect::app::{HomeField, Tab};
-    let mut app = find_app_on(HomeField::FindExtra);
+    let mut app = find_app_on(HomeField::FindRank);
     // The row is live and descended first, so the fall-through below is a change
     // and not the starting state.
     app.handle_key(press(KeyCode::Enter));
     app.handle_key(press(KeyCode::Right));
     app.handle_key(press(KeyCode::Char(' ')));
-    assert_eq!(app.home.find.extra.cursor(), 1);
-    assert!(app.home.find.extra.contains(1) && app.find_chip_editing());
+    assert_eq!(app.home.find.rank.cursor(), 1);
+    assert!(app.home.find.rank.contains(1) && app.find_chip_editing());
 
     app.set_logged_out();
     assert_eq!(
@@ -2192,7 +2199,7 @@ fn the_supporter_gate_closing_takes_the_descended_row_with_it() {
     );
     assert!(!app.editing, "the edit mode has to leave with the row");
     assert!(
-        app.home.find.extra.is_empty() && app.home.find.extra.cursor() == 0,
+        app.home.find.rank.is_empty() && app.home.find.rank.cursor() == 0,
         "and the pick goes with it — an invisible chip still rides into the query"
     );
 
@@ -2202,5 +2209,5 @@ fn the_supporter_gate_closing_takes_the_descended_row_with_it() {
         Tab::Home,
         "with the gate shut the row is gone, so → falls through to the tab switch"
     );
-    assert_eq!(app.home.find.extra.cursor(), 0, "and moves no cursor");
+    assert_eq!(app.home.find.rank.cursor(), 0, "and moves no cursor");
 }

@@ -1287,10 +1287,15 @@ impl FindSource {
         self.mode_idx = 0;
         self.status_idx = STATUS_DEFAULT_IDX;
         self.sort_idx = 0;
-        // The two supporter-gated facets are osu-forcers too, so a leftover one
-        // turns a nzbasic-seeding preset (farm, stream) into a routing conflict —
-        // the exact failure the reset above exists to prevent.
-        self.clear_supporter_facets();
+        // All six facets are osu-forcers — regardless of the supporter gate, a
+        // stray one would create the same routing conflict. `clear_supporter_facets`
+        // is narrower (rank+played only), so reset directly here.
+        self.explicit_idx = 0;
+        self.genre_idx = 0;
+        self.language_idx = 0;
+        self.played_idx = 0;
+        self.extra.clear();
+        self.rank.clear();
         for field in [
             &mut self.query,
             &mut self.stars,
