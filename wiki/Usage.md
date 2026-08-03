@@ -19,7 +19,7 @@ Every source shares the same download section (mirrors, directory, threads, over
 | Field | What it does |
 |---|---|
 | **Collection URL or ID** | Accepts `https://osucollector.com/collections/{id}` or a bare ID. Resolves as you type and remembers recent collections. *Required for the collection source.* |
-| **Download directory** | Defaults to the last used folder. <kbd>tab</kbd> completes filesystem paths while editing. |
+| **Download directory** | Defaults to the last used folder. <kbd>tab</kbd> completes filesystem paths during editing. |
 | **Threads** | Parallel downloads. Defaults to your CPU core count; 20 or fewer avoids rate limiting. Adjust with <kbd>+</kbd> / <kbd>-</kbd>. |
 | **Overwrite existing** | Off (default) verifies and skips maps already on disk; on skips the recheck and redownloads every map fresh. |
 | **Video** | Includes beatmap videos (on by default); off downloads video-free where the mirror supports it. |
@@ -27,6 +27,8 @@ Every source shares the same download section (mirrors, directory, threads, over
 Custom mirror URLs and the built-in mirror toggles live on the config tab → [Mirrors](Mirrors).
 
 Before a run starts, maps already in your osu! library (stable `osu!.db` or the lazer client database) are skipped instead of re-fetched; they still land in the generated `collection.db`. Turn this off with `download.skip_already_imported` ([Configuration](Configuration#download)).
+
+Every download is MD5-hashed as it streams and checked for a valid archive shape before it lands ([Configuration](Configuration#download)); a bad file is deleted on the spot and the map goes to the failures list below.
 
 ## Downloads tab
 
@@ -41,7 +43,7 @@ Open a run with <kbd>↵</kbd> to see live per-map progress, download speed, ETA
 | <kbd>r</kbd> | Retry all failed maps |
 | <kbd>s</kbd> | Defer maps stuck on a rate-limit cooldown so they retry later |
 | <kbd>S</kbd> | Drop maps stuck on a rate-limit cooldown for the rest of the run |
-| <kbd>q</kbd> | Cancel the run while it's downloading |
+| <kbd>q</kbd> | Cancel the run during a download |
 | <kbd>esc</kbd> / <kbd>←</kbd> | Step back to the run list without cancelling |
 
 ## Failed maps

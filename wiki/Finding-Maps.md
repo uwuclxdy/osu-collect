@@ -18,11 +18,11 @@ Rows group under `preset`, `filters` and `results` headings; the `advanced filte
 
 ## Supporter-only filters
 
-Six more filters appear when you are logged in with an account that has osu!supporter: `explicit` in the filters block, and `genre`, `language`, `extra`, `rank`, `played` at the top of `advanced filters`. osu! only honors these for a supporter token, so without one they are not shown at all.
+Two filters appear at the top of `advanced filters` when you are logged in with an account that has osu!supporter: `rank` and `played`. osu! only honors these for a supporter token, so without one they are not shown. The other osu!-website facets, `explicit` in the filters block plus `genre`, `language`, `extra` at the top of `advanced filters`, work without supporter and always render.
 
 `extra` and `rank` take several values at once. Each of their chips shows `[x]` when picked and `[ ]` when not. Press <kbd>↵</kbd> or <kbd>space</kbd> to open the row: its gutter mark turns `✎` and a `❯` caret picks out one chip. <kbd>←</kbd> / <kbd>→</kbd> then walk the caret, <kbd>space</kbd> toggles the chip under it. <kbd>↵</kbd>, <kbd>esc</kbd> or <kbd>q</kbd> close the row again; <kbd>↑</kbd> / <kbd>↓</kbd> close it on the way to another row. With the row closed, <kbd>←</kbd> / <kbd>→</kbd> switch tabs as everywhere else.
 
-All six force the osu! api route. Losing supporter status resets them to their defaults.
+All six force the osu! api route. Losing supporter status resets the two gated ones, `rank` and `played`, to their defaults.
 
 ## Numeric filter syntax
 
@@ -38,7 +38,7 @@ The operator goes on either side of the value; `-` and `..` are interchangeable 
 | `2-3` or `2..3` | between 2 and 3, inclusive |
 | `2..` / `..3` | open-ended range |
 
-Strict `>` / `<` are honored on the osu! api route; the nzbasic route collapses them to inclusive. While a range field is focused, a live plain-english reading of what you typed appears under it; a value that doesn't parse shows the error in place.
+Strict `>` / `<` are honored on the osu! api route; the nzbasic route collapses them to inclusive. A live plain-english reading of what you typed appears under a focused range field; a value that doesn't parse shows the error in place.
 
 ## Ranked date
 
@@ -65,7 +65,7 @@ Everything else runs on either backend; the default is the osu! api. Category `a
 
 ## Results
 
-Results open in a two-pane browse: checkbox list left, preview right. Rows that arrive as bare IDs backfill their titles in pages while a loading cue shows. Press <kbd>m</kbd> to load more results on the osu! api route.
+Results open in a two-pane browse: checkbox list left, preview right. Rows that arrive as bare IDs backfill their titles in pages under a loading cue. Press <kbd>m</kbd> to load more results on the osu! api route.
 
 The preview shows the highlighted set's title, artist, mapper, status, favourites, and plays. nzbasic-routed results add the tags, source, genre, language, and ranked / updated dates, plus one difficulty's max combo, drain time, pass count, and hash.
 
