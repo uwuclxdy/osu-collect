@@ -15,6 +15,7 @@ use crate::app::collection::FailureReason;
 use crate::app::collection_state::STATE_ENV_PATH;
 use crate::app::failed_maps::{FAILED_MAPS_ENV_PATH, FailedMapsFile};
 use crate::app::find_source::BrowseRow;
+use crate::app::find_source::ENRICH_PAGE;
 use crate::app::home::HomeField;
 use crate::auth::AUTH_ENV_PATH;
 use crate::config::Config;
@@ -559,6 +560,49 @@ async fn load_enrichment_find_nzbasic_advances_the_details_walk_first() {
     assert!(
         matches!(event, Some(HomeDetailsEvent::Failed { ref ids, .. }) if ids == &vec![999_999_999]),
         "the failed slice reports its raw ids: {event:?}"
+    );
+}
+
+/// A held `m` while a details page is outstanding must not stack another
+/// POST: the walk dispatches one page at a time, the same busy-bound the
+/// enrichment pager branch applies to itself. The landing settles the walk;
+/// the next `m` then advances it.
+#[tokio::test]
+async fn load_enrichment_find_nzbasic_does_not_stack_pages_while_the_walk_is_in_flight() {
+    let mut fx = Fixture::new();
+    fx.app.home.find.note_results_backend(FindBackend::Nzbasic);
+    let cache = HashMap::new();
+    fx.app
+        .home
+        .find
+        .browse
+        .set_rows(vec![BrowseRow { id: 42, meta: None }], &cache);
+    // More than one page: an un-gated second dispatch would have a second
+    // page to pull, which is exactly what the bound must prevent.
+    fx.app.home.find.browse.seed_details_walk(
+        (0..ENRICH_PAGE + 3)
+            .map(|i| 999_999_991 + i as u32)
+            .collect(),
+    );
+
+    assert!(!fx.dispatch(Some(AppCommand::LoadEnrichment {
+        target: EnrichTarget::Find,
+    })));
+    assert_eq!(
+        fx.app.home.find.browse.details_walk_in_flight(),
+        1,
+        "the first page dispatched"
+    );
+
+    // Second dispatch while the first page is still outstanding: no-op. A
+    // stack would pull the walk's next page and bump the counter to 2.
+    assert!(!fx.dispatch(Some(AppCommand::LoadEnrichment {
+        target: EnrichTarget::Find,
+    })));
+    assert_eq!(
+        fx.app.home.find.browse.details_walk_in_flight(),
+        1,
+        "an in-flight page gates the next walk advance"
     );
 }
 

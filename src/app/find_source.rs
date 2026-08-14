@@ -111,9 +111,10 @@ impl EnrichPager {
     }
 
     /// Queue more diff ids after everything already walked (a landed details
-    /// page derived new seeds mid-run). The generation and `in_flight`
-    /// counters are untouched — an in-flight page keeps its identity, and the
-    /// appended ids page out only after whatever the cursor already passed.
+    /// page derived new seeds — or a shortfall's raw ids — mid-run). The
+    /// generation and `in_flight` counters are untouched — an in-flight page
+    /// keeps its identity, and the appended ids page out only after whatever
+    /// the cursor already passed.
     pub(crate) fn extend(&mut self, more: Vec<u32>) {
         self.diff_ids.extend(more);
     }
@@ -623,6 +624,16 @@ impl SetBrowse {
         self.details_walk.mark_settled();
     }
 
+    /// The details walk's outstanding-page count — its own `in_flight`,
+    /// separate from the osu-batch pager's ([`EnrichSink::is_enriching`] ORs
+    /// both into the shared cue). `LoadEnrichment{Find}` gates the walk on
+    /// this being 0: one details page in flight at a time, the same busy-bound
+    /// the pager branch applies to itself. Tests assert the count to pin that
+    /// bound.
+    pub(crate) fn details_walk_in_flight(&self) -> u32 {
+        self.details_walk.in_flight
+    }
+
     /// Whether the osu-batch pager itself still has un-fetched ids — distinct
     /// from [`EnrichSink::has_more_enrichment`], which folds in the details
     /// walk (`m` must advance either).
@@ -655,14 +666,17 @@ impl SetBrowse {
         count
     }
 
-    /// Queue a FAILED details page's raw diff ids as unpaired seeds — today's
-    /// every-diff paging, arrived at as the fallback. No set pairing exists to
-    /// prune or dedup with, so a set whose sibling diff seeded from an earlier
-    /// page may cost one redundant batch id; correctness is unaffected (the
-    /// fold fills only rows still missing meta). Returns the count queued.
-    pub(crate) fn queue_raw_details_seeds(&mut self, ids: &[u32]) -> usize {
-        self.enrich.extend(ids.to_vec());
-        ids.len()
+    /// Queue a details page's raw diff ids as unpaired seeds — the FAILED-page
+    /// fallback, and the ids a 200-subset `Loaded` response omitted
+    /// ([`shortfall_ids`]). Today's every-diff paging, arrived at as the
+    /// fallback. No set pairing exists to prune or dedup with, so a set whose
+    /// sibling diff seeded from an earlier page may cost one redundant batch
+    /// id; correctness is unaffected (the fold fills only rows still missing
+    /// meta). Returns the count queued.
+    pub(crate) fn queue_raw_details_seeds(&mut self, ids: Vec<u32>) -> usize {
+        let count = ids.len();
+        self.enrich.extend(ids);
+        count
     }
 }
 
@@ -675,6 +689,25 @@ pub(crate) fn representative_seeds(rows: &[BeatmapDetails]) -> Vec<(u32, Option<
     rows.iter()
         .filter(|row| seen.insert(row.set_id))
         .map(|row| (row.id, Some(row.set_id)))
+        .collect()
+}
+
+/// The ids a requested details page returned NO row for — a 200-subset
+/// response strands them (the server omitted rows; a wrong body shape even
+/// returns 200 with an empty list). The derived one-per-set seeds cover only
+/// the sets the page DID return, so the holes fall back to raw seeding
+/// ([`SetBrowse::queue_raw_details_seeds`]). Diffable = every returned row id
+/// came from the requested slice; a foreign id means the response shape is
+/// suspect and the WHOLE slice falls back instead — a difference against
+/// foreign ids would be meaningless. Requested order is preserved.
+pub(crate) fn shortfall_ids(ids: &[u32], rows: &[BeatmapDetails]) -> Vec<u32> {
+    let returned: HashSet<u32> = rows.iter().map(|row| row.id).collect();
+    if !returned.iter().all(|id| ids.contains(id)) {
+        return ids.to_vec();
+    }
+    ids.iter()
+        .copied()
+        .filter(|id| !returned.contains(id))
         .collect()
 }
 

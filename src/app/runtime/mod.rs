@@ -879,10 +879,15 @@ fn dispatch_command(
                 EnrichTarget::Collection => &mut tasks.enrich_collection,
                 EnrichTarget::Update => &mut tasks.enrich_update,
             };
-            if is_nzbasic_find && !app.home.find.browse.has_unpaged_enrichment() {
-                // Fire-and-forget, no handle: concurrent pages are disjoint id
-                // slices under one generation, and the walk's in-flight counter
-                // drives the shared loading cue.
+            if is_nzbasic_find
+                && !app.home.find.browse.has_unpaged_enrichment()
+                && app.home.find.browse.details_walk_in_flight() == 0
+            {
+                // Fire-and-forget, no handle, one page at a time: a held `m`
+                // must not stack 250-id POSTs while a details page is in
+                // flight (its landing settles the walk's cue, and the next `m`
+                // — or the landing's own follow-up — advances it again). A
+                // stale landing drops on the generation guard.
                 if let Some(page) = app.home.find.browse.next_details_page() {
                     app.home.find.browse.mark_details_dispatched();
                     let generation = app.home.find.browse.details_walk_generation();
