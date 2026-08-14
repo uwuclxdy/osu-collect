@@ -895,6 +895,9 @@ fn dispatch_command(
                 }
             } else {
                 let sink = enrich_sink_mut(app, target);
+                // A details landing's follow-up can land here busy (`m` during an
+                // in-flight osu-batch page advanced the walk): its seeds wait for
+                // the next `m` — the hint's own cadence, nothing lost.
                 // The first page (cursor 0) follows a reseed: the reseed already
                 // invalidated any in-flight page via the generation guard, so start
                 // fresh (`schedule_enrichment` aborts the target's prior task). A

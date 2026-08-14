@@ -13,6 +13,17 @@ fn tiny_protocol(covers: &Covers) -> ratatui_image::protocol::StatefulProtocol {
         .new_resize_protocol(image::DynamicImage::ImageRgb8(img))
 }
 
+/// A 15x10 solid image → a [`StatefulProtocol`] via the halfblocks picker: at
+/// [`TINY_OFFER`] it fits to 2x1, one cell wider than [`tiny_protocol`]'s 1x1,
+/// so a lane reply cross-routed between the two sets is observable through the
+/// fitted size.
+fn bigger_protocol(covers: &Covers) -> ratatui_image::protocol::StatefulProtocol {
+    let img = image::RgbImage::from_pixel(15, 10, image::Rgb([200, 30, 40]));
+    covers
+        .picker
+        .new_resize_protocol(image::DynamicImage::ImageRgb8(img))
+}
+
 #[test]
 fn variant_accessors_return_a_handle_only_for_ready_covers() {
     let mut covers = Covers::new();
@@ -144,6 +155,10 @@ fn poll_prefetch_resets_when_the_highlight_moves() {
 /// halfblocks 10x20 font: one cell each way. The dispatch round-trip tests all
 /// settle at this size.
 const TINY_FITTED: Size = Size::new(1, 1);
+/// The 15x10 image a [`bigger_protocol`] carries, fitted into the same
+/// [`TINY_OFFER`]: 2x1 — a different size than [`TINY_FITTED`], which is what
+/// makes a cross-routed reply observable.
+const BIGGER_FITTED: Size = Size::new(2, 1);
 /// The offer the layout makes a tiny image: the pane's allowance, not the
 /// fitted size — the re-encode gate keys off the pane.
 const TINY_OFFER: Size = Size::new(20, 10);
@@ -245,6 +260,55 @@ fn the_dispatch_gate_refuses_a_second_request_while_one_is_in_flight() {
     }
     assert!(restored, "the reply restores the protocol");
     assert!(!gate(&covers), "and the settled offer is not re-encoded");
+}
+
+#[test]
+fn two_sets_in_flight_on_one_lane_route_each_reply_to_its_own_set() {
+    let mut covers = Covers::new();
+    // Two observably distinct covers ride the same lane: set 1 fits to 1x1 at
+    // the offer, set 2 to 2x1 — a cross-routed restore would answer the wrong
+    // fitted size, not look identical to the right one.
+    let square_a = tiny_protocol(&covers);
+    let square_b = bigger_protocol(&covers);
+    covers.record_ready(1, Some(square_a), None);
+    covers.record_ready(2, Some(square_b), None);
+    covers.square_offer().set(Some(TINY_OFFER));
+    for _ in 0..COVER_DEBOUNCE_TICKS + 2 {
+        covers.poll_prefetch(Some(1));
+    }
+    covers.dispatch_settled_encodes(Some(1));
+    for _ in 0..COVER_DEBOUNCE_TICKS + 2 {
+        covers.poll_prefetch(Some(2));
+    }
+    covers.dispatch_settled_encodes(Some(2));
+    assert_eq!(
+        covers.square_lane.in_flight.len(),
+        2,
+        "both requests ride the lane before either reply is drained"
+    );
+
+    // The lane routes by dispatch order, and the worker replies in that same
+    // order — the depth-2 case of `in_flight.pop_front()`. A LIFO pop would
+    // hand set 1's reply to set 2's protocol: the crate's id stale-guard
+    // would drop it, and neither protocol would ever be restored.
+    let fitted = |covers: &Covers, set_id: u32| {
+        covers
+            .square_for(set_id)
+            .and_then(|tp| tp.borrow().size_for(Resize::Fit(None), TINY_OFFER))
+    };
+    let mut restored = false;
+    for _ in 0..50 {
+        covers.drain_lanes();
+        if fitted(&covers, 1) == Some(TINY_FITTED) && fitted(&covers, 2) == Some(BIGGER_FITTED) {
+            restored = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(
+        restored,
+        "each reply restored its own set's protocol (1 at {TINY_FITTED:?}, 2 at {BIGGER_FITTED:?})"
+    );
 }
 
 #[test]

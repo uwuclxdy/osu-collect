@@ -11,10 +11,14 @@
 //! fetches details (its rows carry full metadata already), and collection
 //! browse&pick never does either.
 //!
-//! Stale-id contract: the diff ids come only from the same session's
-//! [`FilterResults::ids`](osu_downloader::filter::FilterResults) via the
-//! details walk, so the whole-batch-500s-on-one-unknown-id hazard cannot fire.
-//! Never pass an id from another route.
+//! Stale-id contract: the walk's raw ids come only from the same session's
+//! [`FilterResults::ids`](osu_downloader::filter::FilterResults) — never from
+//! another route. One exception reaches the osu-batch pager regardless: a
+//! 200-subset response may carry FOREIGN row ids, and `SetBrowse::queue_details_seeds`
+//! derives its seeds from every returned row without checking the requested
+//! slice, so a foreign id can ride a derived seed into `GET /beatmaps?ids[]=`.
+//! The batch endpoint omits unknown ids (holes are tolerated by the pager), so
+//! the cost is one wasted id, never a 500.
 //!
 //! Fail-soft: a failed page drops its columns silently (no rewind, no retry —
 //! the walk owns its cursor and never repeats a slice) but seeds the osu-batch

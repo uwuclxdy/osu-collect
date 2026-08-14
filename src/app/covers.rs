@@ -229,6 +229,13 @@ impl Covers {
     /// lane so the tick pass can encode off the UI thread. Both-`None` would
     /// render identically to `Missing` but must still settle the id so the
     /// prefetch never re-requests it, so it routes to [`Self::record_missing`].
+    ///
+    /// Runs at most once per set (the prefetch gates on [`Self::is_cached`]),
+    /// which is what [`apply_lane_reply`] leans on: the `Ready` slot a lane
+    /// reply lands into is the same protocol that dispatched. A future
+    /// re-fetch/replace path must preserve that — replacing a `Ready`
+    /// mid-flight lets a stale reply drop on the protocol-id mismatch, or a
+    /// `Failed` reply null out the replacement's slot.
     pub fn record_ready(
         &mut self,
         set_id: u32,
@@ -319,16 +326,18 @@ impl Covers {
         {
             let mut tp = tp.borrow_mut();
             if let Some(rect) = tp.needs_resize(&Resize::Fit(None), offer) {
-                if rect.width == 0 || rect.height == 0 {
-                    // Unreachable: fit_area_proportionally floors each fitted
-                    // dimension at 1 for a nonzero image in a nonzero offer.
-                    // Skip rather than send a request the crate would panic on.
+                // Unreachable: fit_area_proportionally floors each fitted
+                // dimension at 1 for a nonzero image in a nonzero offer.
+                // Skip rather than send a request the crate would panic on —
+                // and skip only this variant: the wide dispatch below must
+                // still run, or a zero-size offer would starve the wide lane.
+                if rect.width > 0 && rect.height > 0 {
+                    ready.square_fitted = Some(rect);
+                    tp.resize_encode(&Resize::Fit(None), rect);
+                    self.square_lane.in_flight.push_back(set_id);
+                } else {
                     debug!(set_id, "cover resize offer refused: zero-size rect");
-                    return;
                 }
-                ready.square_fitted = Some(rect);
-                tp.resize_encode(&Resize::Fit(None), rect);
-                self.square_lane.in_flight.push_back(set_id);
             }
         }
         let wide_offer = self.wide_offer.get();
@@ -337,13 +346,16 @@ impl Covers {
         {
             let mut tp = tp.borrow_mut();
             if let Some(rect) = tp.needs_resize(&Resize::Fit(None), offer) {
-                if rect.width == 0 || rect.height == 0 {
+                // Unreachable: fit_area_proportionally floors each fitted
+                // dimension at 1 for a nonzero image in a nonzero offer.
+                // Skip rather than send a request the crate would panic on.
+                if rect.width > 0 && rect.height > 0 {
+                    ready.wide_fitted = Some(rect);
+                    tp.resize_encode(&Resize::Fit(None), rect);
+                    self.wide_lane.in_flight.push_back(set_id);
+                } else {
                     debug!(set_id, "cover resize offer refused: zero-size rect");
-                    return;
                 }
-                ready.wide_fitted = Some(rect);
-                tp.resize_encode(&Resize::Fit(None), rect);
-                self.wide_lane.in_flight.push_back(set_id);
             }
         }
     }
