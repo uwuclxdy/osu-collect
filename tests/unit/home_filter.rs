@@ -53,8 +53,17 @@ fn results_populate_descend_and_request_first_enrich_page() {
     assert_eq!(app.home.find.browse.rows.len(), 2);
     assert!(app.home.find.browse.rows.iter().all(|r| r.meta.is_none()));
     assert!(app.home.find.results_current());
-    // The diff ids seeded the browse's enrichment pager, so `m` has more to load.
-    assert!(app.home.find.browse.has_more_enrichment());
+    // The raw diff ids seed the DETAILS walk, not the osu-batch pager: the
+    // pager stays dry until a details page lands and derives one-per-set seeds.
+    assert!(
+        app.home.find.browse.has_more_enrichment(),
+        "`m` sees the walk"
+    );
+    assert!(
+        !app.home.find.browse.has_unpaged_enrichment(),
+        "no osu-batch page is dispatched straight off the raw ids — the only \
+         work in flight is the walk"
+    );
 }
 
 /// Part 1 of the size-fetch rework: nzbasic's per-set sizes are free and

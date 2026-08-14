@@ -619,7 +619,20 @@ fn apply_event(
         }
         LoopEvent::HomeDetails(event) => {
             trace!(?event, "Received home details event");
-            handle_home_details_event(event, app);
+            // The handler may hand back a follow-up (the osu-batch page for
+            // the seeds a landed details page just derived); run it through
+            // the same dispatch.
+            let follow_up = handle_home_details_event(event, app);
+            return dispatch_command(
+                follow_up,
+                app,
+                download_tx,
+                updates_tx,
+                auth_tx,
+                update_tx,
+                downloads,
+                tasks,
+            );
         }
         LoopEvent::HomeSize(event) => {
             trace!(?event, "Received home size event");
@@ -851,9 +864,14 @@ fn dispatch_command(
             );
         }
         Some(AppCommand::LoadEnrichment { target }) => {
-            // nzbasic find results also carry per-set extra columns; the details
-            // path pages the same diff ids under the same generation. Captured
-            // before the sink borrow so the read doesn't alias it.
+            // The nzbasic find target seeds its osu-batch pager from LANDED
+            // details pages (the details response is the only place nzbasic
+            // pairs a diff with its set), so a dispatch serves the pager first
+            // when it holds unfetched seeds — the auto-follow a details
+            // landing returns — and only otherwise advances the details walk
+            // (the auto-fetch after results land, and `m`). Collection and
+            // update never seed a walk: their seeds arrive pre-paired and page
+            // directly, exactly as before.
             let is_nzbasic_find = target == EnrichTarget::Find
                 && app.home.find.results_backend() == Some(FindBackend::Nzbasic);
             let enrich_handle = match target {
@@ -861,40 +879,45 @@ fn dispatch_command(
                 EnrichTarget::Collection => &mut tasks.enrich_collection,
                 EnrichTarget::Update => &mut tasks.enrich_update,
             };
-            let sink = enrich_sink_mut(app, target);
-            // The first page (cursor 0) follows a reseed: the reseed already
-            // invalidated any in-flight page via the generation guard, so start
-            // fresh (`schedule_enrichment` aborts the target's prior task). A
-            // `m`-triggered page (cursor > 0) respects busy — aborting an
-            // in-flight page AFTER the pager advanced past it would lose those
-            // rows (rewind fires on a failure event, not on abort-by-supersede).
-            let first_page = sink.enrich_cursor() == 0;
-            let busy = enrich_handle
-                .as_ref()
-                .is_some_and(|handle| !handle.is_finished());
-            if first_page || !busy {
-                let generation = sink.enrich_generation();
-                let rewind_to = sink.enrich_cursor();
-                // A dry pager (every page requested) makes this a no-op.
-                if let Some(page) = sink.next_enrich_page() {
-                    // Count this page as outstanding; the landing / failing
-                    // event decrements it (`handle_enrich_event`). A counter
-                    // (not a bool) so an older page's late event can't clear
-                    // the cue while a newer fetch is still pending.
-                    sink.mark_enrichment_dispatched();
-                    // Clone the page for the details fetch before the enrichment
-                    // call consumes it (nzbasic find only).
-                    let details_page = is_nzbasic_find.then(|| page.clone());
-                    schedule_enrichment(
-                        target,
-                        generation,
-                        page,
-                        rewind_to,
-                        enrich_handle,
-                        &tasks.home_enrich_tx,
-                    );
-                    if let Some(details_page) = details_page {
-                        schedule_details(generation, details_page, &tasks.home_details_tx);
+            if is_nzbasic_find && !app.home.find.browse.has_unpaged_enrichment() {
+                // Fire-and-forget, no handle: concurrent pages are disjoint id
+                // slices under one generation, and the walk's in-flight counter
+                // drives the shared loading cue.
+                if let Some(page) = app.home.find.browse.next_details_page() {
+                    app.home.find.browse.mark_details_dispatched();
+                    let generation = app.home.find.browse.details_walk_generation();
+                    schedule_details(generation, page, &tasks.home_details_tx);
+                }
+            } else {
+                let sink = enrich_sink_mut(app, target);
+                // The first page (cursor 0) follows a reseed: the reseed already
+                // invalidated any in-flight page via the generation guard, so start
+                // fresh (`schedule_enrichment` aborts the target's prior task). A
+                // `m`-triggered page (cursor > 0) respects busy — aborting an
+                // in-flight page AFTER the pager advanced past it would lose those
+                // rows (rewind fires on a failure event, not on abort-by-supersede).
+                let first_page = sink.enrich_cursor() == 0;
+                let busy = enrich_handle
+                    .as_ref()
+                    .is_some_and(|handle| !handle.is_finished());
+                if first_page || !busy {
+                    let generation = sink.enrich_generation();
+                    let rewind_to = sink.enrich_cursor();
+                    // A dry pager (every page requested) makes this a no-op.
+                    if let Some(page) = sink.next_enrich_page() {
+                        // Count this page as outstanding; the landing / failing
+                        // event decrements it (`handle_enrich_event`). A counter
+                        // (not a bool) so an older page's late event can't clear
+                        // the cue while a newer fetch is still pending.
+                        sink.mark_enrichment_dispatched();
+                        schedule_enrichment(
+                            target,
+                            generation,
+                            page,
+                            rewind_to,
+                            enrich_handle,
+                            &tasks.home_enrich_tx,
+                        );
                     }
                 }
             }

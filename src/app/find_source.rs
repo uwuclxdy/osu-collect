@@ -61,7 +61,10 @@ pub enum EnrichTarget {
 /// event drops before decrementing); a reseed zeros it.
 ///
 /// Shared by every id-only browse — the flat [`SetBrowse`] and the update
-/// source's missing-set preview — through the [`EnrichSink`] trait.
+/// source's missing-set preview — through the [`EnrichSink`] trait. A
+/// [`SetBrowse`] carries a second instance, the nzbasic find route's details
+/// walk, which reuses the paging/generation/cue mechanics without taking part
+/// in the trait.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct EnrichPager {
     diff_ids: Vec<u32>,
@@ -105,6 +108,14 @@ impl EnrichPager {
     /// Rewind to `cursor` (a failed page retries on the next `m`).
     pub(crate) fn rewind(&mut self, cursor: usize) {
         self.cursor = cursor.min(self.diff_ids.len());
+    }
+
+    /// Queue more diff ids after everything already walked (a landed details
+    /// page derived new seeds mid-run). The generation and `in_flight`
+    /// counters are untouched — an in-flight page keeps its identity, and the
+    /// appended ids page out only after whatever the cursor already passed.
+    pub(crate) fn extend(&mut self, more: Vec<u32>) {
+        self.diff_ids.extend(more);
     }
 
     pub(crate) fn has_more(&self) -> bool {
@@ -231,10 +242,21 @@ pub struct SetBrowse {
     /// osu-batch metadata backfill for this browse's id-only rows. Empty (inert)
     /// for a browse whose rows already carry `meta` (osu search results).
     enrich: EnrichPager,
+    /// The nzbasic details walk: pages the RAW diff ids (`beatmapDetails`) in
+    /// [`ENRICH_PAGE`] slices. Find/nzbasic only — its landed pages are the
+    /// pairing source that derives `enrich`'s seeds (one representative diff
+    /// per set), so `enrich` stays dry until they land. Inert (empty) for
+    /// osu-routed find results, collection browse&pick, and the update source.
+    details_walk: EnrichPager,
+    /// Set ids already queued into `enrich` this run: a set's diffs can
+    /// straddle a details page boundary, and `enrich` dedups nothing, so the
+    /// derivation needs its own key to keep one seed per set across pages.
+    /// Cleared with the rows.
+    seeded_sets: HashSet<u32>,
     /// nzbasic-only per-set extra columns (tags/source/genre/language/dates plus
     /// one representative diff's combo/drain/passes/hash), keyed by set id. Filled
-    /// by the nzbasic details path (`src/app/runtime/details.rs`), which pages the
-    /// same diff ids as `enrich` under the same generation. Empty and inert for
+    /// by the nzbasic details path (`src/app/runtime/details.rs`), which walks
+    /// [`Self::details_walk`] under its own generation. Empty and inert for
     /// osu-routed find results and collection browse&pick; cleared with the rows.
     details: HashMap<u32, BeatmapDetails>,
 }
@@ -266,6 +288,8 @@ impl SetBrowse {
         self.list_cursor = Some(0);
         self.reset_preview();
         self.enrich.clear();
+        self.details_walk.clear();
+        self.seeded_sets.clear();
         // New identity → any prior nzbasic details are stale; the details path
         // reseeds itself off the fresh enrichment pages under the new generation.
         self.details.clear();
@@ -557,9 +581,11 @@ impl SetBrowse {
     /// Seed the enrichment pager from `(diff_id, set_id)` seeds (one diff per set
     /// is enough — the batch response nests each row's set metadata). A seed whose
     /// set is already in the session `cache` is pruned, so the pager only pages
-    /// sets whose title the app hasn't fetched yet. Callers with no set pairing
-    /// (find / nzbasic results) pass `None` set ids, which are never pruned. The
-    /// runtime auto-fetches the first page after this.
+    /// sets whose title the app hasn't fetched yet. Seeds with no set pairing
+    /// (`None`) are never pruned. The runtime auto-fetches the first page after
+    /// this. The find/nzbasic target does NOT seed here — its raw diff ids carry
+    /// no pairing, so it walks the details path first and queues derived seeds
+    /// per landed page ([`Self::queue_details_seeds`]).
     pub fn seed_enrichment(
         &mut self,
         seeds: Vec<(u32, Option<u32>)>,
@@ -567,6 +593,89 @@ impl SetBrowse {
     ) {
         self.enrich.seed(pruned_diff_ids(seeds, cache));
     }
+
+    // ── details walk (nzbasic find only) ─────────────────────────────────────
+
+    /// Adopt the raw diff ids a nzbasic run returned as the details walk
+    /// ([`Self::details_walk`]). The runtime's `LoadEnrichment{Find}` advances
+    /// this walk while the osu-batch pager is dry; each landed page then
+    /// derives the pager's seeds.
+    pub(crate) fn seed_details_walk(&mut self, diff_ids: Vec<u32>) {
+        self.details_walk.seed(diff_ids);
+    }
+
+    pub(crate) fn details_walk_generation(&self) -> u64 {
+        self.details_walk.generation
+    }
+
+    /// Pull the next raw-id details page, advancing the walk past it.
+    pub(crate) fn next_details_page(&mut self) -> Option<Vec<u32>> {
+        self.details_walk.next_page()
+    }
+
+    pub(crate) fn mark_details_dispatched(&mut self) {
+        self.details_walk.mark_dispatched();
+    }
+
+    /// A details page's result (success or failure) landed — one fewer
+    /// outstanding for the shared loading cue.
+    pub(crate) fn mark_details_settled(&mut self) {
+        self.details_walk.mark_settled();
+    }
+
+    /// Whether the osu-batch pager itself still has un-fetched ids — distinct
+    /// from [`EnrichSink::has_more_enrichment`], which folds in the details
+    /// walk (`m` must advance either).
+    pub(crate) fn has_unpaged_enrichment(&self) -> bool {
+        self.enrich.has_more()
+    }
+
+    /// Queue enrichment seeds derived from a LANDED details page: one
+    /// representative diff per set ([`representative_seeds`]), pruned against
+    /// the session `cache` and sets already queued this run
+    /// ([`Self::seeded_sets`]). Returns how many ids were queued — the caller
+    /// auto-fetches an osu-batch page only when that is > 0. Extends, never
+    /// reseeds: an in-flight osu-batch page keeps its generation.
+    pub(crate) fn queue_details_seeds(
+        &mut self,
+        rows: &[BeatmapDetails],
+        cache: &HashMap<u32, BeatmapSetMeta>,
+    ) -> usize {
+        // A cache-pruned set is marked seeded too: the cache never evicts, so
+        // that set can never need paging this session.
+        let seeds: Vec<(u32, Option<u32>)> = representative_seeds(rows)
+            .into_iter()
+            .filter(|&(_, set)| !set.is_some_and(|s| self.seeded_sets.contains(&s)))
+            .collect();
+        self.seeded_sets
+            .extend(seeds.iter().filter_map(|&(_, set)| set));
+        let queued = pruned_diff_ids(seeds, cache);
+        let count = queued.len();
+        self.enrich.extend(queued);
+        count
+    }
+
+    /// Queue a FAILED details page's raw diff ids as unpaired seeds — today's
+    /// every-diff paging, arrived at as the fallback. No set pairing exists to
+    /// prune or dedup with, so a set whose sibling diff seeded from an earlier
+    /// page may cost one redundant batch id; correctness is unaffected (the
+    /// fold fills only rows still missing meta). Returns the count queued.
+    pub(crate) fn queue_raw_details_seeds(&mut self, ids: &[u32]) -> usize {
+        self.enrich.extend(ids.to_vec());
+        ids.len()
+    }
+}
+
+/// One representative `(diff_id, Some(set_id))` seed per set in a landed
+/// details page — the first row of each set in page order (any diff folds the
+/// set's metadata; the first keeps the choice deterministic). This is the
+/// pairing the nzbasic filter results themselves cannot provide.
+pub(crate) fn representative_seeds(rows: &[BeatmapDetails]) -> Vec<(u32, Option<u32>)> {
+    let mut seen: HashSet<u32> = HashSet::new();
+    rows.iter()
+        .filter(|row| seen.insert(row.set_id))
+        .map(|row| (row.id, Some(row.set_id)))
+        .collect()
 }
 
 /// The spread's original-array indices in the order the preview lists them.
@@ -646,9 +755,13 @@ impl EnrichSink for SetBrowse {
         self.enrich.rewind(cursor);
     }
 
-    /// Whether `m` still has enrichment pages to load.
+    /// Whether `m` still has enrichment pages to load. Folds in the nzbasic
+    /// details walk: on that route `m` advances whichever side still has work,
+    /// and the walk is what keeps `m` alive before the first derived seeds
+    /// land. The walk is empty for every other browse, so they read this as
+    /// the pager's own answer.
     fn has_more_enrichment(&self) -> bool {
-        self.enrich.has_more()
+        self.enrich.has_more() || self.details_walk.has_more()
     }
 
     fn mark_enrichment_dispatched(&mut self) {
@@ -659,8 +772,10 @@ impl EnrichSink for SetBrowse {
         self.enrich.mark_settled();
     }
 
+    /// The loading cue: true while either a details page or an osu-batch page
+    /// is outstanding (the nzbasic route pipelines both).
     fn is_enriching(&self) -> bool {
-        self.enrich.is_enriching()
+        self.enrich.is_enriching() || self.details_walk.is_enriching()
     }
 
     /// Fold set-level metadata into the id-only rows. `meta_by_set` is keyed by

@@ -1,7 +1,8 @@
 use super::*;
 use crate::app::FindBackend;
 use osu_downloader::filter::{
-    FilterDirection, FilterMode, FilterRange, FilterSort, FilterSpecial, FilterStatus,
+    BeatmapDetails, FilterDirection, FilterMode, FilterRange, FilterSort, FilterSpecial,
+    FilterStatus,
 };
 use osu_downloader::search::{
     Extra, ExtraSet, Genre, Language, PlayedFilter, QueryRange, Rank, RankSet, SearchMode,
@@ -1686,6 +1687,124 @@ fn seed_and_set_rows_bump_the_enrichment_generation() {
     browse.set_rows(rows(&[10]), &HashMap::new());
     assert_ne!(browse.enrich_generation(), g1);
     assert!(!browse.has_more_enrichment());
+}
+
+// ── details-driven enrichment seeding (nzbasic find) ──────────────────────────
+
+fn detail_row(id: u32, set_id: u32, stars: f64) -> BeatmapDetails {
+    BeatmapDetails {
+        id,
+        set_id,
+        title: format!("title {set_id}"),
+        artist: "artist".to_string(),
+        creator: "mapper".to_string(),
+        version: "Insane".to_string(),
+        stars,
+        bpm: 180.0,
+        ar: 9.0,
+        cs: 4.0,
+        od: 8.0,
+        hp: 6.0,
+        status: None,
+        mode: None,
+        total_length: 210,
+        favourite_count: 100,
+        play_count: 1000,
+        size: 0,
+        hash: String::new(),
+        tags: String::new(),
+        source: String::new(),
+        genre: String::new(),
+        language: String::new(),
+        max_combo: 1000,
+        hit_length: 118,
+        pass_count: 500,
+        approved_date: 0,
+        last_update: 0,
+    }
+}
+
+#[test]
+fn representative_seeds_pick_the_first_diff_of_each_set() {
+    let seeds = representative_seeds(&[
+        detail_row(1, 10, 5.0),
+        detail_row(2, 10, 6.2),
+        detail_row(3, 20, 4.0),
+        detail_row(4, 10, 6.1),
+        detail_row(5, 20, 3.9),
+    ]);
+    assert_eq!(
+        seeds,
+        vec![(1, Some(10)), (3, Some(20))],
+        "one diff per set, first row in page order wins"
+    );
+}
+
+#[test]
+fn details_walk_pages_raw_ids_and_feeds_the_cue() {
+    let mut browse = SetBrowse::new();
+    browse.set_rows(rows(&[10]), &HashMap::new());
+    browse.seed_details_walk((0..600).collect());
+    assert!(browse.has_more_enrichment(), "`m` sees the walk");
+
+    let first = browse.next_details_page().expect("walk page 1");
+    assert_eq!(first.len(), ENRICH_PAGE);
+    assert_eq!(first[0], 0);
+    let _second = browse.next_details_page().expect("walk page 2");
+    let third = browse.next_details_page().expect("walk page 3");
+    assert_eq!(third.len(), 600 - 2 * ENRICH_PAGE);
+    // The osu-batch pager is empty in this browse, so `m`'s view reads as the
+    // walk's own dryness.
+    assert!(!browse.has_more_enrichment());
+
+    // The walk's dispatch/settle counters drive the same loading cue the
+    // osu-batch pager drives.
+    browse.mark_details_dispatched();
+    assert!(browse.is_enriching());
+    browse.mark_details_settled();
+    assert!(!browse.is_enriching());
+}
+
+#[test]
+fn queued_derived_seeds_extend_the_pager_without_bumping_the_generation() {
+    let mut browse = SetBrowse::new();
+    browse.set_rows(rows(&[10, 20]), &HashMap::new());
+    let generation = browse.enrich_generation();
+
+    let queued = browse.queue_details_seeds(
+        &[detail_row(1, 10, 5.0), detail_row(3, 20, 4.0)],
+        &HashMap::new(),
+    );
+    assert_eq!(queued, 2);
+    assert_eq!(
+        browse.enrich_generation(),
+        generation,
+        "queueing extends, it must not orphan an in-flight page"
+    );
+    assert!(browse.has_unpaged_enrichment());
+    assert_eq!(browse.next_enrich_page(), Some(vec![1, 3]));
+}
+
+#[test]
+fn set_rows_clears_the_details_walk_and_the_seeded_set_dedup() {
+    let mut browse = SetBrowse::new();
+    browse.set_rows(rows(&[10]), &HashMap::new());
+    browse.seed_details_walk(vec![1, 2]);
+    assert_eq!(
+        browse.queue_details_seeds(&[detail_row(1, 10, 5.0)], &HashMap::new()),
+        1
+    );
+    let _ = browse.next_enrich_page();
+
+    // New rows are a new identity: the walk, the pager, and the seeded-set
+    // dedup all reset, so the same set may seed again for the new run.
+    browse.set_rows(rows(&[10]), &HashMap::new());
+    assert!(!browse.has_more_enrichment(), "walk and pager both reset");
+    assert_eq!(
+        browse.queue_details_seeds(&[detail_row(1, 10, 5.0)], &HashMap::new()),
+        1,
+        "a fresh run's first landing seeds set 10 again"
+    );
 }
 
 #[test]

@@ -1,8 +1,9 @@
 //! The Get Maps `Filter` background task: the nzbasic fetch, off the UI thread,
 //! reporting back over an mpsc channel. Like search, the fetch is CTA-triggered
-//! — a new run cancels any in-flight one. Result rows land id-only; their
-//! set-level metadata is backfilled by the shared osu-batch enrichment pager
-//! (`src/app/runtime/enrich.rs`), not a nzbasic `beatmapDetails` call.
+//! — a new run cancels any in-flight one. Result rows land id-only; their raw
+//! diff ids seed the nzbasic details walk (`src/app/runtime/details.rs`),
+//! whose landed pages derive the osu-batch enrichment pager's seeds
+//! (`src/app/runtime/enrich.rs`) — one representative diff per set.
 
 use crate::app::{App, AppCommand, BrowseRow, EnrichTarget, FindBackend, FindStatusMsg};
 use osu_downloader::Error;
@@ -82,7 +83,8 @@ async fn run_filter_task(
 }
 
 /// Fold a filter event into the app. Returns a follow-up command (the auto-fetch
-/// of the first enrichment page after id-only results land) for the runtime loop
+/// of the first details page after id-only results land; its landing then
+/// derives and auto-fetches the first osu-batch page) for the runtime loop
 /// to dispatch.
 pub fn handle_home_filter_event(event: HomeFilterEvent, app: &mut App) -> Option<AppCommand> {
     match event {
@@ -108,24 +110,23 @@ pub fn handle_home_filter_event(event: HomeFilterEvent, app: &mut App) -> Option
                 .iter()
                 .map(|&id| BrowseRow { id, meta: None })
                 .collect();
-            // nzbasic's diff ids carry no set pairing, so they can't prune against
-            // the cache — every seed pages (id-only rows still hydrate any set the
-            // cache already knows via `set_rows`).
-            let seeds: Vec<(u32, Option<u32>)> = results.ids.iter().map(|&id| (id, None)).collect();
             app.home.find.status_msg = FindStatusMsg::ReadyFilter { sets, total_bytes };
-            // `set_rows` clears the pager + hydrates cached rows; then seed it with
-            // the matching diff ids so the rest backfill from the osu-batch endpoint.
+            // `set_rows` clears the pagers + hydrates cached rows. The raw diff
+            // ids seed the DETAILS walk, not the osu-batch pager: a landed
+            // `beatmapDetails` page is the only place nzbasic pairs a diff with
+            // its set, and that pairing is what derives the pager's seeds — one
+            // representative diff per set, a ~3.5x cut in batch ids. The
+            // auto-fetch below dispatches the first details page; each landing
+            // queues its derived seeds and follows with an osu-batch page.
             app.home.find.browse.set_rows(rows, &app.home.meta_cache);
-            app.home
-                .find
-                .browse
-                .seed_enrichment(seeds, &app.home.meta_cache);
+            app.home.find.browse.seed_details_walk(results.ids);
             // These rows came from nzbasic; record the backend + snapshot inputs.
             app.home.find.note_results_backend(FindBackend::Nzbasic);
             app.home.find.mark_results_current();
             // Open the results immediately on a fresh fetch (search parity).
             app.open_find_browse();
-            // Enrich what the user is about to look at: the first page.
+            // Enrich what the user is about to look at: the first details
+            // page (the pipeline above turns it into titles).
             Some(AppCommand::LoadEnrichment {
                 target: EnrichTarget::Find,
             })

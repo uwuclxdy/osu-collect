@@ -10,6 +10,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use super::*;
+use crate::app::EnrichSink;
 use crate::app::collection::FailureReason;
 use crate::app::collection_state::STATE_ENV_PATH;
 use crate::app::failed_maps::{FAILED_MAPS_ENV_PATH, FailedMapsFile};
@@ -24,6 +25,7 @@ use crate::download::{
 use crate::osu_db::OsuClient;
 use crate::test_env::TempEnvVar;
 use osu_downloader::ArchiveValidation;
+use osu_downloader::filter::BeatmapDetails;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tokio::sync::watch;
@@ -513,6 +515,149 @@ async fn load_enrichment_dispatches_a_find_enrichment_page() {
         fx.tasks.enrich_find.is_some(),
         "enrichment page dispatched into the find slot"
     );
+}
+
+/// The nzbasic find target walks `beatmapDetails` first — the details response
+/// is the only place nzbasic pairs a diff with its set, so the osu-batch pager
+/// holds only seeds derived from landed pages. A dispatch with a dry pager
+/// advances the walk instead of paging osu-batch directly.
+#[tokio::test]
+async fn load_enrichment_find_nzbasic_advances_the_details_walk_first() {
+    let mut fx = Fixture::new();
+    fx.app.home.find.note_results_backend(FindBackend::Nzbasic);
+    let cache = HashMap::new();
+    fx.app
+        .home
+        .find
+        .browse
+        .set_rows(vec![BrowseRow { id: 42, meta: None }], &cache);
+    fx.app.home.find.browse.seed_details_walk(vec![999_999_999]);
+
+    assert!(fx.tasks.enrich_find.is_none());
+    assert!(!fx.dispatch(Some(AppCommand::LoadEnrichment {
+        target: EnrichTarget::Find,
+    })));
+    assert!(
+        fx.tasks.enrich_find.is_none(),
+        "no osu-batch page while the walk still feeds the pager"
+    );
+    assert!(
+        !fx.app.home.find.browse.has_more_enrichment(),
+        "the walk advanced its only page (the pager is dry, so `m`'s view \
+         reads the walk alone)"
+    );
+    assert!(
+        fx.app.home.find.browse.is_enriching(),
+        "the dispatched details page holds the cue"
+    );
+
+    // A bogus id 500s the whole details batch (or the network fails): either
+    // way the fallback event lands carrying the slice's ids.
+    let event = tokio::time::timeout(Duration::from_secs(20), fx.home_details_rx.recv())
+        .await
+        .expect("details event lands");
+    assert!(
+        matches!(event, Some(HomeDetailsEvent::Failed { ref ids, .. }) if ids == &vec![999_999_999]),
+        "the failed slice reports its raw ids: {event:?}"
+    );
+}
+
+/// Once a landed details page has queued derived seeds, a dispatch serves the
+/// osu-batch pager (titles ready now) and leaves the walk for the next `m`.
+#[tokio::test]
+async fn load_enrichment_find_nzbasic_pages_the_pager_once_seeds_are_queued() {
+    let mut fx = Fixture::new();
+    fx.app.home.find.note_results_backend(FindBackend::Nzbasic);
+    let cache = HashMap::new();
+    fx.app
+        .home
+        .find
+        .browse
+        .set_rows(vec![BrowseRow { id: 42, meta: None }], &cache);
+    fx.app.home.find.browse.seed_details_walk(vec![1, 2, 3]);
+    // A landed details page's derivation, applied directly.
+    let queued = fx
+        .app
+        .home
+        .find
+        .browse
+        .queue_details_seeds(&[details_row(1, 42, 5.0), details_row(2, 42, 6.0)], &cache);
+    assert_eq!(queued, 1, "two diffs of one set queue one seed");
+
+    assert!(!fx.dispatch(Some(AppCommand::LoadEnrichment {
+        target: EnrichTarget::Find,
+    })));
+    assert!(
+        fx.tasks.enrich_find.is_some(),
+        "the queued seeds page the osu-batch endpoint"
+    );
+    assert!(
+        fx.app.home.find.browse.has_more_enrichment(),
+        "the walk itself was not advanced by this dispatch — its only page \
+         still stands, and the dispatched pager seed has paged out"
+    );
+}
+
+/// Collection (and update) never seed a details walk: their seeds arrive
+/// pre-paired and page osu-batch directly, exactly as before the rework.
+#[tokio::test]
+async fn load_enrichment_collection_target_keeps_paging_the_pager_directly() {
+    let mut fx = Fixture::new();
+    let cache = HashMap::new();
+    fx.app
+        .home
+        .collection_browse
+        .set_rows(vec![BrowseRow { id: 42, meta: None }], &cache);
+    fx.app
+        .home
+        .collection_browse
+        .seed_enrichment(vec![(99, Some(42))], &cache);
+
+    assert!(!fx.dispatch(Some(AppCommand::LoadEnrichment {
+        target: EnrichTarget::Collection,
+    })));
+    assert!(
+        fx.tasks.enrich_collection.is_some(),
+        "the collection pager dispatched into its own slot"
+    );
+    assert!(
+        !fx.app.home.find.browse.has_more_enrichment(),
+        "a collection dispatch never touches the find browse's walks"
+    );
+}
+
+/// One details row for dispatch-test seeding: diff `id` under `set_id`.
+fn details_row(id: u32, set_id: u32, stars: f64) -> BeatmapDetails {
+    BeatmapDetails {
+        id,
+        set_id,
+        title: format!("title {set_id}"),
+        artist: "artist".to_string(),
+        creator: "mapper".to_string(),
+        version: "Insane".to_string(),
+        stars,
+        bpm: 180.0,
+        ar: 9.0,
+        cs: 4.0,
+        od: 8.0,
+        hp: 6.0,
+        status: None,
+        mode: None,
+        total_length: 210,
+        favourite_count: 100,
+        play_count: 1000,
+        size: 0,
+        hash: String::new(),
+        tags: String::new(),
+        source: String::new(),
+        genre: String::new(),
+        language: String::new(),
+        max_combo: 1000,
+        hit_length: 118,
+        pass_count: 500,
+        approved_date: 0,
+        last_update: 0,
+    }
 }
 
 // ── probes ─────────────────────────────────────────────────────────────────
