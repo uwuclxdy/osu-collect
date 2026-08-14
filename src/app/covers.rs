@@ -320,9 +320,9 @@ impl Covers {
             let mut tp = tp.borrow_mut();
             if let Some(rect) = tp.needs_resize(&Resize::Fit(None), offer) {
                 if rect.width == 0 || rect.height == 0 {
-                    // Unreachable: needs_resize's fitted rect is ceil-rounded
-                    // and the offer is guard-checked ≥ 1x1. Skip rather than
-                    // send a request the crate would panic on.
+                    // Unreachable: fit_area_proportionally floors each fitted
+                    // dimension at 1 for a nonzero image in a nonzero offer.
+                    // Skip rather than send a request the crate would panic on.
                     debug!(set_id, "cover resize offer refused: zero-size rect");
                     return;
                 }
