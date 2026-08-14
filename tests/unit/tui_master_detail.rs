@@ -420,6 +420,26 @@ fn a_protocol_in_flight_without_a_fitted_size_places_nothing() {
 }
 
 #[test]
+fn a_protocol_in_flight_with_a_stale_fitted_size_clamps_to_the_allowance() {
+    // The pane shrank while the encode was in flight: the recorded last-fitted
+    // size (from the old, wider offer) exceeds the new allowance. The seat
+    // clamps to the allowance and the pane height, or the text width would
+    // underflow and the frame would go text-only mid-flight.
+    let inner = Rect::new(0, 0, 30, 15);
+    let (tx, _rx) = mpsc::channel();
+    let tp = RefCell::new(ThreadProtocol::new(tx, None));
+    let variant = PreviewVariant {
+        protocol: Some(&tp),
+        fitted: Some(Size::new(30, 20)),
+    };
+    let (text, cover) = place_cover(inner, variant, 10)
+        .expect("the stale fit clamps instead of vanishing the seat");
+    assert_eq!((cover.width, cover.height), (10, 15));
+    assert_eq!(text.width, 30 - 10 - COVER_GAP);
+    assert_eq!(cover.x, inner.right() - 10);
+}
+
+#[test]
 fn the_render_writes_the_seated_variants_offer_and_clears_the_other() {
     let list_offset = Cell::new(0);
     let preview_offset = Cell::new(0);

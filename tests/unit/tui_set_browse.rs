@@ -142,6 +142,17 @@ fn covers_both_variants(set_id: u32) -> Covers {
     covers
 }
 
+/// A [`Covers`] with only the wide variant ready — the square fetch failed
+/// (designed fail-soft), so any cover seat is the wide protocol's, the
+/// collapsed one included.
+fn covers_wide_only(set_id: u32) -> Covers {
+    let mut covers = Covers::new();
+    let wide = covers.picker.new_resize_protocol(gradient_cover(800, 280));
+    covers.record_ready(set_id, None, Some(wide));
+    settle(&mut covers, set_id);
+    covers
+}
+
 /// First inner column of the preview pane in a 90-wide split: list pane is 36
 /// wide, preview border at x=36, +1 border +1 padding. Sampling from here scopes
 /// assertions to the preview, away from the list pane's text + cursor highlight.
@@ -1593,6 +1604,25 @@ fn a_title_too_long_for_the_wide_column_collapses_to_the_square() {
         artist,
         title + 1,
         "the collapsed cover keeps the title one line"
+    );
+}
+
+#[test]
+fn a_wide_only_set_collapses_and_paints_at_the_square_allowance() {
+    // 83 wide: the preview inner is too narrow for the wide column (the wide
+    // branch declines below WIDE_COVER_WIDTH), so the collapsed branch seats
+    // the WIDE protocol at the square allowance. The offer must follow the
+    // protocol that seats — written to the square cell instead, the wide lane
+    // never encodes and the collapsed seat stays blank forever.
+    let browse = browse_with(vec![BrowseRow {
+        id: 42,
+        meta: Some(sample_meta(42)),
+    }]);
+    let mut covers = covers_wide_only(42);
+    let buf = paint_settled_cover(&browse, &mut covers, 42, 83, 30);
+    assert!(
+        cover_start_x(&buf, 1).is_some(),
+        "a wide-only cover still paints through the collapsed seat"
     );
 }
 

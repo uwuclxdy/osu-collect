@@ -526,7 +526,9 @@ fn decide_cover_layout<'a>(
     }
 
     // Collapse to the smaller square (still shown). Prefer the square protocol;
-    // fall back to the wide one when only it has loaded.
+    // fall back to the wide one when only it has loaded. The offer follows the
+    // protocol that seats, not the variant name: a wide-served collapsed seat
+    // whose offer went to the square cell would never reach the wide lane.
     let collapsed = square.protocol.or(wide.protocol)?;
     let allowance = square_cover_width(inner.width)?;
     let collapsed_variant = PreviewVariant {
@@ -534,7 +536,11 @@ fn decide_cover_layout<'a>(
         fitted: square.fitted.or(wide.fitted),
     };
     let (text_area, cover_area) = place_cover(inner, collapsed_variant, allowance)?;
-    *square_offer = Some(Size::new(allowance, inner.height));
+    if square.protocol.is_some() {
+        *square_offer = Some(Size::new(allowance, inner.height));
+    } else {
+        *wide_offer = Some(Size::new(allowance, inner.height));
+    }
     Some((text_area, cover_area, collapsed))
 }
 
@@ -558,7 +564,9 @@ fn decide_cover_layout<'a>(
 ///
 /// While an encode is in flight the protocol answers no size (`inner` is with
 /// the worker), so the fit falls back to the variant's recorded last-fitted
-/// size — the encode answers the same size, so the seat never moves.
+/// size — the encode answers the same size, so the seat never moves. A fitted
+/// size recorded against a wider offer (the pane shrank mid-flight) clamps to
+/// the allowance and the pane height, or the text width would underflow.
 fn place_cover(inner: Rect, variant: PreviewVariant<'_>, allowance: u16) -> Option<(Rect, Rect)> {
     let protocol = variant.protocol?;
     let fitted = protocol
@@ -568,6 +576,7 @@ fn place_cover(inner: Rect, variant: PreviewVariant<'_>, allowance: u16) -> Opti
     if fitted.width == 0 || fitted.height == 0 {
         return None;
     }
+    let fitted = Size::new(fitted.width.min(allowance), fitted.height.min(inner.height));
     let text_width = inner.width.checked_sub(fitted.width + COVER_GAP)?;
     let text_area = Rect {
         width: text_width,
