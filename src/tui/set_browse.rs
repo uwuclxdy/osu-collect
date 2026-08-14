@@ -21,7 +21,8 @@ use ratatui::{
 };
 
 use super::master_detail::{
-    self, MasterDetail, Pane, PreviewCover, PreviewItems, PreviewLead, PreviewWidths,
+    self, MasterDetail, Pane, PreviewCover, PreviewItems, PreviewLead, PreviewVariant,
+    PreviewWidths,
 };
 use super::theme::stars_color;
 use super::widgets;
@@ -128,11 +129,20 @@ pub fn render(
         .filter(|(covers, row)| covers.is_settled(row.id))
         .and_then(|(covers, row)| {
             let cover = PreviewCover {
-                square: covers.square_for(row.id),
-                wide: covers.wide_for(row.id),
+                square: PreviewVariant {
+                    protocol: covers.square_for(row.id),
+                    fitted: covers.square_fitted_for(row.id),
+                },
+                wide: PreviewVariant {
+                    protocol: covers.wide_for(row.id),
+                    fitted: covers.wide_fitted_for(row.id),
+                },
             };
-            (cover.square.is_some() || cover.wide.is_some()).then_some(cover)
+            (cover.square.protocol.is_some() || cover.wide.protocol.is_some()).then_some(cover)
         });
+    // The render writes each variant's pane offer back into the model, which
+    // drives the off-thread re-encode off them.
+    let offer_cells = covers.map(|covers| (covers.square_offer(), covers.wide_offer()));
 
     let view = MasterDetail {
         status: None,
@@ -151,6 +161,8 @@ pub fn render(
         preview_offset: &browse.preview_offset,
         preview_max_offset: &browse.preview_max_offset,
         preview_image,
+        preview_square_offer: offer_cells.map(|(square, _)| square),
+        preview_wide_offer: offer_cells.map(|(_, wide)| wide),
         preview_lead,
         focused: if browse.preview_focused() {
             Pane::Preview

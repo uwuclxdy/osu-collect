@@ -10,6 +10,8 @@ use osu_downloader::search::Beatmap;
 use ratatui::style::Color;
 use ratatui::{Terminal, backend::TestBackend};
 use std::collections::HashMap;
+use std::thread;
+use std::time::Duration;
 
 fn sample_meta(id: u32) -> BeatmapSetMeta {
     BeatmapSetMeta {
@@ -168,6 +170,30 @@ fn render_grid(
         })
         .expect("browse should render");
     terminal.backend().buffer().clone()
+}
+
+/// Render until a settled cover actually paints: the off-thread resize+encode
+/// round trip runs only while the render keeps offering the seated variant and
+/// the model keeps polling, so an art assertion needs the same loop the runtime
+/// drives. Returns the first buffer with the artwork on its top row, or panics
+/// after 200 rounds (~400ms) — an encode takes milliseconds, so a stall there is
+/// a bug worth failing on.
+fn paint_settled_cover(
+    browse: &SetBrowse,
+    covers: &mut Covers,
+    set_id: u32,
+    w: u16,
+    h: u16,
+) -> ratatui::buffer::Buffer {
+    for _ in 0..200 {
+        let buf = render_grid(browse, Some(covers), w, h);
+        if cover_start_x(&buf, 1).is_some() {
+            return buf;
+        }
+        covers.poll_cover_encodes(Some(set_id));
+        thread::sleep(Duration::from_millis(2));
+    }
+    panic!("the settled cover never painted within the poll budget");
 }
 
 /// First preview-pane row (`x >= PREVIEW_X`) whose text contains `needle`.
@@ -811,7 +837,7 @@ fn ready_cover_paints_a_right_column_beside_the_text() {
         id: 42,
         meta: Some(sample_meta(42)),
     }]);
-    let covers = covers_square_only(42);
+    let mut covers = covers_square_only(42);
 
     // 90 wide: list pane 36, preview inner spans x=38..88 (50 columns). Square-only
     // (no wide), so the square column is offered 20 (50/5*2), which the 300x300
@@ -819,7 +845,7 @@ fn ready_cover_paints_a_right_column_beside_the_text() {
     const COVER_X: u16 = 68;
     const LAST_INNER_X: u16 = 87;
 
-    let with_cover = render_grid(&browse, Some(&covers), 90, 30);
+    let with_cover = paint_settled_cover(&browse, &mut covers, 42, 90, 30);
     let without = render_grid(&browse, None, 90, 30);
 
     assert_eq!(
@@ -921,8 +947,9 @@ fn a_cover_is_withheld_until_the_highlight_settles_on_its_row() {
     for _ in 0..4 {
         covers.poll_prefetch(Some(42));
     }
+    let painted = paint_settled_cover(&browse, &mut covers, 42, 90, 30);
     assert_eq!(
-        cover_start_x(&render_grid(&browse, Some(&covers), 90, 30), 1),
+        cover_start_x(&painted, 1),
         Some(COVER_X),
         "the same ready cover paints once the row has held the highlight"
     );
@@ -951,7 +978,8 @@ fn the_cover_band_carries_the_theme_background() {
         id: 42,
         meta: Some(sample_meta(42)),
     }]);
-    let buf = render_grid(&browse, Some(&covers_both_variants(42)), 90, 30);
+    let mut covers = covers_both_variants(42);
+    let buf = paint_settled_cover(&browse, &mut covers, 42, 90, 30);
     let art_x = cover_start_x(&buf, 1).expect("the cover renders on the first row");
     for x in [art_x - 2, art_x - 1] {
         assert_eq!(
@@ -1034,7 +1062,8 @@ fn a_spread_clear_of_the_cover_uses_the_full_pane_width() {
         meta: Some(meta),
     }]);
 
-    let buf = render_grid(&browse, Some(&covers_both_variants(42)), 90, 30);
+    let mut covers = covers_both_variants(42);
+    let buf = paint_settled_cover(&browse, &mut covers, 42, 90, 30);
     let width = buf.area().width;
     let y = preview_row_of(&buf, "\u{2605}4.48").expect("the spread renders") as u16;
     // Pins the fixture's own premise: every assertion below is about a row the
@@ -1093,8 +1122,10 @@ fn the_star_block_follows_the_widest_name_not_the_pane_edge() {
 /// A 2-diff spread beside a square cover on a pane too short to hold the block
 /// below it (`90x16`: a 10-row cover leaves 4 rows under it, the block needs 9),
 /// so the pushdown declines and the block genuinely renders in the narrow band.
-/// The one geometry where the beside-the-cover width is still observable.
-fn cramped_spread(names: [&str; 2]) -> ratatui::buffer::Buffer {
+/// The one geometry where the beside-the-cover width is still observable. The
+/// seat — and therefore the text layout — exists whether or not the artwork has
+/// painted yet, so `paint` is needed only by assertions on the art cells.
+fn cramped_spread(names: [&str; 2], paint: bool) -> ratatui::buffer::Buffer {
     let meta = BeatmapSetMeta {
         beatmaps: vec![spread_diff(names[0], 5.12), spread_diff(names[1], 6.4)],
         ..sample_meta(42)
@@ -1103,7 +1134,12 @@ fn cramped_spread(names: [&str; 2]) -> ratatui::buffer::Buffer {
         id: 42,
         meta: Some(meta),
     }]);
-    render_grid(&browse, Some(&covers_square_only(42)), 90, 16)
+    if paint {
+        let mut covers = covers_square_only(42);
+        paint_settled_cover(&browse, &mut covers, 42, 90, 16)
+    } else {
+        render_grid(&browse, Some(&covers_square_only(42)), 90, 16)
+    }
 }
 
 #[test]
@@ -1125,7 +1161,8 @@ fn a_spread_that_would_straddle_the_cover_waits_for_it() {
         meta: Some(meta),
     }]);
 
-    let buf = render_grid(&browse, Some(&covers_square_only(42)), 90, 30);
+    let mut covers = covers_square_only(42);
+    let buf = paint_settled_cover(&browse, &mut covers, 42, 90, 30);
     let width = buf.area().width;
     // The play count, not the `plays` key — `no plays` on the success-rate row
     // matches that too, and would retarget the gap assertion on a row reorder.
@@ -1158,7 +1195,7 @@ fn a_block_waits_when_the_room_below_the_cover_exactly_holds_it() {
     // exactly the 9 this block needs, so it waits and takes the full width. A
     // `below` one row stingier declines and the meter goes — as does a `>=`
     // comparison in place of the `>`.
-    let cramped = cramped_spread(["Setu's Insane", "Extra"]);
+    let cramped = cramped_spread(["Setu's Insane", "Extra"], false);
     let width = cramped.area().width;
     let y = preview_row_of(&cramped, "\u{2605}5.12").expect("the spread renders") as u16;
     let row = preview_text_before(&cramped, y, width);
@@ -1237,7 +1274,7 @@ fn a_cramped_spread_keeps_its_meter_when_the_names_are_short() {
     // block. Reserving `SPREAD_NAME_MIN` (12) regardless dropped the meter over
     // room nothing was going to use — the same defect as capping a name against a
     // width the row doesn't have.
-    let short = cramped_spread(["Easy", "Hard"]);
+    let short = cramped_spread(["Easy", "Hard"], false);
     let width = short.area().width;
     let y = preview_row_of(&short, "\u{2605}5.12").expect("the spread renders") as u16;
     let row = preview_text_before(&short, y, width);
@@ -1294,7 +1331,7 @@ fn a_cramped_spread_drops_the_meter_and_keeps_the_name_readable() {
     // `\u{2605}X.XX` rating carries the figure the meter only illustrates, so the meter is
     // what gives way. BOTH rows drop it — the block sizes off its FIRST row, so the
     // one that reflows past the image keeps the column its peers use.
-    let cramped = cramped_spread(["Setu's Insane", "Extra"]);
+    let cramped = cramped_spread(["Setu's Insane", "Extra"], true);
     let width = cramped.area().width;
     let last = cover_last_row(&cramped).expect("the cover renders");
     let y = preview_row_of(&cramped, "\u{2605}5.12").expect("the rating survives a cramped pane")
@@ -1368,7 +1405,8 @@ fn rows_below_the_cover_reflow_to_the_full_pane_width() {
         meta: Some(meta),
     }]);
 
-    let buf = render_grid(&browse, Some(&covers_both_variants(42)), 90, 30);
+    let mut covers = covers_both_variants(42);
+    let buf = paint_settled_cover(&browse, &mut covers, 42, 90, 30);
 
     assert!(
         preview_row_of(&buf, "sliders 288").is_some(),
@@ -1442,8 +1480,10 @@ fn a_wide_pane_swaps_in_the_shorter_wide_variant() {
     // variants loaded the wide card is chosen. It's a wide crop, so at the same
     // column width it paints fewer rows than the square.
     const LAST_INNER_X: u16 = 87;
-    let square = render_grid(&browse, Some(&covers_square_only(42)), 90, 30);
-    let both = render_grid(&browse, Some(&covers_both_variants(42)), 90, 30);
+    let mut square_covers = covers_square_only(42);
+    let mut both_covers = covers_both_variants(42);
+    let square = paint_settled_cover(&browse, &mut square_covers, 42, 90, 30);
+    let both = paint_settled_cover(&browse, &mut both_covers, 42, 90, 30);
 
     let square_rows = colored_rows_at(&square, LAST_INNER_X);
     let wide_rows = colored_rows_at(&both, LAST_INNER_X);
@@ -1473,8 +1513,11 @@ fn a_narrow_pane_keeps_the_square_even_with_the_wide_loaded() {
     // 72-wide → preview inner 40 → offered 16 (below WIDE_COVER_WIDTH 26), so the
     // square stays even with the wide loaded: a taller column than the wide crop.
     // The cover is right-anchored, so its column is the last inner col (width-3).
-    let wide = render_grid(&browse, Some(&covers_both_variants(42)), 90, 30);
-    let narrow = render_grid(&browse, Some(&covers_both_variants(42)), 72, 30);
+    let mut covers = covers_both_variants(42);
+    let wide = paint_settled_cover(&browse, &mut covers, 42, 90, 30);
+    // The 72-wide seat re-encodes (the offer shrinks), so the second paint has
+    // to wait its own round trip before the taller square shows.
+    let narrow = paint_settled_cover(&browse, &mut covers, 42, 72, 30);
 
     let wide_rows = colored_rows_at(&wide, 90 - 3);
     let narrow_rows = colored_rows_at(&narrow, 72 - 3);
@@ -1493,7 +1536,8 @@ fn a_short_title_keeps_the_cover_on_one_line() {
     }]);
     // "Song Title" fits the ~22-col text column beside the cover, so the cover
     // stays and the title is one line (artist directly below it).
-    let buffer = render_grid(&browse, Some(&covers_both_variants(42)), 90, 30);
+    let mut covers = covers_both_variants(42);
+    let buffer = paint_settled_cover(&browse, &mut covers, 42, 90, 30);
     assert!(
         cover_start_x(&buffer, 1).is_some(),
         "a title that fits keeps its cover"
@@ -1526,8 +1570,10 @@ fn a_title_too_long_for_the_wide_column_collapses_to_the_square() {
     }]);
 
     const LAST_INNER_X: u16 = 87;
-    let short_buf = render_grid(&short, Some(&covers_both_variants(42)), 90, 30);
-    let mid_buf = render_grid(&mid, Some(&covers_both_variants(42)), 90, 30);
+    let mut short_covers = covers_both_variants(42);
+    let mut mid_covers = covers_both_variants(42);
+    let short_buf = paint_settled_cover(&short, &mut short_covers, 42, 90, 30);
+    let mid_buf = paint_settled_cover(&mid, &mut mid_covers, 42, 90, 30);
 
     let short_rows = colored_rows_at(&short_buf, LAST_INNER_X);
     let mid_rows = colored_rows_at(&mid_buf, LAST_INNER_X);
@@ -1564,7 +1610,8 @@ fn a_title_too_long_for_even_the_collapsed_column_wraps_to_two_lines() {
         meta: Some(very_long),
     }]);
 
-    let buffer = render_grid(&browse, Some(&covers_both_variants(42)), 90, 30);
+    let mut covers = covers_both_variants(42);
+    let buffer = paint_settled_cover(&browse, &mut covers, 42, 90, 30);
     assert!(
         colored_rows_at(&buffer, 90 - 3) > 0,
         "the square cover is still shown while the title wraps"
@@ -1674,9 +1721,9 @@ fn the_spread_keeps_one_rating_column_at_every_scroll_position() {
 #[test]
 fn a_scrolled_preview_drops_the_cover() {
     let mut browse = tall_preview_browse();
-    let covers = covers_square_only(7);
+    let mut covers = covers_square_only(7);
     assert!(
-        cover_last_row(&render_grid(&browse, Some(&covers), 90, 30)).is_some(),
+        cover_last_row(&paint_settled_cover(&browse, &mut covers, 7, 90, 30)).is_some(),
         "the cover renders while the preview sits at its top"
     );
 
@@ -1692,10 +1739,10 @@ fn a_scrolled_preview_drops_the_cover() {
 fn a_blurred_preview_stays_pinned_at_the_top() {
     let mut browse = tall_preview_browse();
     browse.focus_list();
-    let covers = covers_square_only(7);
+    let mut covers = covers_square_only(7);
 
     browse.page_down();
-    let buffer = render_grid(&browse, Some(&covers), 90, 30);
+    let buffer = paint_settled_cover(&browse, &mut covers, 7, 90, 30);
     assert_eq!(
         browse.preview_offset.get(),
         0,
@@ -1713,7 +1760,7 @@ fn a_preview_that_fits_its_pane_returns_to_the_top() {
     // leave nothing to scroll. The render settles that in the same frame, so the
     // cover comes back with the top row rather than a keypress later.
     let mut browse = tall_preview_browse();
-    let covers = covers_square_only(7);
+    let mut covers = covers_square_only(7);
     for _ in 0..4 {
         browse.page_down();
     }
@@ -1722,7 +1769,7 @@ fn a_preview_that_fits_its_pane_returns_to_the_top() {
         "the scrolled 30-row render is text-only"
     );
 
-    let tall = render_grid(&browse, Some(&covers), 90, 60);
+    let tall = paint_settled_cover(&browse, &mut covers, 7, 90, 60);
     assert_eq!(
         browse.preview_offset.get(),
         0,
@@ -1763,10 +1810,10 @@ fn the_last_row_is_reachable_at_every_pane_height() {
 #[test]
 fn the_edge_keys_jump_a_focused_preview_end_to_end() {
     let mut browse = tall_preview_browse();
-    let covers = covers_square_only(7);
+    let mut covers = covers_square_only(7);
     // The pane is on screen before any key reaches it, which is what tells the
-    // model where the bottom is.
-    render_grid(&browse, Some(&covers), 90, 30);
+    // model where the bottom is — painted, so the `gg` frame below has art.
+    paint_settled_cover(&browse, &mut covers, 7, 90, 30);
 
     browse.scroll_to_edge(false);
     let bottom = render_grid(&browse, Some(&covers), 90, 30);
@@ -1791,11 +1838,11 @@ fn a_blurred_preview_renders_from_its_top_whatever_the_offset_says() {
     // read-only detail of whatever the list highlights cannot stay parked
     // mid-content while the highlight moves out from under it.
     let mut browse = tall_preview_browse();
-    let covers = covers_square_only(7);
+    let mut covers = covers_square_only(7);
     browse.page_down();
     browse.focus_list();
 
-    let buffer = render_grid(&browse, Some(&covers), 90, 30);
+    let buffer = paint_settled_cover(&browse, &mut covers, 7, 90, 30);
     assert_eq!(
         browse.preview_offset.get(),
         0,

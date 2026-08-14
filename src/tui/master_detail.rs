@@ -27,8 +27,8 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Clear, ListItem, Paragraph},
 };
-use ratatui_image::protocol::StatefulProtocol;
-use ratatui_image::{Resize, StatefulImage};
+use ratatui_image::thread::ThreadProtocol;
+use ratatui_image::{Resize, ResizeEncodeRender};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 
@@ -41,15 +41,26 @@ pub enum Pane {
     Preview,
 }
 
-/// The highlighted row's ready cover protocols, one per aspect. The preview
+/// One cover variant's render state for the highlighted row: the protocol
+/// (which renders only its cached encoding — the resize+encode rides a lane
+/// the model drives) and the last-fitted size the layout falls back to while
+/// an encode is in flight, so the cover column holds its place instead of
+/// reflowing the text.
+#[derive(Clone, Copy)]
+pub struct PreviewVariant<'a> {
+    pub protocol: Option<&'a RefCell<ThreadProtocol>>,
+    pub fitted: Option<Size>,
+}
+
+/// The highlighted row's ready cover variants, one per aspect. The preview
 /// always seats the cover in a right-hand column, text to its left; it renders
 /// the wide `card@2x` once that column has grown past [`WIDE_COVER_WIDTH`] and
-/// the variant is loaded, otherwise the square `list@2x`. Either field is `None`
-/// when that variant is unfetched or failed.
+/// the variant is loaded, otherwise the square `list@2x`. Either variant is
+/// `None` (protocol) when that aspect is unfetched or failed.
 #[derive(Clone, Copy)]
 pub struct PreviewCover<'a> {
-    pub square: Option<&'a RefCell<StatefulProtocol>>,
-    pub wide: Option<&'a RefCell<StatefulProtocol>>,
+    pub square: PreviewVariant<'a>,
+    pub wide: PreviewVariant<'a>,
 }
 
 /// The preview's lead line (the set title), rendered above `preview_items`. It
@@ -186,10 +197,17 @@ pub struct MasterDetail<'a> {
     /// this rather than from a value it hopes is past the end, so the next page
     /// key steps back from a real row index.
     pub preview_max_offset: &'a Cell<usize>,
-    /// The highlighted row's ready cover protocols. `Some` seats a right-hand
+    /// The highlighted row's ready cover variants. `Some` seats a right-hand
     /// image column (square or wide, per pane size) when there's room; `None`
     /// (the default for image-less consumers) renders the preview text-only.
     pub preview_image: Option<PreviewCover<'a>>,
+    /// The render's write-back cells for the pane's cover offers: the seated
+    /// variant's offered size, cleared for the other (see
+    /// [`Covers::square_offer`](crate::app::covers::Covers::square_offer) for
+    /// the contract). The model's tick pass reads them to drive the off-thread
+    /// re-encode; image-less consumers pass `None`.
+    pub preview_square_offer: Option<&'a Cell<Option<Size>>>,
+    pub preview_wide_offer: Option<&'a Cell<Option<Size>>>,
     /// The preview's lead (the set title), drawn above `preview_items`. Kept on
     /// one line beside a cover; the cover collapses before this wraps. `None`
     /// renders `preview_items` alone.
@@ -295,7 +313,14 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
     // ever wraps — the title wraps to two lines only when even the collapsed
     // column's text can't hold it.
     let cover = view.preview_image.and_then(|cover| {
-        cover_layout(inner, view.preview_lead.as_ref(), cover.square, cover.wide)
+        cover_layout(
+            inner,
+            view.preview_lead.as_ref(),
+            cover.square,
+            cover.wide,
+            view.preview_square_offer,
+            view.preview_wide_offer,
+        )
     });
     let cover_rows = cover.map_or(0, |(_, cover_area, _)| cover_area.height);
     let text_width = cover.map_or(inner.width, |(text_area, ..)| text_area.width);
@@ -361,13 +386,12 @@ fn render_preview_pane(frame: &mut Frame, area: Rect, view: &MasterDetail<'_>) {
     let band = cover_band(inner, cover_area);
     frame.render_widget(Clear, band);
     frame.render_widget(Block::default().bg(super::bg()), band);
-    // `resize_encode_render` mutates the cached protocol, hence the `RefCell`
-    // borrow under this immutable-app draw path.
-    frame.render_stateful_widget(
-        StatefulImage::new(),
-        cover_area,
-        &mut *protocol.borrow_mut(),
-    );
+    // `render()` draws only the cached encoding; the resize+encode happens on
+    // the cover lanes, driven by the model's tick pass, never from a render.
+    // (The crate's `resize_encode_render` would send a resize request from
+    // here — this view sends nothing.) The `RefCell` borrow stays: rendering
+    // mutates the cached encoding under this immutable-app draw path.
+    protocol.borrow_mut().render(cover_area, frame.buffer_mut());
 }
 
 /// The preview's rows for one frame. `scrolled` widens only the rows a cover
@@ -442,7 +466,12 @@ fn lead_items(lead: Option<&PreviewLead>, width: u16) -> Vec<ListItem<'static>> 
 }
 
 /// Resolve the cover layout: `(text, cover, protocol)`, or `None` for text-only
-/// (the pane can't seat any cover beside readable text).
+/// (the pane can't seat any cover beside readable text). Writes the pane's
+/// offers to `square_offer`/`wide_offer` at a single exit: the seated variant
+/// gets its offered size (`Size::new(allowance, inner.height)`), the other
+/// `None`, and a no-seat frame clears both — the model's tick pass reads these
+/// to drive the off-thread re-encode, so a stale cell would encode a seat that
+/// never existed.
 ///
 /// Priority is **collapse-before-wrap**: prefer the wide `card@2x` in a big
 /// column, but only when the pane has room for it AND the title fits on one line
@@ -454,31 +483,62 @@ fn lead_items(lead: Option<&PreviewLead>, width: u16) -> Vec<ListItem<'static>> 
 fn cover_layout<'a>(
     inner: Rect,
     lead: Option<&PreviewLead>,
-    square: Option<&'a RefCell<StatefulProtocol>>,
-    wide: Option<&'a RefCell<StatefulProtocol>>,
-) -> Option<(Rect, Rect, &'a RefCell<StatefulProtocol>)> {
+    square: PreviewVariant<'a>,
+    wide: PreviewVariant<'a>,
+    square_offer: Option<&Cell<Option<Size>>>,
+    wide_offer: Option<&Cell<Option<Size>>>,
+) -> Option<(Rect, Rect, &'a RefCell<ThreadProtocol>)> {
+    let (mut square_size, mut wide_size) = (None, None);
+    let seat = decide_cover_layout(inner, lead, square, wide, &mut square_size, &mut wide_size);
+    if let Some(cell) = square_offer {
+        cell.set(square_size);
+    }
+    if let Some(cell) = wide_offer {
+        cell.set(wide_size);
+    }
+    seat
+}
+
+/// The layout decision behind [`cover_layout`]: which variant seats (or
+/// nothing), recording each variant's offer — `None` when it was not seated.
+/// Pure geometry; the offer write-back happens once at the caller's single
+/// exit.
+fn decide_cover_layout<'a>(
+    inner: Rect,
+    lead: Option<&PreviewLead>,
+    square: PreviewVariant<'a>,
+    wide: PreviewVariant<'a>,
+    square_offer: &mut Option<Size>,
+    wide_offer: &mut Option<Size>,
+) -> Option<(Rect, Rect, &'a RefCell<ThreadProtocol>)> {
     if inner.height < MIN_IMAGE_INNER_HEIGHT {
         return None;
     }
 
     // Wide when the pane has room for it and the title fits on one line beside it.
-    if let Some(w) = wide
+    if let Some(w) = wide.protocol
         && let Some(allowance) = wide_cover_width(inner.width)
-        && let Some((text_area, cover_area)) = place_cover(inner, w, allowance)
+        && let Some((text_area, cover_area)) = place_cover(inner, wide, allowance)
         && title_fits_one_line(lead, text_area.width)
     {
+        *wide_offer = Some(Size::new(allowance, inner.height));
         return Some((text_area, cover_area, w));
     }
 
     // Collapse to the smaller square (still shown). Prefer the square protocol;
     // fall back to the wide one when only it has loaded.
-    let collapsed = square.or(wide)?;
+    let collapsed = square.protocol.or(wide.protocol)?;
     let allowance = square_cover_width(inner.width)?;
-    let (text_area, cover_area) = place_cover(inner, collapsed, allowance)?;
+    let collapsed_variant = PreviewVariant {
+        protocol: Some(collapsed),
+        fitted: square.fitted.or(wide.fitted),
+    };
+    let (text_area, cover_area) = place_cover(inner, collapsed_variant, allowance)?;
+    *square_offer = Some(Size::new(allowance, inner.height));
     Some((text_area, cover_area, collapsed))
 }
 
-/// Fit `protocol` into a right-anchored column of at most `allowance` width,
+/// Fit `variant` into a right-anchored column of at most `allowance` width,
 /// returning `(text, cover)` — the text taking everything left of the fitted
 /// image. `None` if the image rounds away to nothing.
 ///
@@ -495,14 +555,16 @@ fn cover_layout<'a>(
 /// puts the right edge exactly on the border. Since the fitted image can only be
 /// narrower than the allowance, whose formula already reserves [`MIN_TEXT_WIDTH`],
 /// the text width never needs re-checking.
-fn place_cover(
-    inner: Rect,
-    protocol: &RefCell<StatefulProtocol>,
-    allowance: u16,
-) -> Option<(Rect, Rect)> {
+///
+/// While an encode is in flight the protocol answers no size (`inner` is with
+/// the worker), so the fit falls back to the variant's recorded last-fitted
+/// size — the encode answers the same size, so the seat never moves.
+fn place_cover(inner: Rect, variant: PreviewVariant<'_>, allowance: u16) -> Option<(Rect, Rect)> {
+    let protocol = variant.protocol?;
     let fitted = protocol
         .borrow()
-        .size_for(Resize::Fit(None), Size::new(allowance, inner.height));
+        .size_for(Resize::Fit(None), Size::new(allowance, inner.height))
+        .or(variant.fitted)?;
     if fitted.width == 0 || fitted.height == 0 {
         return None;
     }

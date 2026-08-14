@@ -1,9 +1,20 @@
 use super::{
-    COVER_GAP, COVER_WIDTH_MIN, MIN_TEXT_WIDTH, MasterDetail, Pane, PreviewWidths, render,
-    seam_row, square_cover_width, wide_cover_width, wrap_to_lines,
+    COVER_GAP, COVER_WIDTH_MIN, MIN_TEXT_WIDTH, MasterDetail, Pane, PreviewCover, PreviewVariant,
+    PreviewWidths, place_cover, render, seam_row, square_cover_width, wide_cover_width,
+    wrap_to_lines,
 };
-use ratatui::{Terminal, backend::TestBackend, text::Line, widgets::ListItem};
-use std::cell::Cell;
+use ratatui::{
+    Terminal,
+    backend::TestBackend,
+    layout::{Rect, Size},
+    text::Line,
+    widgets::ListItem,
+};
+use ratatui_image::picker::Picker;
+use ratatui_image::protocol::StatefulProtocol;
+use ratatui_image::thread::ThreadProtocol;
+use std::cell::{Cell, RefCell};
+use std::sync::mpsc;
 
 const LIST_TITLE: &str = " ITEMS ";
 const PREVIEW_TITLE: &str = " PREVIEW ";
@@ -50,6 +61,8 @@ fn sample_view<'a>(
         preview_offset,
         preview_max_offset,
         preview_image: None,
+        preview_square_offer: None,
+        preview_wide_offer: None,
         preview_lead: None,
         focused: Pane::List,
     }
@@ -185,6 +198,8 @@ fn empty_list_items_does_not_panic() {
         preview_offset: &preview_offset,
         preview_max_offset: &preview_max_offset,
         preview_image: None,
+        preview_square_offer: None,
+        preview_wide_offer: None,
         preview_lead: None,
         focused: Pane::List,
     };
@@ -348,5 +363,107 @@ fn owned_preview_title_renders() {
     assert!(
         output.contains("AIM GYM MEGAPACK"),
         "an owned preview title should render, case preserved"
+    );
+}
+
+/// A halfblocks protocol over a `w`x`h` gradient, wrapped for a lane the test
+/// never dispatches on (the channel keeps its receiver, so a send would buffer
+/// harmlessly — the point is that the RENDER no longer sends at all).
+fn thread_protocol(w: u32, h: u32) -> RefCell<ThreadProtocol> {
+    let img = image::RgbImage::from_fn(w, h, |x, y| {
+        image::Rgb([(x * 255 / w.max(1)) as u8, 128, (y * 255 / h.max(1)) as u8])
+    });
+    let proto: StatefulProtocol =
+        Picker::halfblocks().new_resize_protocol(image::DynamicImage::ImageRgb8(img));
+    let (tx, _rx) = mpsc::channel();
+    RefCell::new(ThreadProtocol::new(tx, Some(proto)))
+}
+
+#[test]
+fn a_protocol_in_flight_places_from_its_last_fitted_size() {
+    // While the worker encodes, the protocol answers no size (`inner` is with
+    // the worker); the seat must hold off the last-fitted size the dispatch
+    // recorded, so the cover column never reflows mid-flight.
+    let inner = Rect::new(0, 0, 50, 20);
+    let (tx, _rx) = mpsc::channel();
+    let tp = RefCell::new(ThreadProtocol::new(tx, None));
+    let variant = PreviewVariant {
+        protocol: Some(&tp),
+        fitted: Some(Size::new(10, 5)),
+    };
+    let (text, cover) = place_cover(inner, variant, 10)
+        .expect("the last fitted size holds the seat while the encode is in flight");
+    assert_eq!((cover.width, cover.height), (10, 5));
+    assert_eq!(text.width, 50 - 10 - COVER_GAP);
+    assert_eq!(
+        cover.x,
+        inner.right() - 10,
+        "the cover stays right-anchored"
+    );
+}
+
+#[test]
+fn a_protocol_in_flight_without_a_fitted_size_places_nothing() {
+    // A flight with no recorded fit (the pane never seated it before the
+    // dispatch) falls back to text-only — the zero-size guard's layout leg.
+    let inner = Rect::new(0, 0, 50, 20);
+    let (tx, _rx) = mpsc::channel();
+    let tp = RefCell::new(ThreadProtocol::new(tx, None));
+    let variant = PreviewVariant {
+        protocol: Some(&tp),
+        fitted: None,
+    };
+    assert!(
+        place_cover(inner, variant, 10).is_none(),
+        "no fitted size, no seat"
+    );
+}
+
+#[test]
+fn the_render_writes_the_seated_variants_offer_and_clears_the_other() {
+    let list_offset = Cell::new(0);
+    let preview_offset = Cell::new(0);
+    let preview_max = Cell::new(0);
+    let square_offer = Cell::new(None);
+    let wide_offer = Cell::new(None);
+    let square = thread_protocol(300, 300);
+    let wide = thread_protocol(800, 280);
+    let mut view = sample_view(&list_offset, &preview_offset, &preview_max);
+    view.preview_image = Some(PreviewCover {
+        square: PreviewVariant {
+            protocol: Some(&square),
+            fitted: None,
+        },
+        wide: PreviewVariant {
+            protocol: Some(&wide),
+            fitted: None,
+        },
+    });
+    view.preview_square_offer = Some(&square_offer);
+    view.preview_wide_offer = Some(&wide_offer);
+
+    // 90 wide: list pane 36, preview inner 50x28 — room for the wide card
+    // (three fifths), so the wide seats and takes the offer; the square is
+    // cleared, or a stale square offer would encode a seat that never existed.
+    let _ = render_to_string(90, 30, &view);
+    assert_eq!(
+        wide_offer.get(),
+        wide_cover_width(50).map(|w| Size::new(w, 28)),
+        "the seated wide variant records the pane's offer"
+    );
+    assert_eq!(square_offer.get(), None, "the unseated square is cleared");
+
+    // 80 wide: preview inner 44 — under the wide threshold, so the pane
+    // collapses to the square and that is the offer recorded.
+    let _ = render_to_string(80, 30, &view);
+    assert_eq!(
+        square_offer.get(),
+        square_cover_width(44).map(|w| Size::new(w, 28)),
+        "the collapsed square records its offer"
+    );
+    assert_eq!(
+        wide_offer.get(),
+        None,
+        "the wide is not seated at this width"
     );
 }

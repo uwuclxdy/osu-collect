@@ -223,8 +223,10 @@ pub fn render_browse(frame: &mut Frame, area: Rect, form: &UpdateSource, tick: u
         preview_offset: &form.preview_offset,
         preview_max_offset: &form.preview_max_offset,
         // The missing-set preview is a list with no single highlighted set, so
-        // no cover and no title lead.
+        // no cover, no cover offers, and no title lead.
         preview_image: None,
+        preview_square_offer: None,
+        preview_wide_offer: None,
         preview_lead: None,
         focused: if form.preview_focused() {
             Pane::Preview

@@ -1439,10 +1439,13 @@ impl App {
         }
     }
 
-    /// Advance the cover-image prefetch one tick: returns a [`AppCommand::FetchCover`]
-    /// once the highlighted flat-browse row has held focus past the debounce and
-    /// its cover isn't cached. `None` for any non-flat-browse view (the update
-    /// source's missing-set preview has no single highlight) resets the debounce.
+    /// Advance the cover-image pass one tick: drive the off-thread
+    /// resize+encode lanes for the highlighted flat-browse row (the same
+    /// dwell-gated highlight the prefetch uses), then return a
+    /// [`AppCommand::FetchCover`] once that row has held focus past the
+    /// debounce and its cover isn't cached. `None` for any non-flat-browse
+    /// view (the update source's missing-set preview has no single highlight)
+    /// resets the debounce.
     pub fn poll_cover_prefetch(&mut self) -> Option<AppCommand> {
         let highlighted = if self.home_set_browsing() {
             self.active_set_browse()
@@ -1451,6 +1454,7 @@ impl App {
         } else {
             None
         };
+        self.covers.poll_cover_encodes(highlighted);
         self.covers
             .poll_prefetch(highlighted)
             .map(|set_id| AppCommand::FetchCover { set_id })
