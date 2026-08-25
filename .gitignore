@@ -2,7 +2,6 @@
 .env
 /build
 .idea
-.gitnexus
 testing-db
 *.osz
 *.osz.part-*
