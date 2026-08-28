@@ -2,8 +2,7 @@
 //! to either an osu! API v2 search or an nzbasic BBD attribute filter. Which
 //! backend runs is an implementation detail resolved by [`FindSource::build_plan`]
 //! — every criterion carries per-backend expressibility, some criteria force a
-//! backend, and a pair of conflicting forcers is a hard build error. The routing
-//! contract lives in `docs/plan/find-backend-merge.md`.
+//! backend, and a pair of conflicting forcers is a hard build error.
 //!
 //! One rendered form (`src/tui/find_source.rs`) edits this union state; a
 //! read-only indicator ([`FindSource::resolved_route`]) shows which backend the
@@ -1076,8 +1075,7 @@ const PRESET_LABELS: &[&str] = &["none", "all ranked", "loved", "farm", "stream"
 //   rank (r), played — require supporter (api returns total=0 without it)
 //
 // The two supporter-gated rows are hidden unless `ConfigTab::supporter` is a
-// confirmed `true`; the other four render unconditionally. Details + raw id-set
-// comparisons in `docs/references/osu-search-qdsl.md` § 3.2.
+// confirmed `true`; the other four render unconditionally.
 
 /// Explicit-content chip; `explicit_idx` indexes this and [`EXPLICIT_NSFW`].
 /// `any` sends no `nsfw` parameter at all, which is what makes it the account's

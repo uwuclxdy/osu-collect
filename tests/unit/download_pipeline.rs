@@ -1084,12 +1084,11 @@ async fn a_completed_run_leaves_a_held_back_set_still_held_back_on_the_next_scan
         &snapshots::snapshot_path(&dir, 100),
     );
 
-    // `App::new` also reads two other on-disk stores at construction
-    // (docs/architecture.md § "On-disk stores"): the stored auth (via
-    // `ConfigTab::new` → `auth::load`) and `collection_state.toml` (via
-    // `collection_state::state_path`/`load`). Both must be isolated too, or
-    // this test inherits the developer's real login state and collection
-    // state — the exact class of bug that section's incident describes.
+    // `App::new` also reads two other on-disk stores at construction: the
+    // stored auth (via `ConfigTab::new` → `auth::load`) and
+    // `collection_state.toml` (via `collection_state::state_path`/`load`).
+    // Both must be isolated too, or this test inherits the developer's real
+    // login state and collection state.
     // The auth fixture is a genuine logged-in supporter (not an absent file),
     // proving the test's outcome does not depend on that content either way.
     let auth_path = dir.join("auth.json");
@@ -1309,8 +1308,7 @@ async fn a_completed_lazer_run_preserves_held_back_and_does_not_undo_a_re_includ
         &snapshots::snapshot_path(&snapshot_dir, 200),
     );
 
-    // Isolate the on-disk stores `App::new` reads at construction
-    // (docs/architecture.md § "On-disk stores").
+    // Isolate the on-disk stores `App::new` reads at construction.
     let auth_path = snapshot_dir.join("auth.json");
     std::fs::write(
         &auth_path,

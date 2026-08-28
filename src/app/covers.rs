@@ -128,7 +128,7 @@ pub struct Covers {
     /// frame: the seated variant's offered size, `None` for the other (and
     /// both `None` when nothing seats). Cells, so the draw path — which
     /// borrows the app immutably — can write them; the tick pass reads them
-    /// for the settled highlight. See `docs/tui.md` § Cover art.
+    /// for the settled highlight.
     square_offer: Cell<Option<Size>>,
     wide_offer: Cell<Option<Size>>,
 }

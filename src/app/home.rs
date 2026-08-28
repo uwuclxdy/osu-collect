@@ -597,8 +597,8 @@ impl HomeField {
 
     /// Whether this row is one of the two osu!supporter-gated facets (rank
     /// achieved, played). The other four — explicit, genre, language, extra —
-    /// were confirmed to work for non-supporter on 2026-08-03 (live probe,
-    /// `docs/references/osu-search-qdsl.md` § 3.2), so they render unconditionally.
+    /// were confirmed to work for non-supporter on 2026-08-03 (live probe), so
+    /// they render unconditionally.
     /// Unknown supporter status reads as `false`, so the two gated rows stay
     /// hidden until it is confirmed.
     pub fn is_supporter_only(self) -> bool {

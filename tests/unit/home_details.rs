@@ -16,8 +16,7 @@ use osu_downloader::search::BeatmapSetMeta;
 use std::collections::HashMap;
 
 /// An isolated `App` — `App::new` reads `STATE_ENV_PATH` + `AUTH_ENV_PATH` at
-/// construction, so both are pointed at nonexistent paths first (docs/
-/// architecture.md § On-disk stores).
+/// construction, so both are pointed at nonexistent paths first.
 fn isolated_app() -> (TempEnvVar, App) {
     let env = TempEnvVar::set_all([
         (AUTH_ENV_PATH, "/dev/null/home-details-test-auth"),

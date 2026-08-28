@@ -1,4 +1,4 @@
-//! Tuning harness for `docs/plan/mirror-scheduler.md` (repo root).
+//! Tuning harness.
 //!
 //! Runs a full, resumable download of an osucollector.com collection while
 //! logging one JSONL line per HTTP attempt (via the `instrument` feature) plus

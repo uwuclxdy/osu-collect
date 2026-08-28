@@ -570,7 +570,7 @@ fn exclude_reincluded_is_scoped_to_the_sets_own_collection() {
 /// ("col - 100", containing beatmapset 1) and a snapshot diff recording
 /// beatmapset 7 as manually deleted (absent from the local library). The env
 /// guards must already be in place — `App::new` reads `STATE_ENV_PATH` and
-/// `AUTH_ENV_PATH` at construction (`docs/architecture.md` § On-disk stores).
+/// `AUTH_ENV_PATH` at construction.
 fn app_with_local_collection_and_a_deleted_set() -> crate::app::App {
     use crate::config::Config;
     use crate::osu_db::{LocalBeatmap, LocalBeatmapset, LocalCollection};
