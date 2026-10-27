@@ -1,0 +1,710 @@
+/* ============================================================
+   osu-collect site - design tokens
+   Dark by default, and still full of light.
+   Neutrals hold hue 280 (Catppuccin lavender haze), never grey.
+   Every ratio in the comments measured, not estimated.
+   ============================================================ */
+
+/* Self-hosted variable fonts - ship the woff2 subsets in fonts/ alongside these
+   @font-face blocks. No CDN dependency; faster, private, offline-safe. Subsets:
+   latin / latin-ext / cyrillic. Subset your own with fonttools/glyphhanger. */
+@font-face {
+  font-family: Onest;
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("fonts/onest-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: Onest;
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("fonts/onest-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: Onest;
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("fonts/onest-cyrillic.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("fonts/jetbrainsmono-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("fonts/jetbrainsmono-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+:root {
+  color-scheme: dark;
+
+  /* ---- Surfaces. The page is NOT the darkest thing possible;
+     raising the floor is what makes a dark theme feel airy.
+     Surfaces rise TOWARD the light, wells sink below. ---- */
+  --well:      oklch(0.215 0.020 280);   /* inputs, code, tracks  */
+  --bg:        oklch(0.255 0.024 280);   /* the page              */
+  --surface-1: oklch(0.300 0.024 280);   /* cards, menus          */
+  --surface-2: oklch(0.345 0.026 280);   /* hover, nested         */
+  --surface-3: oklch(0.395 0.028 280);   /* pressed, selected     */
+
+  /* The sky: one light above the page, the page hue drifted toward the accent,
+     painted on body::after as a radial ground 780px tall. The stops are
+     declared grounds, never an alpha over the page, so each is a measured pair.
+     On the peak: --text 9.89, --text-2 7.13, --text-3 5.37, --text-4 4.62:1,
+     --accent-text 7.73. On the mid: 10.87 / 7.84 / 5.90 / 5.08, --accent-text
+     8.50. NO HEADROOM: --text-4 falls under 4.5:1 once the ground passes
+     L 0.31, so the peak never rises. */
+  --sky-peak:  oklch(0.305 0.040 252);
+  --sky-mid:   oklch(0.278 0.032 262);
+  /* The accent band's ground, the page's closing ask: the page tone turned
+     toward the sapphire. --text 11.26, --text-2 8.12, --text-3 6.11, --text-4
+     5.26:1, --accent-text 8.81, and --accent as a fill 7.21 against it. */
+  --band-accent: oklch(0.265 0.050 242);
+
+  /* The system draws its own scrollbar, so the thumb is a graphic this file owns
+     and it clears 3:1 on every ground a scroller has: 5.20:1 on --well, 4.68 on
+     --bg, 4.05 on --surface-1, 3.43 on a --surface-2 hover tint. --surface-3, the
+     colour the retired native rule used, measures 1.67:1 on --bg. */
+  --scrollbar-thumb: oklch(0.640 0.028 280);
+
+  /* Lines are a fallback, not the separation device */
+  --line:      oklch(0.345 0.026 280);
+  --line-soft: oklch(0.310 0.024 280);
+
+  /* ---- Elevation. A lit top edge plus a dark contact shadow, both in-hue.
+     Never rgb(0 0 0): black shadow on lavender goes muddy.
+
+     A DARK PAGE HAS NO ROOM FOR A WIDE SOFT SHADOW. The page sits 46/255 on
+     the blue channel, so a shadow has 46 levels of headroom, and a wide blur
+     spends most of them below the quantization floor. The final band, where
+     the shadow paints exactly 1 level, is then wide, flat and bounded by a
+     clean closed curve: that curve is what reads as a ring drawn around the
+     box rather than as light. It widens with the outermost blur radius and
+     with how faint the shadow is. Measured beside a card: 28px of blur
+     peaking 5 levels deep drew 15px of ring, 40px peaking 10 drew 14px, and
+     14px peaking 11 drew 4px. Every blur here stays at or under 22px, every
+     coat lands with real depth, which is also what a physical shadow does:
+     dark where the object meets the surface, gone a short way out.
+
+     Measured on a 300x140 card, blue channel against --bg, deepest pixel and
+     the width of that last 1-level band:
+       --elev-1      23 levels under, 11 beside; band 3px under, 2px beside
+       --elev-2      23 / 12;  band 7 / 6
+       --elev-float  34 / 18;  band 8 / 6
+     The shipped v1 set measured 9 / 5 with a 15px band, which is the ring.
+
+     DEPTH IS NOT WHAT DRAWS THE CORNER, REACH IS. --elev-1's outer coat ran
+     `0 8px 16px -6px` and its footprint reached 21px under the card, 13 beside
+     and 18 out of the corner on the diagonal, so the far end of the footprint
+     closed as a curve tracing the box and the corner read as a smear. Depth was
+     never the problem: at `0 4px 8px -4px` the deepest pixel moves 24 to 23 and
+     the reach halves to 10 / 6 / 10. Her call 2026-09-06, candidate 4a.
+
+     THE EDGE IS WHAT THE EYE READS AS THE CARD STARTING, not the tone step.
+     A card sits .045 L over the page and .065 is not available: the fourth
+     text step falls to 4.40:1 on it. So separation is bought on the edge and
+     the contact instead, where no colour moves and no ratio re-derives.
+     Measured on a card at --surface-1: --lit-1 paints 18 sRGB levels of lift
+     along the top, --lit-2 21.
+
+     A CARD CARRIES A DRAWN LINE. `.card` and `.stat-card` take `--card-line`,
+     a crisp 1px line drawn outside the box (box-shadow 0 0 0 1px, zero blur,
+     content box unchanged), her pick in the 2026-10-07 combo. A card at rest
+     wears the one line and no coat. Every other raised surface keeps the straight --lit-1,
+     and glass keeps --glass-edge. The line is a hairline, not a graphic, so it
+     is not held to a 3:1 floor; measured with tools/contrast.mjs against the
+     card's own fill and every surface it sits on, tightest first: sky peak
+     2.03:1, --surface-1 (the fill) 2.08:1, sky mid 2.24:1, --band-accent
+     2.32:1, --bg 2.41:1, --well 2.67:1. */
+  --lit-1: inset 0 1px 0 0 oklch(1 0 0 / 0.085);
+  --lit-2: inset 0 1px 0 0 oklch(1 0 0 / 0.100);
+  --card-line: oklch(0.48 0.032 280);
+  --contact-1: 0 1px 2px -1px oklch(0.11 0.025 280 / 0.72),
+               0 2px 4px -1px oklch(0.11 0.025 280 / 0.66),
+               0 4px 8px -4px oklch(0.11 0.025 280 / 0.60);
+  --contact-2: 0 1px 2px -1px oklch(0.11 0.025 280 / 0.66),
+               0 4px 8px -2px oklch(0.11 0.025 280 / 0.62),
+               0 10px 18px -8px oklch(0.11 0.025 280 / 0.58);
+  --elev-1: var(--lit-1), var(--contact-1);
+  --elev-2: var(--lit-2), var(--contact-2);
+  --elev-float: var(--lit-2),
+                0 2px 4px -1px oklch(0.09 0.022 280 / 0.72),
+                0 6px 12px -3px oklch(0.09 0.022 280 / 0.68),
+                0 14px 22px -10px oklch(0.09 0.022 280 / 0.66);
+  --backdrop: oklch(0.16 0.02 280 / 0.66);
+
+  /* ---- Glass. Real background blur, on the surfaces something passes behind:
+     the mobile topbar, the stuck section header, the floating panels, and a
+     panel over the scrim. The navbar is opaque in both of its states. The scrim
+     itself stays a flat tint.
+
+     NEITHER THE ALPHA NOR THE BAR TONE IS TASTE. A glass surface takes on part
+     of whatever is behind it, and on a dark page that is nearly always dark, so
+     a surface tinted with --surface-1 reads as an opaque slab whatever the blur
+     (the 0.90 first material moved 22 levels over a white plate and two or
+     three over real content: every panel read as "not blurred"). Bars therefore
+     tint with --bg: a bar is the page held still, and content passing under it
+     is the only thing that says a surface is there. Panels keep the raised
+     tone at the clearest alpha the dim ramp allows: --text-2 holds 4.67:1 on
+     the worst case at 0.86 and fails at 0.82 (4.09:1), so 0.86 is the
+     floor. On that worst case, a white plate composited through the panel,
+     --text holds 6.48:1, --glass-dim 4.67, --glass-danger 4.62. The panel
+     moves 35.7 sRGB levels black to white, the measured (1 - alpha) * 255
+     identity confirmed on a plate. Filter chains do not buy the floor back:
+     crushing the backdrop enough to protect it crushes the blur with it,
+     measured across nine chains. ---- */
+  --glass-bar-tint: oklch(0.255 0.024 280 / 0.90);
+  /* the bar re-floors the same tokens as a panel, since the glass block names
+     both: --text-3/--text-4/--text-placeholder become --glass-dim, --danger
+     becomes --glass-danger, --text-disabled becomes --glass-disabled. Measured
+     over the bar's worst plate (white through 0.90 of the page colour): --text-2
+     6.21:1, --glass-danger 6.14:1, --glass-disabled 4.34:1. */
+  --glass-tint: oklch(0.300 0.024 280 / 0.86);
+  --glass-blur: 22px;
+  --glass-sat:  1.25;
+  --glass-dim:  oklch(0.800 0.030 280);   /* --text-3 and --text-4 on a panel:
+     4.67:1 on the worst case; unlifted, .720 / .680 fall to 3.52 / 3.03 */
+  --glass-danger: oklch(0.84 0.140 15);   /* 4.62:1 on the panel worst case.
+     --danger is 3.31:1 there, and the round-1 value L 0.78 fell to 4.04 at
+     0.86, so the re-floor moves with the alpha */
+  --glass-disabled: oklch(0.700 0.030 280);   /* 3.27:1 on the panel worst case.
+     --text-disabled falls to 2.49 there, and the opacity: 0.45 costume this
+     replaces measured 2.17, which is what the panel had been shipping */
+  /* A translucent tint over a translucent surface composites twice and drifts 21
+     levels with the backdrop: --accent-text on it measures 4.40:1. The same mix
+     laid down opaque holds one tone and 5.95:1 on a panel. This is the accent's
+     share of that opaque fill; the glass block mixes --accent-quiet from it onto
+     each surface's own --glass-ground, so a bar's fill reads the bar's tone. */
+  --glass-quiet-share: 16%;
+  /* --danger-text on a glass surface, where --danger is already --glass-danger:
+     the hover and press tints mix opaque onto the surface (--tint-ground), so
+     the plate behind it no longer moves them. On the panel 5.64 / 4.74:1, on
+     the bar 6.55 / 5.38, the menu hover 6.50; 0.86 leaves the panel press at
+     4.52, so 0.88 holds a margin over the floor. */
+  --glass-danger-text: oklch(0.88 0.140 15);
+  /* what every translucent tint in components.css mixes onto. Transparent, so
+     off glass a tint paints exactly as `X p%, transparent` did. A glass surface
+     sets its own tone here, turning each tint inside it into an opaque mix the
+     backdrop cannot move; every rule that paints an opaque ground resets it to
+     transparent, so a tint nested in that ground composites over it. One value
+     for both themes. */
+  --tint-ground: transparent;
+  /* the same glass tone for a tint painted OUTSIDE its own box (an invalid
+     field's ring): an opaque ground resets --tint-ground on itself, but its
+     ring lands on whatever surrounds it, so no rule resets this one */
+  --glass-ground: transparent;
+  /* --accent-line on a glass surface, laid opaque on the surface's own
+     --glass-ground at the same 38 percent, so a focus ring and a primary edge
+     stop drifting with the backdrop the way the quiet share stopped the fill */
+  --glass-line-share: 38%;
+  /* The one place a drawn line beats the lit edge. A glass panel has no reliable
+     tone difference from its backdrop, since it takes that backdrop on, so the
+     edge is what says where the pane starts. Still a hairline. */
+  --glass-edge: oklch(1 0 0 / 0.10);
+  /* a dimmed icon is a graphic against the surface it sits on: on the dark
+     glass panel 0.85 leaves a text-3 icon at 2.99:1, under the 3:1 floor, so
+     the glass block lifts this to 0.90: 3.15 dark and 3.89 light for the
+     dimmest icons on the panel worst cases */
+  --icon-dim: 0.7;
+
+  /* ---- Text. Nothing is pure white; purity reads as hard. ---- */
+  --text:   oklch(0.900 0.030 280);   /* 11.70:1 on --bg */
+  --text-2: oklch(0.800 0.030 280);   /*  8.43:1 */
+  --text-3: oklch(0.720 0.030 280);   /*  6.35:1 */
+  --text-4: oklch(0.680 0.030 280);   /*  5.47:1, the floor */
+  /* the hint inside a control. One step under --text-4 so a placeholder does
+     not read as a typed value or as metadata: 4.99:1 on --well. */
+  --text-placeholder: oklch(0.630 0.030 280);
+  /* a control that cannot act, her call 2026-09-02, replacing the opacity: 0.45
+     ten declarations across twelve component classes rode. It takes the 3:1 graphics floor rather than the 4.5:1
+     text floor, so it can sit a real step under --text-4: 4.99:1 on --well, 4.50
+     on --bg, 3.89 on --surface-1, 3.29 on the --surface-2 a disabled fill takes.
+     Dark shares the placeholder's value on purpose, since both say "present, not
+     live" and this ramp has exactly one step down there. Light does not: its
+     placeholder is pinned to --text-4 by the text floor, and a disabled label
+     pinned with it would read as enabled metadata, which is the whole defect. */
+  --text-disabled: oklch(0.630 0.030 280);
+
+  /* ---- Accent: Catppuccin sapphire. The break in the overcast. ---- */
+  --accent:       oklch(0.76 0.110 238);   /* 7.49:1 as text on --bg */
+  --accent-hover: oklch(0.82 0.115 238);   /* brighter in dark      */
+  --accent-press: oklch(0.70 0.105 238);
+  --accent-text:  oklch(0.82 0.115 238);   /* 9.15:1 as type, the only accent as text */
+  --accent-quiet: oklch(0.76 0.110 238 / 0.16);
+  --accent-line:  oklch(0.76 0.110 238 / 0.38);
+  --accent-glow:  0 0 10px 0 oklch(0.76 0.110 238 / 0.55);
+  --on-accent:    oklch(0.22 0.020 280);   /* 8.22:1 on the fill */
+
+  /* no on-colour: identity rule 7 makes accent-2 annotation only, never a fill,
+     so the pair it would sit on cannot exist */
+  --accent-2:    oklch(0.72 0.130 42);     /* editorial, 6.09:1, once per screen */
+
+  /* The brand mark's ring: rose, the identity accent. A 2px graphic on the
+     .sona, held to the 3:1 graphics floor on every bar surface it sits on;
+     measured with tools/contrast.mjs: surface-1 6.06:1, well 7.78:1, --bg
+     7.01:1, sky peak 5.93:1 dark; 5.16 / 4.20 / 4.59 / 5.16 light. */
+  --brand-ring: oklch(0.76 0.110 340);
+
+  /* ---- Status. Levelled under --text so no pill outshouts a title. ---- */
+  --success: oklch(0.80 0.130 150);   /* 8.89:1 */
+  --warning: oklch(0.84 0.110  90);   /* 9.68:1 */
+  --danger:  oklch(0.72 0.140  15);   /* 5.98:1 */
+  /* the danger label on its own hover and press tint: --danger there falls to
+     4.04 / 3.49:1 on surface-1, because label and tint are one hue. Lightness
+     stepped, chroma held: 6.04 / 5.16:1 on --bg, 5.27 / 4.55 on surface-1, and
+     5.76 on .menu-item.danger's 10 percent hover. */
+  --danger-text: oklch(0.81 0.140  15);
+  --on-danger:  oklch(0.22 0.02  15); /* 6.58:1 on the fill */
+  --info: var(--accent);              /* folded in: it was the same hue */
+
+  /* ---- Chart series. Four slots; the ORDER is the CVD mechanism, and what it
+     buys is that each dichromat's CLOSEST pair never lands on adjacent slots.
+     Simulated (Vienot, Brettel & Mollon 1999) and measured as oklab distance:
+     protan's closest pair is 1-3 at 0.0355 with orange sitting between them,
+     deutan's is 2-4 at 0.0516 with mauve sitting between them, and the closest
+     pair a legend does put side by side is 3-4 at 0.1666 / 0.1419. A fifth
+     series is a legend problem, not a palette problem, and yellow and red never
+     join a series: they read as status.
+
+     THOSE TWO ARE THE ONLY DICHROMACIES THIS RAMP IS MEASURED AGAINST. Vienot
+     publishes a projection plane for protan and deutan only; the tritan row that
+     circulates with them moved an equal-lightness blue/yellow pair from 0.2630
+     APART to 0.3601, so it cannot be a tritan simulation and no number taken
+     from it belongs here. Until one is modelled, treat a two-series chart as
+     needing direct labels rather than a legend.
+
+     Slot 3 is mauve rather than the sky it shipped as. Sky measured 0.0955 from
+     sapphire in normal vision, 2.5x closer than any other pair, and the two read
+     as one series; mauve puts the ramp's worst normal-vision pair at 0.1411.
+     Measured on --surface-1 (WCAG 1.4.11, 3:1 graphics floor):
+     5.21 / 5.27 / 6.62 / 6.45:1. Re-measure if --surface-1 moves. ---- */
+  --chart-series-1: oklch(0.70 0.110 238);   /* sapphire */
+  --chart-series-2: oklch(0.72 0.130 42);    /* orange   */
+  --chart-series-3: oklch(0.78 0.100 305);   /* mauve    */
+  --chart-series-4: oklch(0.75 0.120 150);   /* green    */
+
+  /* ---- Radius. Softer than v1's 1px, which rendered as 0. ---- */
+  --r-1: 10px;   /* controls        */
+  --r-2: 14px;   /* cards, menus, icon tiles */
+  --r-3: 18px;   /* modals, sheets  */
+  --r-4: 24px;   /* KPI tiles       */
+  --r-pill: 999px;
+
+  /* ---- Motion. Duration follows distance. ---- */
+  --ease:      cubic-bezier(0.2, 0, 0, 1);    /* state changes, exits */
+  --ease-out:  cubic-bezier(0.16, 1, 0.3, 1); /* entrances, arrivals */
+  --dur-tint:  120ms;   /* no travel: colour, opacity, border  */
+  --dur-near:  180ms;   /* under 12px: toast, popover, tooltip */
+  --dur-far:   260ms;   /* a panel's worth: sheet, accordion   */
+  --dur-cross: 360ms;   /* across the viewport: drawer         */
+  --dur-slide: 440ms;   /* sliding indicators only             */
+  --stagger:    40ms;   /* per item, capped at 6               */
+  --dur-out:      calc(var(--dur-tint) * 0.6);  /* exits run at 0.6x */
+  --dur-out-near: calc(var(--dur-near) * 0.6);
+  --dur-out-far:  calc(var(--dur-far)  * 0.6);
+
+  /* ---- The jelly press (2026-10-07 combo). A spring settle, NOT a travel
+     distance, so it takes no --dur-* slot: --press-dur is how long the wobble
+     takes to settle, and --press-spring is the 320/18 spring sampled over
+     49 points as a linear() curve, normalized to settle at 1. ---- */
+  --press-dur: 380ms;
+  --press-spring: linear(0, 2.0833% 0.0098, 4.1667% 0.0372, 6.2500% 0.0793, 8.3333% 0.1334, 10.4167% 0.1970, 12.5000% 0.2675, 14.5833% 0.3428, 16.6667% 0.4208, 18.7500% 0.4996, 20.8333% 0.5777, 22.9167% 0.6538, 25.0000% 0.7267, 27.0833% 0.7954, 29.1667% 0.8592, 31.2500% 0.9176, 33.3333% 0.9702, 35.4167% 1.0168, 37.5000% 1.0574, 39.5833% 1.0919, 41.6667% 1.1205, 43.7500% 1.1435, 45.8333% 1.1613, 47.9167% 1.1740, 50.0000% 1.1823, 52.0833% 1.1865, 54.1667% 1.1871, 56.2500% 1.1845, 58.3333% 1.1793, 60.4167% 1.1718, 62.5000% 1.1626, 64.5833% 1.1520, 66.6667% 1.1404, 68.7500% 1.1281, 70.8333% 1.1155, 72.9167% 1.1028, 75.0000% 1.0904, 77.0833% 1.0783, 79.1667% 1.0668, 81.2500% 1.0560, 83.3333% 1.0461, 85.4167% 1.0370, 87.5000% 1.0289, 89.5833% 1.0217, 91.6667% 1.0155, 93.7500% 1.0103, 95.8333% 1.0060, 97.9167% 1.0026, 1);
+
+  /* ---- Type. 9 distinct steps; 11px and 12px are real tokens. ---- */
+  --t-1: 11px; --t-2: 12px; --t-3: 14px; --t-4: 16px;
+  --t-5: 20px; --t-6: 26px; --t-7: 34px; --t-8: 46px;
+  --t-9: 64px;
+  --caps: 0.09em;              /* the one tracking value */
+
+  /* ---- Controls share one height ladder with inputs ---- */
+  --ctl-sm: 30px; --ctl: 36px; --ctl-lg: 44px;
+
+  /* ---- Layout ---- */
+  --page-w: 1200px;   /* .page column; one override retunes a build */
+  /* prose measure, MEASURED against loaded Onest at --t-4 rather than estimated.
+     A line that runs the full page column is a line nobody finishes, and erring
+     short is the safer side of 66. The width sweep behind the value, five
+     candidates against two samples, is in references/rhythm.md; it lived here
+     too and the two copies had already drifted apart on one sample. */
+  --page-narrow: 528px;
+  --navbar-h: 56px;   /* the navbar's own height, and nothing else reads it as an offset */
+  --topbar-h: 52px;   /* the mobile bar's own height */
+  /* How far down anything pinned to the top has to start, which is NOT a bar's
+     height: it is the height of whatever bar this page actually holds, and a
+     sidebar shell holds none. Derived on the root below, never set by a page. */
+  --pin-top: 0px;
+
+  /* ---- Fonts ---- */
+  --font-sans: "Onest", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* ---- Spacing (4px scale) ---- */
+  --space-0:  0;
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+}
+
+/* Radius preset: sharp is the opt-in variant, real 0 */
+[data-radius="sharp"] { --r-1: 0px; --r-2: 0px; --r-3: 0px; --r-4: 0px; }
+
+/* ---- Light theme (Latte). EVERY colour and elevation token is
+   re-declared, because a partial override is the bug that broke
+   v1's light theme: its tints were mixed from the dark accent.
+   Ratios measured against THIS block's --bg. ---- */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --surface-3: oklch(0.905 0.010 275);   /* pressed: light goes DOWN */
+  /* 3.58:1 on --well, 3.92 on --bg, 4.40 on --surface-1, 3.69 on the hover tint */
+  --scrollbar-thumb: oklch(0.570 0.010 275);
+  --surface-2: oklch(0.935 0.008 275);   /* hover                    */
+  --well:      oklch(0.925 0.008 275);
+  --bg:        oklch(0.955 0.006 275);
+  --surface-1: oklch(0.995 0.003 275);   /* cards still rise         */
+  /* Light falls onto a light page too: the top goes whiter, which only raises
+     every text ratio there. On the peak: --text 13.46, --text-4 5.55:1,
+     --accent-text 5.68; on the mid 12.72 / 5.25 / 5.37. The peak sits at the
+     card's own lightness, so a card under it separates on the drawn line
+     alone. */
+  --sky-peak:  oklch(0.995 0.008 240);
+  --sky-mid:   oklch(0.975 0.007 255);
+  /* --text 11.17, --text-2 6.94, --text-3 4.92, --text-4 4.61:1, --accent-text
+     4.72; --accent as a fill 3.82 against it, over the 3:1 graphics floor */
+  --band-accent: oklch(0.930 0.030 238);
+
+  --line:      oklch(0.890 0.012 275);   /* barely there, 1.22:1     */
+  --line-soft: oklch(0.920 0.010 275);
+
+  --text:   oklch(0.300 0.020 275);   /* 11.98:1 */
+  --text-2: oklch(0.420 0.020 275);   /*  7.44:1 */
+  --text-3: oklch(0.500 0.018 275);   /*  5.27:1 */
+  --text-4: oklch(0.515 0.016 275);   /*  4.94:1 on --bg, 4.52:1 on --well, the floor */
+  /* 4.52:1 on --well is the floor already; light has no headroom under it, so
+     the placeholder holds --text-4's value and the dark block alone dims. */
+  --text-placeholder: oklch(0.515 0.016 275);
+  /* the 3:1 floor is what buys the step the 4.5:1 one denies the placeholder:
+     3.23:1 on --surface-3, 3.44 on --well, 3.54 on --surface-2, 3.76 on --bg,
+     4.23 on --surface-1 */
+  --text-disabled: oklch(0.580 0.016 275);
+
+  --accent:       oklch(0.55 0.140 238);   /* 4.60:1 under --on-accent; 4.09:1 as text */
+  --accent-hover: oklch(0.49 0.135 238);
+  --accent-press: oklch(0.44 0.125 238);
+  --accent-text:  oklch(0.50 0.130 238);   /* 5.06:1 as type; accent as text fails 4.5 */
+  --accent-quiet: oklch(0.55 0.140 238 / 0.12);
+  --accent-line:  oklch(0.55 0.140 238 / 0.34);
+  --accent-glow:  0 0 10px 0 oklch(0.55 0.140 238 / 0.30);
+  --on-accent:    oklch(0.995 0.003 238);
+
+  --accent-2:    oklch(0.52 0.150 42);     /* 5.16:1 */
+
+  --brand-ring: oklch(0.55 0.140 340);
+
+  --success: oklch(0.50 0.150 150);   /* 4.85:1 */
+  --warning: oklch(0.50 0.130  90);   /* 5.25:1 */
+  --danger:  oklch(0.52 0.190  15);   /* 5.36:1 */
+  /* hover / press: 5.25 / 4.61:1 on --bg, 5.87 / 5.10 on surface-1, 6.49 on
+     .menu-item.danger's hover; --danger there falls to 4.14 / 3.63 on --bg */
+  --danger-text: oklch(0.46 0.190  15);
+  --on-danger:  oklch(0.995 0.003  15);
+  --info: var(--accent);
+
+  /* The lit edge flips to the underside: light falls from above, so
+     on a light page the visible edge is the shadow, not the highlight.
+     Same geometry as the dark set, so both themes carry one shadow shape and
+     only the alphas differ. A light page has 244 levels of headroom, so the
+     banding that governs the dark set is not the binding constraint here; the
+     geometry is shared because a component must not change depth on a toggle.
+     Measured on a 300x140 card, blue channel against --bg, deepest pixel and
+     the last 1-level band: --elev-1 30 under / 13 beside, band 2 / 2;
+     --elev-2 32 / 14, band 3 / 2; --elev-float 42 / 19, band 5 / 3. */
+
+  /* The underside line is a mid tone on a near-white card, so an alpha buys
+     fewer levels here than dark's white on --surface-1: at 0.10 it painted 15
+     against dark's 18. The two themes are matched on the PAINTED delta rather
+     than on each other's alphas, measured on a card: 0.125 lands 18, 0.145
+     lands 21. Matched in sRGB levels, her call 2026-09-04, not in oklab: a
+     perceptual match wants 0.165, which reaches 93 percent of --line-soft's
+     own step on a card and starts reading as a drawn line rather than a lit
+     edge. */
+  --lit-1: inset 0 -1px 0 0 oklch(0.55 0.03 275 / 0.125);
+  --lit-2: inset 0 -1px 0 0 oklch(0.55 0.03 275 / 0.145);
+  /* the card line is a hairline, not a graphic, so no 3:1 floor applies;
+     measured with tools/contrast.mjs against every surface a card sits on,
+     tightest first: --well 1.99:1, --band-accent 2.03:1, --bg 2.18:1,
+     --sky-mid 2.31:1, --surface-1 2.45:1, --sky-peak 2.45:1. */
+  --card-line: oklch(0.72 0.020 275);
+  --contact-1: 0 1px 2px -1px oklch(0.55 0.03 275 / 0.26),
+               0 2px 4px -1px oklch(0.55 0.03 275 / 0.23),
+               0 4px 8px -4px oklch(0.55 0.03 275 / 0.21);
+  --contact-2: 0 1px 2px -1px oklch(0.55 0.03 275 / 0.24),
+               0 4px 8px -2px oklch(0.55 0.03 275 / 0.21),
+               0 10px 18px -8px oklch(0.55 0.03 275 / 0.19);
+  --elev-1: var(--lit-1), var(--contact-1);
+  --elev-2: var(--lit-2), var(--contact-2);
+  --elev-float: var(--lit-2),
+                0 2px 4px -1px oklch(0.55 0.03 275 / 0.26),
+                0 6px 12px -3px oklch(0.55 0.03 275 / 0.23),
+                0 14px 22px -10px oklch(0.55 0.03 275 / 0.21);
+  --backdrop: oklch(0.45 0.02 275 / 0.32);
+
+  /* Glass. The same split the dark block ships: bars tint with --bg, panels
+     hold surface-1 at the clearest alpha the ramp allows. Worst case on a light
+     page is black behind the panel; composited through it, --text holds 10.76:1,
+     --text-2 6.68, the dim step 4.72 at 0.500 (re-measured twice 2026-09-02,
+     independently) and --danger 4.81. The shipped --text-4 value 0.515 measures
+     4.44 there, so it joins the dim step. 0.90 is 25.5 sRGB levels black to
+     white. --accent-text stays bound to its opaque quiet fill: 4.89:1 on a
+     panel's, but 4.38 on a bar's own, so every accent label that can sit on a
+     bar carries a mix: the shared light remix at 4.98, `.btn-primary`'s own
+     at 6.27.
+
+     The bar alpha is the floor, not a preference. At 0.92 the bar re-floors
+     --text-3/--text-4/--text-placeholder to --glass-dim, which measured 4.41:1
+     over black, and --glass-danger 4.48:1, both under 4.5:1. At 0.93 both clear:
+     --glass-dim 4.52:1 and --glass-danger 4.59:1 over black, and --glass-disabled
+     3.22:1 over the 3:1 floor. Her call 2026-10-07. */
+  --glass-bar-tint: oklch(0.955 0.006 275 / 0.93);
+  --glass-tint: oklch(0.995 0.003 275 / 0.90);
+  --glass-dim:  oklch(0.500 0.018 275);
+  --glass-danger: var(--danger);
+  --glass-danger-text: var(--danger-text);
+  /* light needs no lift here: --text-disabled already measures 3.37:1 on the
+     panel worst case, where dark's falls to 2.49 */
+  --glass-disabled: var(--text-disabled);
+  --glass-quiet-share: 12%;
+  --glass-line-share: 34%;
+  --glass-edge: oklch(0.45 0.03 275 / 0.12);
+
+  /* A light page has less room under a dim than a dark one: at the 0.7 the dark
+     block ships, --text-4 measures 2.79:1 on --bg and 2.98 on --surface-1 here,
+     both under the 3:1 graphics floor, and --text-3 2.90 / 3.10. Lifted to the
+     same 0.90 the glass block uses, which takes the worst of those to 4.04, and
+     means an icon does not change when it crosses onto a glass panel. */
+  --icon-dim: 0.90;
+
+  /* Chart series on the light surface-1: 5.81 / 5.80 / 5.12 / 5.55:1. Slot 3 is
+     mauve here too: against sky the 1-3 pair measured 0.0790 in oklab and now
+     measures 0.1556.
+
+     SLOTS 1 AND 4 ARE HELD AT THE sRGB BOUNDARY, her call 2026-09-02. At their
+     old chromas the browser clipped them (slot 1's linear red measured -0.0182,
+     slot 4's -0.0020), so the declared values named colours nobody saw and every
+     distance taken from a declaration overstated the gap. The gamut runs out at
+     C 0.1110 for slot 1 and 0.1378 for slot 4 at these lightnesses and hues;
+     both sit under that with a little margin; the sRGB check reds on any slot
+     outside the gamut, on every run. */
+  --chart-series-1: oklch(0.50 0.110 238);
+  --chart-series-2: oklch(0.52 0.150 42);
+  --chart-series-3: oklch(0.55 0.150 305);
+  --chart-series-4: oklch(0.50 0.135 150);
+}
+
+/* ---- Optional categorical palette (Catppuccin accent ramp) ----
+   For category coding only: per-language dots, syntax, tags, multi-series charts.
+   NOT for status (use --success / --warning / --danger) and NOT for chrome.
+   Converted from the v1 hex ramp, computed not estimated. */
+:root {
+  --cat-rosewater: oklch(0.923 0.024 30);  --cat-flamingo: oklch(0.880 0.042 18);
+  --cat-pink:      oklch(0.870 0.075 336); --cat-mauve:    oklch(0.787 0.119 305);
+  --cat-red:       oklch(0.756 0.130 3);   --cat-maroon:   oklch(0.782 0.090 9);
+  --cat-peach:     oklch(0.824 0.101 53);  --cat-yellow:   oklch(0.919 0.070 87);
+  --cat-green:     oklch(0.858 0.109 143); --cat-teal:     oklch(0.858 0.079 183);
+  --cat-sky:       oklch(0.847 0.083 210); --cat-sapphire: oklch(0.791 0.096 229);
+  --cat-blue:      oklch(0.766 0.111 260); --cat-lavender: oklch(0.817 0.091 277);
+}
+[data-theme="light"] {
+  --cat-rosewater: oklch(0.714 0.105 33);  --cat-flamingo: oklch(0.686 0.126 21);
+  --cat-pink:      oklch(0.726 0.174 338); --cat-mauve:    oklch(0.555 0.250 297);
+  --cat-red:       oklch(0.550 0.216 20);  --cat-maroon:   oklch(0.625 0.197 20);
+  --cat-peach:     oklch(0.692 0.204 42);  --cat-yellow:   oklch(0.714 0.149 68);
+  --cat-green:     oklch(0.625 0.177 140); --cat-teal:     oklch(0.602 0.098 201);
+  --cat-sky:       oklch(0.682 0.145 235); --cat-sapphire: oklch(0.648 0.107 213);
+  --cat-blue:      oklch(0.559 0.226 262); --cat-lavender: oklch(0.664 0.175 273);
+}
+
+/* ---- Language hues (GitHub-recognizable categorical) ----
+   The categorical ramp's per-language extension, for dots, bar segments and
+   legend marks. Hue and chroma are each language's own GitHub colour;
+   lightness is re-derived per theme so every mark clears the 3:1 graphics
+   floor on its theme's binding surface: dark marks are light and bind on the
+   lightest surface a dark-theme mark can sit on (--surface-1); light marks
+   are dark and bind on the darkest light-theme surface (--well). Worst
+   measured: dark 3.1:1, light 3.1:1. */
+:root {
+  --cat-rust:       oklch(0.768 0.081  51);  --cat-javascript: oklch(0.896 0.153 102);
+  --cat-typescript: oklch(0.569 0.078 220);  --cat-python:     oklch(0.573 0.102 247);
+  --cat-csharp:     oklch(0.559 0.179 141);  --cat-java:       oklch(0.604 0.123  69);
+  --cat-go:         oklch(0.695 0.130 224);  --cat-html:       oklch(0.622 0.194  35);
+  --cat-css:        oklch(0.585 0.104 300);  --cat-shell:      oklch(0.823 0.196 135);
+  --cat-php:        oklch(0.579 0.091 272);  --cat-kotlin:     oklch(0.687 0.189 297);
+  --cat-qml:        oklch(0.639 0.189 139);  --cat-c:          oklch(0.575 0.020 280);
+  --cat-cpp:        oklch(0.661 0.206   7);  --cat-vue:        oklch(0.702 0.132 160);
+  --cat-svelte:     oklch(0.654 0.234  34);  --cat-lua:        oklch(0.584 0.188 264);
+  --cat-nix:        oklch(0.656 0.187 280);  --cat-dockerfile: oklch(0.573 0.029 220);
+  --cat-makefile:   oklch(0.564 0.137 135);
+}
+[data-theme="light"] {
+  --cat-rust:       oklch(0.609 0.081  51);  --cat-javascript: oklch(0.598 0.153 102);
+  --cat-typescript: oklch(0.523 0.078 220);  --cat-python:     oklch(0.535 0.102 247);
+  --cat-csharp:     oklch(0.540 0.179 141);  --cat-java:       oklch(0.604 0.123  69);
+  --cat-go:         oklch(0.588 0.130 224);  --cat-html:       oklch(0.622 0.194  35);
+  --cat-css:        oklch(0.418 0.104 300);  --cat-shell:      oklch(0.585 0.196 135);
+  --cat-php:        oklch(0.492 0.091 272);  --cat-kotlin:     oklch(0.622 0.189 297);
+  --cat-qml:        oklch(0.586 0.189 139);  --cat-c:          oklch(0.450 0.020 280);
+  --cat-cpp:        oklch(0.629 0.206   7);  --cat-vue:        oklch(0.587 0.132 160);
+  --cat-svelte:     oklch(0.629 0.234  34);  --cat-lua:        oklch(0.271 0.188 264);
+  --cat-nix:        oklch(0.616 0.187 280);  --cat-dockerfile: oklch(0.406 0.029 220);
+  --cat-makefile:   oklch(0.516 0.137 135);
+}
+
+/* ---- Base reset ---- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; }
+body {
+  font-family: var(--font-sans);
+  font-size: var(--t-3);
+  line-height: 1.55;
+  font-weight: 400;
+  color: var(--text);
+  background: var(--bg);
+  accent-color: var(--accent);
+  -webkit-font-smoothing: antialiased;
+  text-wrap: pretty;
+}
+/* The sky: a 62% x 100% ellipse hung from the top centre, reaching --bg at its
+   own edge, so the 780px box draws no seam where it ends. It is its own layer
+   at z -2, under the dot grid, so it can move slower than the page: it drifts
+   up at a quarter of the scroll speed, her call 2026-09-30, and is gone once the
+   page has scrolled 3120px. Absolute by default, which scrolls it with the page,
+   so an engine with no scroll timeline and a reduced-motion reader both get the
+   plain ground. */
+body::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 780px;
+  z-index: -2;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 62% 100% at 50% 0%,
+      var(--sky-peak) 0%, var(--sky-mid) 42%, var(--bg) 100%);
+}
+@supports (animation-timeline: scroll()) {
+  @media (prefers-reduced-motion: no-preference) {
+    body::after {
+      position: fixed;
+      animation: sky-drift linear both;
+      animation-timeline: scroll(root);
+      animation-range: 0 3120px;
+    }
+  }
+}
+@keyframes sky-drift { to { transform: translateY(-780px); } }
+::selection { background: var(--accent-quiet); color: var(--text); }
+/* `font-family` does not inherit into a <button>: the UA sets it, together with
+   a 2px outset border, ButtonFace, ButtonText and centred text, and an author
+   rule beats a UA rule at any specificity. Every component class that lands on a
+   button would otherwise have to restate all five, and the ones that do not
+   measured in the UA's Arial on a bare button. At (0,0,1) this loses to a
+   component's own costume whatever the source order. */
+button {
+  font: inherit;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: inherit;
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 1px var(--bg);
+}
+/* An author rule beats a UA rule whatever the specificity, so `.btn` and every other block
+   here keeps painting under the `hidden` attribute without this line. A script toggling
+   `hidden` then silently does nothing. `!important` is load-bearing: the component rules
+   are the thing being overridden. */
+[hidden] { display: none !important; }
+
+/* ---- Document defaults: pages stop hand-rolling typography. ---- */
+a { color: var(--accent-text); text-decoration: none; }
+/* :where() zeroes the specificity, so every component class that sets
+   `text-decoration: none` in its base rule outranks this. At (0,1,1) it beat
+   them all and underlined the sidebar rows, a `.btn` written as a link and every
+   menu row; four components had already restated the reset on hover. */
+:where(a):hover { text-decoration: underline; text-underline-offset: 2px; }
+h1, h2, h3, h4 { color: var(--text); text-wrap: balance; }
+h1 { font: 600 var(--t-8)/1.1 var(--font-sans); letter-spacing: -0.03em; }
+h2 { font: 600 var(--t-6)/1.15 var(--font-sans); letter-spacing: -0.02em; }
+h3 { font: 500 var(--t-5)/1.2 var(--font-sans); letter-spacing: -0.01em; }
+h4 { font: 500 var(--t-4)/1.3 var(--font-sans); }
+/* An anchored jump clears whatever bar this page actually holds, not a fixed
+   navbar height: --pin-top is 0 on a page with no bar at all. */
+[id] { scroll-margin-top: calc(var(--pin-top) + var(--space-2)); }
+
+/* ---- Utilities ---- */
+.label {
+  font: 500 11px/1.4 var(--font-sans);
+  letter-spacing: var(--caps);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+/* Unbreakable machine strings wrap inside their box; they never widen a page.
+   The five component selectors below are the same costume, named here rather
+   than restated in components.css. `.copy-chip-fill > .copy-chip-value` at
+   (0,2,0) still turns it back off, and `.chart-ticks-band .chart-tick` keeps its
+   own position and translate. */
+.truncate,
+.select-value,
+.tree-label,
+.status-legend-name,
+.copy-chip-value,
+.chart-ticks-band .chart-tick { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* `.stepper-compact .step-text` is this costume under another name, so it is
+   named here. The navbar's own label cannot join: it hides only under
+   `@media (max-width: 768px)`, and this rule has no condition to carry. */
+.sr-only,
+.stepper-compact .step-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
