@@ -1,0 +1,33 @@
+# Publishes landing/ to GitHub Pages. The page is self-contained: the folder
+# is uploaded as-is, so there is no build step and no generated branch.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths: ['landing/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write # deploy-pages exchanges it for a short-lived Pages token
+
+concurrency:
+  group: pages
+  cancel-in-progress: false # never cancel a deploy mid-flight
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: landing
+      - id: deploy
+        uses: actions/deploy-pages@v5
